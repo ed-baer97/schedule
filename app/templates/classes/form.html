@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Редактирование' if school_class else 'Добавление' }} класса - Школьное расписание{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>
+        <i class="bi bi-mortarboard"></i> 
+        {{ 'Редактирование класса' if school_class else 'Добавление класса' }}
+    </h1>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('classes.edit', id=school_class.id) if school_class else url_for('classes.create') }}">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="name" class="form-label">Название класса *</label>
+                    <input type="text" class="form-control" id="name" name="name" 
+                           value="{{ school_class.name if school_class else '' }}" 
+                           placeholder="Например: 1А, 5Б, 11В" required>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="school_level" class="form-label">Уровень школы *</label>
+                    <select class="form-select" id="school_level" name="school_level" required>
+                        <option value="">Выберите...</option>
+                        <option value="elementary" {% if school_class and school_class.school_level == 'elementary' %}selected{% endif %}>
+                            Начальная школа (1-4 классы)
+                        </option>
+                        <option value="secondary" {% if school_class and school_class.school_level == 'secondary' %}selected{% endif %}>
+                            Основная школа (5-11 классы)
+                        </option>
+                    </select>
+                </div>
+                
+                <div class="col-md-6 mb-3">
+                    <label for="shift_id" class="form-label">Смена</label>
+                    <select class="form-select" id="shift_id" name="shift_id">
+                        <option value="">Не указана</option>
+                        {% for shift in shifts %}
+                        <option value="{{ shift.id }}" 
+                                {% if school_class and school_class.shift_id == shift.id %}selected{% endif %}>
+                            {{ shift.name }} ({{ shift.school_level_display }})
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                    <label for="home_classroom_id" class="form-label">Прикреплённый кабинет</label>
+                    <select class="form-select" id="home_classroom_id" name="home_classroom_id">
+                        <option value="">— Не указан —</option>
+                        {% for c in classrooms %}
+                        <option value="{{ c.id }}" {% if school_class and school_class.home_classroom_id == c.id %}selected{% endif %}>{{ c.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="form-text text-muted">Используется в режиме «учитель приходит к классу»</small>
+                </div>
+            </div>
+            
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> Сохранить
+                </button>
+                <a href="{{ url_for('classes.index') }}" class="btn btn-outline-secondary">
+                    Отмена
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

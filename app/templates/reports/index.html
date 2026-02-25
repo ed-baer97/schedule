@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}Отчёты - Школьное расписание{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1><i class="bi bi-file-earmark-text"></i> Отчёты и экспорт</h1>
+</div>
+
+<div class="row g-4">
+    <!-- Export all -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-file-earmark-excel"></i> Экспорт полного расписания
+            </div>
+            <div class="card-body">
+                <p class="text-muted">Скачать расписание всех классов в Excel</p>
+                
+                <div class="d-grid gap-2">
+                    <a href="{{ url_for('reports.export_all_excel', school_level='elementary') }}" 
+                       class="btn btn-success">
+                        <i class="bi bi-download"></i> Начальная школа (Excel)
+                    </a>
+                    <a href="{{ url_for('reports.export_all_excel', school_level='secondary') }}" 
+                       class="btn text-white" style="background-color: #9b59b6;">
+                        <i class="bi bi-download"></i> Основная школа (Excel)
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Class schedule -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-mortarboard"></i> Расписание класса
+            </div>
+            <div class="card-body">
+                <form id="class-form">
+                    <div class="mb-3">
+                        <select class="form-select" id="class-select">
+                            <option value="">Выберите класс...</option>
+                            {% for school_class in classes %}
+                            <option value="{{ school_class.id }}">
+                                {{ school_class.name }} ({{ school_class.school_level_display }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="btn-group w-100">
+                        <a href="#" class="btn btn-outline-primary disabled" id="class-view-btn">
+                            <i class="bi bi-eye"></i> Просмотр
+                        </a>
+                        <a href="#" class="btn btn-outline-success disabled" id="class-excel-btn">
+                            <i class="bi bi-download"></i> Excel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Teacher schedule -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-person"></i> Расписание учителя
+            </div>
+            <div class="card-body">
+                <form id="teacher-form">
+                    <div class="mb-3">
+                        <select class="form-select" id="teacher-select">
+                            <option value="">Выберите учителя...</option>
+                            {% for teacher in teachers %}
+                            <option value="{{ teacher.id }}">{{ teacher.full_name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    
+                    <div class="btn-group w-100">
+                        <a href="#" class="btn btn-outline-primary disabled" id="teacher-view-btn">
+                            <i class="bi bi-eye"></i> Просмотр
+                        </a>
+                        <a href="#" class="btn btn-outline-success disabled" id="teacher-excel-btn">
+                            <i class="bi bi-download"></i> Excel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Print instructions -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-printer"></i> Печать
+            </div>
+            <div class="card-body">
+                <p class="text-muted">
+                    Для печати расписания:
+                </p>
+                <ol class="text-muted small">
+                    <li>Выберите расписание для просмотра</li>
+                    <li>Нажмите Ctrl+P (или Cmd+P на Mac)</li>
+                    <li>Выберите принтер и настройки</li>
+                </ol>
+                <p class="text-muted small">
+                    Или экспортируйте в Excel и распечатайте оттуда.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Class schedule buttons
+document.getElementById('class-select').addEventListener('change', function() {
+    const id = this.value;
+    const viewBtn = document.getElementById('class-view-btn');
+    const excelBtn = document.getElementById('class-excel-btn');
+    
+    if (id) {
+        viewBtn.href = '{{ url_for("reports.class_schedule", class_id=0) }}'.replace('0', id);
+        viewBtn.classList.remove('disabled');
+        excelBtn.href = '{{ url_for("reports.export_class_excel", class_id=0) }}'.replace('0', id);
+        excelBtn.classList.remove('disabled');
+    } else {
+        viewBtn.classList.add('disabled');
+        excelBtn.classList.add('disabled');
+    }
+});
+
+// Teacher schedule buttons
+document.getElementById('teacher-select').addEventListener('change', function() {
+    const id = this.value;
+    const viewBtn = document.getElementById('teacher-view-btn');
+    const excelBtn = document.getElementById('teacher-excel-btn');
+    
+    if (id) {
+        viewBtn.href = '{{ url_for("reports.teacher_schedule", teacher_id=0) }}'.replace('0', id);
+        viewBtn.classList.remove('disabled');
+        excelBtn.href = '{{ url_for("reports.export_teacher_excel", teacher_id=0) }}'.replace('0', id);
+        excelBtn.classList.remove('disabled');
+    } else {
+        viewBtn.classList.add('disabled');
+        excelBtn.classList.add('disabled');
+    }
+});
+</script>
+{% endblock %}

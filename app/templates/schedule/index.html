@@ -1,0 +1,432 @@
+{% extends "base.html" %}
+
+{% block title %}Расписание - Школьное расписание{% endblock %}
+
+{% block content %}
+<div class="page-header d-flex justify-content-between align-items-center">
+    <h1><i class="bi bi-calendar-week"></i> Расписание</h1>
+    <div>
+        <a href="{{ url_for('schedule.auto_schedule_page') }}" class="btn btn-success">
+            <i class="bi bi-magic"></i> Авто
+        </a>
+        <a href="{{ url_for('schedule.settings') }}" class="btn btn-outline-secondary">
+            <i class="bi bi-gear"></i> Настройки
+        </a>
+    </div>
+</div>
+
+<!-- School level tabs -->
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item">
+        <a class="nav-link {% if school_level == 'elementary' %}active{% endif %}" 
+           href="{{ url_for('schedule.index', school_level='elementary') }}">
+            <i class="bi bi-building"></i> Начальная школа
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if school_level == 'secondary' %}active{% endif %}" 
+           href="{{ url_for('schedule.index', school_level='secondary') }}">
+            <i class="bi bi-building"></i> Основная школа
+        </a>
+    </li>
+</ul>
+
+<!-- Режим кабинетов и предупреждения -->
+{% if schedule_settings or classroom_warnings %}
+<div class="mb-3">
+    {% if schedule_settings %}
+    <span class="badge bg-light text-dark">
+        Режим: {% if schedule_settings.classroom_mode == 'class_room' %}учитель приходит к классу{% else %}дети приходят к учителю{% endif %}
+    </span>
+    {% endif %}
+    {% if classroom_warnings %}
+    <span class="badge bg-warning text-dark" title="{% for w in classroom_warnings %}{{ w[1] }}{% if not loop.last %}; {% endif %}{% endfor %}">
+        <i class="bi bi-exclamation-triangle"></i> {{ classroom_warnings|length }} без кабинета
+    </span>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Shift tabs -->
+{% if shifts %}
+<ul class="nav nav-pills mb-4">
+    {% for shift in shifts %}
+    <li class="nav-item">
+        <a class="nav-link {% if current_shift_id == shift.id %}active{% endif %}" 
+           href="{{ url_for('schedule.index', school_level=school_level, shift_id=shift.id) }}">
+            {{ shift.name }}
+        </a>
+    </li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+<div class="card">
+    <div class="card-body table-responsive">
+        {% if classes %}
+        <table class="table table-bordered schedule-grid">
+            <thead>
+                <tr>
+                    <th style="width: 80px;">Урок</th>
+                    {% for school_class in classes %}
+                    <th class="text-center">{{ school_class.name }}</th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for day in range(1, working_days + 1) %}
+                <tr>
+                    <td colspan="{{ classes|length + 1 }}" class="day-header">
+                        {{ day_names[day - 1] }}
+                    </td>
+                </tr>
+                {% for lesson in range(1, max_lessons + 1) %}
+                <tr>
+                    <td class="text-center fw-bold">{{ lesson }}</td>
+                    {% for school_class in classes %}
+                    <td>
+                        {% set cells = schedule.get((school_class.id, day, lesson), []) %}
+                        <div class="schedule-cell {% if cells|length > 1 %}schedule-cell-multiple{% endif %}" 
+                             data-class-id="{{ school_class.id }}"
+                             data-class-name="{{ school_class.name }}"
+                             data-day="{{ day }}"
+                             data-lesson="{{ lesson }}">
+                            {% for cell in cells %}
+                            {% if not loop.first %}
+                            <hr class="subgroup-divider">
+                            {% endif %}
+                            <div class="lesson-card" 
+                                 style="background: white; border-color: {{ cell.subject.color }}; color: #333;"
+                                 data-cell-id="{{ cell.id }}"
+                                 data-teacher-id="{{ cell.assignment.teacher_id or '' }}">
+                                <span class="subject">{{ cell.subject.display_name }}</span>
+                                {% if cell.assignment.group_number %}
+                                <span class="badge bg-warning text-dark">гр.{{ cell.assignment.group_number }}</span>
+                                {% endif %}
+                                <span class="teacher">{{ cell.teacher.display_name if cell.teacher else '?' }}</span>
+                                {% if cell.classroom %}
+                                <span class="room">каб. {{ cell.classroom.number }}</span>
+                                {% endif %}
+                                <button class="btn btn-sm btn-link text-danger p-0 remove-cell" 
+                                        data-cell-id="{{ cell.id }}" title="Удалить">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="text-center py-5 text-muted">
+            <i class="bi bi-calendar-x" style="font-size: 3rem;"></i>
+            <p class="mt-3">Нет классов для отображения</p>
+            <p>Добавьте классы и привяжите их к смене</p>
+            <a href="{{ url_for('classes.index') }}" class="btn btn-primary">
+                Управление классами
+            </a>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Modal: add lesson -->
+<div class="modal fade" id="addLessonModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="bi bi-plus-circle"></i> Добавить урок
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3 text-muted" id="modalSlotInfo"></div>
+
+                <div id="modalLoading" class="text-center py-3 d-none">
+                    <div class="spinner-border spinner-border-sm text-primary"></div> Загрузка...
+                </div>
+
+                <div id="modalNoAssignments" class="text-center text-muted py-3 d-none">
+                    <i class="bi bi-check-circle" style="font-size: 2rem;"></i>
+                    <p class="mt-2 mb-0">Все часы для этого класса распределены</p>
+                </div>
+
+                <div id="modalForm" class="d-none">
+                    <div class="mb-3">
+                        <label for="modalSubject" class="form-label fw-bold">Предмет</label>
+                        <select class="form-select" id="modalSubject">
+                            <option value="">Выберите предмет...</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="modalTeacher" class="form-label fw-bold">Учитель</label>
+                        <select class="form-select" id="modalTeacher" disabled>
+                            <option value="">Сначала выберите предмет</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="modalClassroom" class="form-label fw-bold">Кабинет</label>
+                        <select class="form-select" id="modalClassroom">
+                            <option value="">Без кабинета</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                <button type="button" class="btn btn-primary" id="modalSaveBtn" disabled>
+                    <i class="bi bi-plus"></i> Добавить
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .lesson-card {
+        position: relative;
+    }
+    .lesson-card .remove-cell {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        opacity: 0;
+        transition: opacity 0.2s;
+    }
+    .lesson-card:hover .remove-cell {
+        opacity: 1;
+    }
+    .schedule-cell-empty {
+        cursor: pointer;
+    }
+    .schedule-cell-empty:hover {
+        background-color: #e8f4fc;
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const addLessonModal = new bootstrap.Modal(document.getElementById('addLessonModal'));
+let currentSlot = {};
+let allAssignments = [];
+
+document.querySelectorAll('.schedule-cell').forEach(function(cell) {
+    cell.addEventListener('click', function(e) {
+        if (e.target.closest('.remove-cell')) return;
+
+        currentSlot = {
+            classId: this.dataset.classId,
+            className: this.dataset.className,
+            day: this.dataset.day,
+            lesson: this.dataset.lesson
+        };
+
+        const dayNames = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+        document.getElementById('modalSlotInfo').textContent =
+            `${currentSlot.className}, ${dayNames[currentSlot.day - 1]}, урок ${currentSlot.lesson}`;
+
+        resetModal();
+        addLessonModal.show();
+        loadAssignments(currentSlot.classId);
+    });
+});
+
+function resetModal() {
+    allAssignments = [];
+    document.getElementById('modalSaveBtn').disabled = true;
+    document.getElementById('modalLoading').classList.remove('d-none');
+    document.getElementById('modalForm').classList.add('d-none');
+    document.getElementById('modalNoAssignments').classList.add('d-none');
+
+    const subjectSelect = document.getElementById('modalSubject');
+    subjectSelect.innerHTML = '<option value="">Выберите предмет...</option>';
+
+    const teacherSelect = document.getElementById('modalTeacher');
+    teacherSelect.innerHTML = '<option value="">Сначала выберите предмет</option>';
+    teacherSelect.disabled = true;
+
+    document.getElementById('modalClassroom').innerHTML = '<option value="">Без кабинета</option>';
+}
+
+function loadAssignments(classId) {
+    fetch(`{{ url_for('schedule.assignments_for_class', class_id=0) }}`.replace('0', classId))
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('modalLoading').classList.add('d-none');
+            allAssignments = data.assignments;
+
+            if (!allAssignments.length) {
+                document.getElementById('modalNoAssignments').classList.remove('d-none');
+                return;
+            }
+
+            document.getElementById('modalForm').classList.remove('d-none');
+
+            // Build unique subjects list
+            const subjects = new Map();
+            allAssignments.forEach(a => {
+                if (!subjects.has(a.subject_name)) {
+                    subjects.set(a.subject_name, a.subject_color);
+                }
+            });
+
+            const subjectSelect = document.getElementById('modalSubject');
+            subjectSelect.innerHTML = '<option value="">Выберите предмет...</option>';
+            subjects.forEach((color, name) => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                subjectSelect.appendChild(opt);
+            });
+
+            // Fill classrooms
+            const classroomSelect = document.getElementById('modalClassroom');
+            classroomSelect.innerHTML = '<option value="">Без кабинета</option>';
+            data.classrooms.forEach(c => {
+                const opt = document.createElement('option');
+                opt.value = c.id;
+                opt.textContent = c.display_name;
+                classroomSelect.appendChild(opt);
+            });
+        })
+        .catch(() => {
+            document.getElementById('modalLoading').classList.add('d-none');
+            document.getElementById('modalNoAssignments').classList.remove('d-none');
+            document.getElementById('modalNoAssignments').querySelector('p').textContent = 'Ошибка загрузки данных';
+        });
+}
+
+// Subject selected → fill teachers
+document.getElementById('modalSubject').addEventListener('change', function() {
+    const subjectName = this.value;
+    const teacherSelect = document.getElementById('modalTeacher');
+
+    teacherSelect.innerHTML = '<option value="">Выберите учителя...</option>';
+    document.getElementById('modalSaveBtn').disabled = true;
+
+    if (!subjectName) {
+        teacherSelect.disabled = true;
+        return;
+    }
+
+    const matching = allAssignments.filter(a => a.subject_name === subjectName);
+    matching.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a.id;
+        let label = a.teacher_name;
+        if (a.group_number) label += ` (гр.${a.group_number})`;
+        label += ` — ${a.remaining_hours} ч.`;
+        opt.textContent = label;
+        opt.dataset.preferredClassroom = a.preferred_classroom_id || '';
+        teacherSelect.appendChild(opt);
+    });
+
+    teacherSelect.disabled = false;
+
+    // Auto-select if only one option
+    if (matching.length === 1) {
+        teacherSelect.value = matching[0].id;
+        teacherSelect.dispatchEvent(new Event('change'));
+    }
+});
+
+// Teacher selected → enable save, set preferred classroom
+document.getElementById('modalTeacher').addEventListener('change', function() {
+    const assignmentId = this.value;
+    document.getElementById('modalSaveBtn').disabled = !assignmentId;
+
+    if (assignmentId) {
+        const selectedOption = this.options[this.selectedIndex];
+        const preferredClassroom = selectedOption.dataset.preferredClassroom;
+        if (preferredClassroom) {
+            document.getElementById('modalClassroom').value = preferredClassroom;
+        }
+    }
+});
+
+document.getElementById('modalSaveBtn').addEventListener('click', function() {
+    const assignmentId = document.getElementById('modalTeacher').value;
+    if (!assignmentId) return;
+
+    const formData = new FormData();
+    formData.append('class_id', currentSlot.classId);
+    formData.append('day', currentSlot.day);
+    formData.append('lesson', currentSlot.lesson);
+    formData.append('assignment_id', assignmentId);
+
+    const classroomId = document.getElementById('modalClassroom').value;
+    if (classroomId) {
+        formData.append('classroom_id', classroomId);
+    }
+
+    this.disabled = true;
+    this.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Сохранение...';
+
+    fetch('{{ url_for("schedule.add_cell") }}', {
+        method: 'POST',
+        body: formData,
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(r => r.json().then(data => ({ok: r.ok, data})))
+    .then(({ok, data}) => {
+        if (data.status === 'ok') {
+            addLessonModal.hide();
+            location.reload();
+        } else {
+            alert(data.errors ? data.errors.join('\n') : 'Ошибка при добавлении');
+            document.getElementById('modalSaveBtn').disabled = false;
+            document.getElementById('modalSaveBtn').innerHTML = '<i class="bi bi-plus"></i> Добавить';
+        }
+    })
+    .catch(() => {
+        alert('Ошибка сети');
+        document.getElementById('modalSaveBtn').disabled = false;
+        document.getElementById('modalSaveBtn').innerHTML = '<i class="bi bi-plus"></i> Добавить';
+    });
+});
+
+// Teacher hover: highlight all cells where this teacher teaches
+document.querySelectorAll('.lesson-card[data-teacher-id]').forEach(function(card) {
+    var teacherId = card.dataset.teacherId;
+    if (!teacherId) return;
+    card.addEventListener('mouseenter', function() {
+        document.querySelectorAll('.lesson-card[data-teacher-id="' + teacherId + '"]')
+            .forEach(function(el) { el.classList.add('teacher-highlight'); });
+    });
+    card.addEventListener('mouseleave', function() {
+        document.querySelectorAll('.lesson-card.teacher-highlight')
+            .forEach(function(el) { el.classList.remove('teacher-highlight'); });
+    });
+});
+
+// Remove cell
+document.querySelectorAll('.remove-cell').forEach(function(btn) {
+    btn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (!confirm('Удалить урок из расписания?')) return;
+
+        const cellId = this.dataset.cellId;
+        fetch(`{{ url_for('schedule.remove_cell', id=0) }}`.replace('0', cellId), {
+            method: 'POST',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                this.closest('.lesson-card').remove();
+            }
+        });
+    });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+
+{% block title %}{{ subject.name }} — Назначения учителей{% endblock %}
+
+{% block extra_css %}
+<style>
+    .teacher-card {
+        border: 1px solid #dee2e6;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 16px;
+        background: white;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }
+    .teacher-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 14px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #eee;
+    }
+    .teacher-header .teacher-name {
+        font-weight: 600;
+        font-size: 1.05rem;
+        color: #2c3e50;
+    }
+    .class-checks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .class-check-item {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 14px;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.15s;
+        user-select: none;
+    }
+    .class-check-item:hover {
+        background-color: #f0f8ff;
+        border-color: #3498db;
+    }
+    .class-check-item.checked {
+        background-color: #e8f4fc;
+        border-color: #3498db;
+    }
+    .class-check-item input[type="checkbox"] {
+        width: 1.1em;
+        height: 1.1em;
+        cursor: pointer;
+    }
+    .class-check-item .class-label {
+        font-weight: 500;
+        font-size: 0.9rem;
+    }
+    .class-check-item .class-hours {
+        font-size: 0.75rem;
+        color: #888;
+    }
+    .add-teacher-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+    .add-teacher-row select {
+        max-width: 350px;
+    }
+    .no-teachers-hint {
+        color: #888;
+        font-size: 0.9rem;
+        padding: 8px 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <a href="{{ url_for('subjects.index', school_level=school_level) }}" class="text-decoration-none text-muted">
+        <i class="bi bi-arrow-left"></i> {{ 'Начальная школа' if school_level == 'elementary' else 'Основная школа' }} — Предметы
+    </a>
+    <h1 class="mt-2">
+        <span class="color-preview me-2" style="background-color: white; border: 2px solid {{ subject.color }};"></span>
+        {{ subject.name }}
+        <small class="text-muted fs-5">— Назначения учителей</small>
+    </h1>
+</div>
+
+<ul class="nav nav-tabs mb-4">
+    <li class="nav-item">
+        <a class="nav-link {% if school_level == 'elementary' %}active{% endif %}"
+           href="{{ url_for('subjects.assignments', id=subject.id, school_level='elementary') }}">
+            <i class="bi bi-building"></i> Начальная школа
+        </a>
+    </li>
+    <li class="nav-item">
+        <a class="nav-link {% if school_level == 'secondary' %}active{% endif %}"
+           href="{{ url_for('subjects.assignments', id=subject.id, school_level='secondary') }}">
+            <i class="bi bi-building"></i> Основная школа
+        </a>
+    </li>
+</ul>
+
+{% if classes %}
+<form id="assignmentsForm" method="POST"
+      action="{{ url_for('subjects.save_assignments', id=subject.id) }}">
+    <input type="hidden" name="school_level" value="{{ school_level }}">
+
+    <!-- Add teacher -->
+    <div class="add-teacher-row">
+        <select id="teacherSelect" class="form-select">
+            <option value="">Выберите учителя...</option>
+            {% for t in all_teachers %}
+            <option value="{{ t.id }}"
+                    data-name="{{ t.full_name }}"
+                    {% if t.id in attached_teachers|map(attribute='id')|list %}style="display:none"{% endif %}>
+                {{ t.full_name }}
+            </option>
+            {% endfor %}
+        </select>
+        <button type="button" id="addTeacherBtn" class="btn btn-outline-primary" disabled>
+            <i class="bi bi-plus-lg"></i> Добавить
+        </button>
+    </div>
+
+    <!-- Teacher cards -->
+    <div id="teacherCards">
+        {% for teacher in attached_teachers %}
+        <div class="teacher-card" data-teacher-id="{{ teacher.id }}">
+            <input type="hidden" name="teacher_ids" value="{{ teacher.id }}">
+            <div class="teacher-header">
+                <span class="teacher-name">
+                    <i class="bi bi-person"></i>
+                    {{ teacher.full_name }}
+                </span>
+                <button type="button" class="btn btn-sm btn-outline-danger remove-teacher-btn"
+                        title="Убрать учителя">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="class-checks">
+                {% for c in classes %}
+                {% set is_checked = teacher.id in class_teachers.get(c.id, []) %}
+                <label class="class-check-item {% if is_checked %}checked{% endif %}">
+                    <input type="checkbox" name="t{{ teacher.id }}_c{{ c.id }}" value="1"
+                           {% if is_checked %}checked{% endif %}>
+                    <span class="class-label">{{ c.name }}</span>
+                    <span class="class-hours">{{ class_hours.get(c.id, 0) }}ч</span>
+                </label>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div id="noTeachersHint" class="{% if attached_teachers %}d-none{% endif %}">
+        <div class="text-center py-4 text-muted">
+            <i class="bi bi-person-plus" style="font-size: 2rem;"></i>
+            <p class="mt-2">Добавьте учителей, преподающих этот предмет</p>
+        </div>
+    </div>
+
+    <div class="mt-3 d-flex justify-content-between align-items-center">
+        <div class="text-muted small">
+            <i class="bi bi-info-circle"></i>
+            Если 2 учителя отмечены для одного класса — он автоматически разбивается на подгруппы
+        </div>
+        <button type="submit" class="btn btn-primary btn-lg">
+            <i class="bi bi-check-lg"></i> Сохранить
+        </button>
+    </div>
+</form>
+{% else %}
+<div class="card">
+    <div class="card-body text-center py-5 text-muted">
+        <i class="bi bi-journal-x" style="font-size: 3rem;"></i>
+        <p class="mt-3">Для этого предмета нет записей нагрузки
+            в {{ 'начальной' if school_level == 'elementary' else 'основной' }} школе</p>
+        <p>Сначала добавьте часы на странице
+            <a href="{{ url_for('workload.index', school_level=school_level) }}">Нагрузка</a>
+            или <a href="{{ url_for('import.index') }}">импортируйте учебный план</a>.
+        </p>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const classesData = [
+    {% for c in classes %}
+    { id: {{ c.id }}, name: "{{ c.name }}", hours: {{ class_hours.get(c.id, 0) }} }{{ "," if not loop.last }}
+    {% endfor %}
+];
+
+const teacherSelect = document.getElementById('teacherSelect');
+const addTeacherBtn = document.getElementById('addTeacherBtn');
+const teacherCards = document.getElementById('teacherCards');
+const noTeachersHint = document.getElementById('noTeachersHint');
+
+if (teacherSelect) {
+    teacherSelect.addEventListener('change', function() {
+        addTeacherBtn.disabled = !this.value;
+    });
+}
+
+if (addTeacherBtn) {
+    addTeacherBtn.addEventListener('click', function() {
+        const option = teacherSelect.selectedOptions[0];
+        if (!option || !option.value) return;
+
+        const tid = option.value;
+        const name = option.dataset.name;
+
+        option.style.display = 'none';
+        teacherSelect.value = '';
+        addTeacherBtn.disabled = true;
+
+        const card = document.createElement('div');
+        card.className = 'teacher-card';
+        card.dataset.teacherId = tid;
+
+        let checksHtml = '';
+        classesData.forEach(function(c) {
+            checksHtml += `
+                <label class="class-check-item">
+                    <input type="checkbox" name="t${tid}_c${c.id}" value="1">
+                    <span class="class-label">${c.name}</span>
+                    <span class="class-hours">${c.hours}ч</span>
+                </label>`;
+        });
+
+        card.innerHTML = `
+            <input type="hidden" name="teacher_ids" value="${tid}">
+            <div class="teacher-header">
+                <span class="teacher-name">
+                    <i class="bi bi-person"></i> ${name}
+                </span>
+                <button type="button" class="btn btn-sm btn-outline-danger remove-teacher-btn"
+                        title="Убрать учителя">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="class-checks">${checksHtml}</div>`;
+
+        teacherCards.appendChild(card);
+        bindCardEvents(card);
+        updateHint();
+    });
+}
+
+function bindCardEvents(card) {
+    card.querySelector('.remove-teacher-btn').addEventListener('click', function() {
+        const tid = card.dataset.teacherId;
+        const option = teacherSelect.querySelector(`option[value="${tid}"]`);
+        if (option) option.style.display = '';
+        card.remove();
+        updateHint();
+    });
+
+    card.querySelectorAll('.class-check-item input[type="checkbox"]').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+            this.closest('.class-check-item').classList.toggle('checked', this.checked);
+        });
+    });
+}
+
+function updateHint() {
+    if (noTeachersHint) {
+        const hasCards = teacherCards.querySelectorAll('.teacher-card').length > 0;
+        noTeachersHint.classList.toggle('d-none', hasCards);
+    }
+}
+
+document.querySelectorAll('.teacher-card').forEach(bindCardEvents);
+</script>
+{% endblock %}

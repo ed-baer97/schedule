@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Редактирование' if shift else 'Добавление' }} смены - Школьное расписание{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>
+        <i class="bi bi-clock"></i> 
+        {{ 'Редактирование смены' if shift else 'Добавление смены' }}
+    </h1>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('shifts.edit', id=shift.id) if shift else url_for('shifts.create') }}">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="name" class="form-label">Название *</label>
+                    <input type="text" class="form-control" id="name" name="name" 
+                           value="{{ shift.name if shift else '' }}" 
+                           placeholder="Например: 1 смена, 2 смена" required>
+                </div>
+                
+                <div class="col-md-6 mb-3">
+                    <label for="school_level" class="form-label">Уровень школы *</label>
+                    <select class="form-select" id="school_level" name="school_level" required>
+                        <option value="">Выберите...</option>
+                        <option value="elementary" {% if shift and shift.school_level == 'elementary' %}selected{% endif %}>
+                            Начальная школа
+                        </option>
+                        <option value="secondary" {% if shift and shift.school_level == 'secondary' %}selected{% endif %}>
+                            Основная школа
+                        </option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="start_lesson" class="form-label">Начальный урок</label>
+                    <input type="number" class="form-control" id="start_lesson" name="start_lesson" 
+                           value="{{ shift.start_lesson if shift else 1 }}" min="1">
+                    <small class="text-muted">С какого урока начинается смена</small>
+                </div>
+                
+                <div class="col-md-6 mb-3">
+                    <label for="lessons_count" class="form-label">Количество уроков</label>
+                    <input type="number" class="form-control" id="lessons_count" name="lessons_count" 
+                           value="{{ shift.lessons_count if shift else 6 }}" min="1">
+                    <small class="text-muted">Сколько уроков в этой смене</small>
+                </div>
+            </div>
+            
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> Сохранить
+                </button>
+                <a href="{{ url_for('shifts.index') }}" class="btn btn-outline-secondary">
+                    Отмена
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

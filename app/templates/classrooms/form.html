@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Редактирование' if classroom else 'Добавление' }} кабинета - Школьное расписание{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>
+        <i class="bi bi-door-open"></i> 
+        {{ 'Редактирование кабинета' if classroom else 'Добавление кабинета' }}
+    </h1>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('classrooms.edit', id=classroom.id) if classroom else url_for('classrooms.create') }}">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="number" class="form-label">Номер кабинета *</label>
+                    <input type="text" class="form-control" id="number" name="number" 
+                           value="{{ classroom.number if classroom else '' }}" required>
+                </div>
+                
+                <div class="col-md-6 mb-3">
+                    <label for="name" class="form-label">Название</label>
+                    <input type="text" class="form-control" id="name" name="name" 
+                           value="{{ classroom.name if classroom else '' }}"
+                           placeholder="Например: Физика, Спортзал">
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="floor" class="form-label">Этаж</label>
+                    <input type="number" class="form-control" id="floor" name="floor" 
+                           value="{{ classroom.floor if classroom else '' }}" min="1">
+                </div>
+                
+                <div class="col-md-6 mb-3">
+                    <label for="building" class="form-label">Корпус</label>
+                    <input type="text" class="form-control" id="building" name="building" 
+                           value="{{ classroom.building if classroom else '' }}">
+                </div>
+            </div>
+            
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="classes_capacity" class="form-label">Вместимость классов</label>
+                    <input type="number" class="form-control" id="classes_capacity" name="classes_capacity" 
+                           value="{{ classroom.classes_capacity if classroom and classroom.classes_capacity else 1 }}" 
+                           min="1" title="Сколько классов может занимать кабинет одновременно (спортзал — 2–3)">
+                    <small class="text-muted">Сколько классов в одном уроке может быть в кабинете (спортзал — 2–3)</small>
+                </div>
+            </div>
+            
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> Сохранить
+                </button>
+                <a href="{{ url_for('classrooms.index') }}" class="btn btn-outline-secondary">
+                    Отмена
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}{{ 'Редактирование' if subject else 'Добавление' }} предмета - Школьное расписание{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>
+        <i class="bi bi-book"></i> 
+        {{ 'Редактирование предмета' if subject else 'Добавление предмета' }}
+    </h1>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="POST" action="{{ url_for('subjects.edit', id=subject.id) if subject else url_for('subjects.create') }}">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label for="name" class="form-label">Название *</label>
+                    <input type="text" class="form-control" id="name" name="name" 
+                           value="{{ subject.name if subject else '' }}" required>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="requires_fixed_classroom" name="requires_fixed_classroom"
+                               {% if subject and subject.requires_fixed_classroom %}checked{% endif %}
+                               onchange="document.getElementById('default_classroom_group').classList.toggle('d-none', !this.checked)">
+                        <label class="form-check-label" for="requires_fixed_classroom">Требует фиксированный кабинет</label>
+                        <small class="form-text text-muted d-block">Информатика, Физкультура, Технология</small>
+                    </div>
+                </div>
+                <div class="col-md-6 mb-3 {% if not subject or not subject.requires_fixed_classroom %}d-none{% endif %}" id="default_classroom_group">
+                    <label for="default_classroom_id" class="form-label">Кабинет по умолчанию</label>
+                    <select class="form-select" id="default_classroom_id" name="default_classroom_id">
+                        <option value="">— Выберите кабинет —</option>
+                        {% for c in classrooms %}
+                        <option value="{{ c.id }}" {% if subject and subject.default_classroom_id == c.id %}selected{% endif %}>{{ c.display_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-lg"></i> Сохранить
+                </button>
+                <a href="{{ url_for('subjects.index') }}" class="btn btn-outline-secondary">
+                    Отмена
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
