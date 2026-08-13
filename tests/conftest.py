@@ -1,7 +1,7 @@
 """
 Pytest configuration: isolated SQLite DB for API tests.
 
-DATABASE_URL must be set before any import of app.config (see app/__init__.py).
+DATABASE_URL must be set before any import of app.config.
 """
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ os.close(_fd)
 os.environ["DATABASE_URL"] = "sqlite:///" + _TEST_DB_PATH.replace("\\", "/")
 
 import app.models  # noqa: E402, F401 — register all models on metadata
-from app import db  # noqa: E402
+from app.db import Base  # noqa: E402
 from backend.deps import engine  # noqa: E402
 
-db.Model.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001

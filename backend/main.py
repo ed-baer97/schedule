@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
 from backend.database import ensure_database
-from backend.deps import flask_app
+from backend.deps import engine
 from backend.routers import (
     assignments,
     classrooms,
@@ -30,7 +30,7 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    ensure_database(flask_app)
+    ensure_database(engine)
     yield
 
 
@@ -50,7 +50,7 @@ async def sqlalchemy_operational_handler(
             content={
                 "detail": (
                     "Схема базы данных устарела или неполная. "
-                    "Выполните из корня проекта: set FLASK_APP=run.py && flask db upgrade"
+                    "Выполните из корня проекта: alembic upgrade head"
                 ),
             },
         )

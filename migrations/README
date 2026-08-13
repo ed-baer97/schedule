@@ -1,1 +1,6 @@
-Single-database configuration for Flask.
+Alembic migrations for the school schedule database.
+
+From the repository root:
+
+    alembic upgrade head
+    alembic revision --autogenerate -m "description"

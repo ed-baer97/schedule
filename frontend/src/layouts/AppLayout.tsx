@@ -44,7 +44,7 @@ function ApiHealthBanner() {
     message = (
       <>
         <strong>База данных не готова.</strong> Выполните из корня:{' '}
-        <code>set FLASK_APP=run.py</code> и <code>flask db upgrade</code>
+        <code>alembic upgrade head</code>
         {db.missing_tables?.length ? (
           <span className="d-block small mt-1 opacity-75">
             Нет таблиц: {db.missing_tables.join(', ')}

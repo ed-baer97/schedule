@@ -128,7 +128,7 @@ def update_subject(
 def set_subject_color(
     subject_id: int, body: SubjectColorUpdate, db: Session = Depends(get_db)
 ) -> SubjectColorOut:
-    """Quick color change from the subjects list (Flask set_color parity)."""
+    """Quick color change from the subjects list."""
     s = db.get(Subject, subject_id)
     if s is None:
         raise HTTPException(status_code=404, detail="Subject not found")

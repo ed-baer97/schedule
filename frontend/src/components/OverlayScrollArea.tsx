@@ -69,21 +69,6 @@ export function OverlayScrollArea({ children, className = '', onScroll, onViewpo
       el.scrollTop === 0 &&
       el.scrollLeft === 0
     ) {
-      // #region agent log
-      fetch('http://127.0.0.1:7749/ingest/55d6f9a3-7152-4cf5-827c-1203474325d2', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1126ac' },
-        body: JSON.stringify({
-          sessionId: '1126ac',
-          runId: 'pre-fix',
-          hypothesisId: 'E',
-          location: 'OverlayScrollArea.tsx:useLayoutEffect',
-          message: 'restoring zeroed scroll',
-          data: { saved: saved.current, ch: el.clientHeight, sh: el.scrollHeight },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {})
-      // #endregion
       el.scrollLeft = saved.current.sl
       el.scrollTop = saved.current.st
     }

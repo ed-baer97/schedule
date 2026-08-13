@@ -1,4 +1,4 @@
-# 🎯 Система составления школьного расписания
+# Система составления школьного расписания
 
 ## Цель проекта
 
@@ -59,13 +59,12 @@
 ## Этапы разработки
 
 ### ✅ Этап 1: Инфраструктура
-- [x] Flask app factory, конфигурация
-- [x] SQLAlchemy + Flask-Migrate + PostgreSQL
+- [x] FastAPI, конфигурация
+- [x] SQLAlchemy + Alembic + PostgreSQL / SQLite
 - [x] Все модели данных
-- [x] Базовый UI шаблон
 
 ### 📦 Этап 2: Импорт из Excel
-- [x] Страница импорта с загрузкой файлов (React + FastAPI)
+- [x] Страница импорта с загрузкой файлов
 - [x] Скачивание шаблонов Excel
 - [x] Парсинг и валидация данных
 
@@ -87,11 +86,11 @@
 - [x] Печатное расписание
 - [x] Экспорт в Excel
 
-### 🌐 Этап 7: React + FastAPI (основной UI)
-- [x] Все разделы на React; Flask UI — legacy (`run.py`)
+### 🌐 Этап 7: React + FastAPI
+- [x] Все разделы на React
 - [x] `npm run dev` из корня; health-баннер при недоступном API
-- [x] Production: SPA из `frontend/dist` через FastAPI (опционально)
-- [x] FastAPI CRUD/отчёты/сетка и сервисы (AutoScheduler, Validator, ExcelImporter, solver) на SQLAlchemy Session; Flask app context только для Alembic при старте
+- [x] Production: SPA из `frontend/dist` через FastAPI
+- [x] CRUD, отчёты, сетка и сервисы (AutoScheduler, Validator, ExcelImporter, solver) на SQLAlchemy Session
 
 ---
 
@@ -99,13 +98,14 @@
 
 | Компонент | Технология |
 |-----------|------------|
-| Backend (API) | Python 3.11+, **FastAPI** (основной), Flask (legacy UI) |
+| Backend | Python 3.11+, **FastAPI** |
 | ORM | SQLAlchemy |
 | База данных | PostgreSQL (или SQLite для разработки/тестов) |
-| Миграции | Flask-Migrate (Alembic) |
+| Миграции | Alembic |
 | Excel | pandas, openpyxl |
 | Frontend | **React + Vite + TypeScript**, `@tanstack/react-query`, Bootstrap 5 |
 | Drag & Drop | Нативный HTML5 DnD в React |
+| Автосоставление | OR-Tools CP-SAT |
 
 ---
 

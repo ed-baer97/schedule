@@ -179,7 +179,6 @@ def update_lesson_times(
 ) -> BellScheduleApplied:
     """Replace the bell schedule for a shift.
 
-    Mirrors the Flask `_apply_bell_schedule_from_form` behaviour:
     `common` applies to every working day except the class-hour day;
     `class_day` applies to the class-hour day only (if set).
     """

@@ -1,28 +1,32 @@
-"""
-Teacher model
-"""
-from datetime import datetime
-from app import db
+"""Teacher model."""
+from datetime import datetime, timezone
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy.orm import relationship
+
+from app.db import Base
 
 
-class Teacher(db.Model):
-    """Teacher entity"""
-    __tablename__ = 'teachers'
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
-    id = db.Column(db.Integer, primary_key=True)
-    full_name = db.Column(db.String(200), nullable=False)
-    email = db.Column(db.String(100))
-    phone = db.Column(db.String(20))
-    home_classroom_id = db.Column(db.Integer, db.ForeignKey('classrooms.id'), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
-    assignments = db.relationship('TeachingAssignment', back_populates='teacher', lazy='dynamic')
-    home_classroom = db.relationship('Classroom', foreign_keys=[home_classroom_id])
+class Teacher(Base):
+    __tablename__ = "teachers"
+
+    id = Column(Integer, primary_key=True)
+    full_name = Column(String(200), nullable=False)
+    email = Column(String(100))
+    phone = Column(String(20))
+    home_classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    created_at = Column(DateTime, default=_utc_now)
+    updated_at = Column(DateTime, default=_utc_now, onupdate=_utc_now)
+
+    assignments = relationship("TeachingAssignment", back_populates="teacher", lazy="dynamic")
+    home_classroom = relationship("Classroom", foreign_keys=[home_classroom_id])
 
     def __repr__(self):
-        return f'<Teacher {self.full_name}>'
+        return f"<Teacher {self.full_name}>"
 
     @property
     def display_name(self):

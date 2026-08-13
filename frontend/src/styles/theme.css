@@ -1,4 +1,4 @@
-/* Школьное расписание — тема приложения (по мотивам Flask base.html) */
+/* Школьное расписание — тема приложения */
 :root {
   --primary-color: #2c3e50;
   --secondary-color: #3498db;
@@ -435,7 +435,7 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
   border: 2px solid;
   background: #fff;
   cursor: grab;
-  transition: box-shadow 0.15s ease, opacity 0.15s ease;
+  transition: box-shadow 0.12s ease, opacity 0.12s ease, background 0.12s ease;
 }
 
 .lesson-card:active {
@@ -452,19 +452,26 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
   color: #555;
 }
 
+.schedule-grid-table.is-teacher-hover .lesson-card {
+  opacity: 0.3;
+}
+
+.schedule-grid-table.is-teacher-hover .lesson-card.teacher-highlight,
 .lesson-card.teacher-highlight {
-  box-shadow: 0 0 0 3px var(--secondary-color);
-  z-index: 1;
+  opacity: 1;
+  background: #d4edfc !important;
+  box-shadow: inset 0 0 0 3px var(--secondary-color);
+  z-index: 2;
   position: relative;
 }
 
-.schedule-grid-table.is-teacher-hover .lesson-card:not(.teacher-highlight) {
-  opacity: 0.38;
+.schedule-grid-table.is-teacher-hover td:has(.teacher-highlight) {
+  background-color: #e8f4fc;
 }
 
 .schedule-grid-table.is-teacher-hover .lesson-card.teacher-highlight .teacher-name {
-  color: var(--secondary-color);
-  font-weight: 600;
+  color: #1a5276;
+  font-weight: 700;
 }
 
 /* ——— Dashboard quick links ——— */

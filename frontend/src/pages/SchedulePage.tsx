@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OverlayScrollArea } from '../components/OverlayScrollArea'
 import { extractApiError, apiJson } from '../api/client'
@@ -105,86 +105,6 @@ if (typeof window !== 'undefined') {
 
 const bootAnchor = typeof window !== 'undefined' ? window.location.hash.replace(/^#/, '') : ''
 
-function dbg(
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-  hypothesisId: string,
-) {
-  // #region agent log
-  fetch('http://127.0.0.1:7749/ingest/55d6f9a3-7152-4cf5-827c-1203474325d2', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '1126ac' },
-    body: JSON.stringify({
-      sessionId: '1126ac',
-      runId: 'pre-fix',
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {})
-  // #endregion
-}
-
-function dbg911(
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-  hypothesisId: string,
-) {
-  // #region agent log
-  fetch('http://127.0.0.1:7749/ingest/55d6f9a3-7152-4cf5-827c-1203474325d2', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '911585' },
-    body: JSON.stringify({
-      sessionId: '911585',
-      runId: 'pre-fix',
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {})
-  // #endregion
-}
-
-function elBox(el: Element | null) {
-  if (!el) return null
-  const r = el.getBoundingClientRect()
-  const cs = getComputedStyle(el)
-  return {
-    w: Math.round(r.width),
-    h: Math.round(r.height),
-    t: Math.round(r.top),
-    l: Math.round(r.left),
-    b: Math.round(r.bottom),
-    rgt: Math.round(r.right),
-    display: cs.display,
-    visibility: cs.visibility,
-    opacity: cs.opacity,
-    z: cs.zIndex,
-  }
-}
-
-if (typeof window !== 'undefined') {
-  // #region agent log
-  dbg(
-    'SchedulePage.tsx:boot',
-    'module boot hash',
-    {
-      bootAnchor,
-      href: window.location.href,
-      search: window.location.search,
-      hash: window.location.hash,
-    },
-    'A',
-  )
-  // #endregion
-}
-
 function dayAnchor(day: number) {
   return `day-${day}`
 }
@@ -195,6 +115,39 @@ function slotAnchor(classId: number, day: number, lesson: number) {
 
 function classAnchor(classId: number) {
   return `class-${classId}`
+}
+
+function teacherHoverKey(cell: Pick<CellOut, 'teacher_id' | 'teacher_name'>) {
+  if (cell.teacher_id != null) return `id-${cell.teacher_id}`
+  const name = (cell.teacher_name ?? '').trim()
+  return name ? `name-${name}` : ''
+}
+
+function buildTeacherHoverCss(keys: string[]) {
+  const esc = (s: string) => (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(s) : s)
+  return keys
+    .map((key) => {
+      const a = esc(key)
+      const table = `.schedule-grid-table:has(.lesson-card[data-teacher-key="${a}"]:hover)`
+      const match = `.lesson-card[data-teacher-key="${a}"]`
+      return `${table} ${match}{background:#d4edfc!important;box-shadow:inset 0 0 0 3px var(--secondary-color);opacity:1;position:relative;z-index:2}
+${table} ${match} .teacher-name{color:#1a5276;font-weight:700}
+${table} .lesson-card:not(${match}){opacity:.3}
+${table} td:has(${match}){background:#e8f4fc}`
+    })
+    .join('\n')
+}
+
+function applyTeacherHover(root: HTMLElement | null, key: string | null) {
+  if (!root) return
+  const prev = root.getAttribute('data-hover-teacher')
+  if ((key ?? '') === (prev ?? '')) return
+  if (key) root.setAttribute('data-hover-teacher', key)
+  else root.removeAttribute('data-hover-teacher')
+  root.classList.toggle('is-teacher-hover', Boolean(key))
+  root.querySelectorAll<HTMLElement>('.lesson-card[data-teacher-key]').forEach((el) => {
+    el.classList.toggle('teacher-highlight', Boolean(key) && el.dataset.teacherKey === key)
+  })
 }
 
 function replaceHash(id: string) {
@@ -261,41 +214,13 @@ function viewportReady(viewport: HTMLElement) {
 function scrollScheduleAnchor(id: string, align: 'start' | 'nearest' = 'nearest') {
   const target = document.getElementById(id)
   const viewport = target?.closest('.overlay-scroll-viewport') as HTMLElement | null
-  const metrics = viewport
-    ? {
-        ch: viewport.clientHeight,
-        sh: viewport.scrollHeight,
-        st: viewport.scrollTop,
-        ready: viewportReady(viewport),
-        taller: viewport.scrollHeight > viewport.clientHeight + 80,
-      }
-    : null
-  if (!target) {
-    // #region agent log
-    dbg('SchedulePage.tsx:scrollScheduleAnchor', 'no target', { id, metrics }, 'B')
-    // #endregion
-    return false
-  }
-  if (!viewport || !viewportReady(viewport)) {
-    // #region agent log
-    dbg('SchedulePage.tsx:scrollScheduleAnchor', 'viewport not ready', { id, metrics }, 'B')
-    // #endregion
-    return false
-  }
+  if (!target) return false
+  if (!viewport || !viewportReady(viewport)) return false
 
   const firstDay = viewport.querySelector('[id^="day-"]')
   const tableTaller = viewport.scrollHeight > viewport.clientHeight + 80
-  if (firstDay && firstDay.id !== id && !tableTaller) {
-    // #region agent log
-    dbg(
-      'SchedulePage.tsx:scrollScheduleAnchor',
-      'table not taller',
-      { id, firstDay: firstDay.id, metrics },
-      'B',
-    )
-    // #endregion
-    return false
-  }
+  if (firstDay && firstDay.id !== id && !tableTaller) return false
+
 
   const sticky = viewport.querySelector('thead') as HTMLElement | null
   const offsetY = (sticky?.getBoundingClientRect().height ?? 0) + 4
@@ -326,24 +251,8 @@ function scrollScheduleAnchor(id: string, align: 'start' | 'nearest' = 'nearest'
   }
 
   if (align === 'start' && firstDay && firstDay.id !== id && tableTaller && viewport.scrollTop < 8) {
-    // #region agent log
-    dbg(
-      'SchedulePage.tsx:scrollScheduleAnchor',
-      'scrollTop still ~0 after scrollTo',
-      { id, align, scrollTop: viewport.scrollTop, metrics },
-      'C',
-    )
-    // #endregion
     return false
   }
-  // #region agent log
-  dbg(
-    'SchedulePage.tsx:scrollScheduleAnchor',
-    'scroll ok',
-    { id, align, scrollTop: viewport.scrollTop, ch: viewport.clientHeight, sh: viewport.scrollHeight },
-    'C',
-  )
-  // #endregion
   return true
 }
 
@@ -377,7 +286,6 @@ export function SchedulePage() {
   const [toast, setToast] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
   const { expanded, setExpanded } = useScheduleExpand()
   const [slot, setSlot] = useState<SlotKey | null>(null)
-  const [hoveredTeacherId, setHoveredTeacherId] = useState<number | null>(null)
   const hashTimer = useRef<number>(0)
   const restoreDone = useRef(false)
   const syncAllowed = useRef(false)
@@ -393,23 +301,6 @@ export function SchedulePage() {
     const saved = loadSavedView(level, shiftId)
     const liveHash = window.location.hash.replace(/^#/, '')
     const hash = liveHash || saved?.hash || pendingAnchor.current || ''
-    // #region agent log
-    dbg(
-      'SchedulePage.tsx:tryRestoreAnchor',
-      'attempt',
-      {
-        level,
-        shiftId,
-        storageKey: viewStorageKey(level, shiftId),
-        liveHash,
-        boot: pendingAnchor.current,
-        saved,
-        hash,
-        href: window.location.href,
-      },
-      'A',
-    )
-    // #endregion
     if (hash) {
       const align = hash.startsWith('slot-') ? 'nearest' : 'start'
       if (scrollScheduleAnchor(hash, align)) {
@@ -434,14 +325,6 @@ export function SchedulePage() {
       }
     }
     if (!hash && (!saved || (saved.top === 0 && saved.left === 0))) {
-      // #region agent log
-      dbg(
-        'SchedulePage.tsx:tryRestoreAnchor',
-        'nothing to restore, finish',
-        { liveHash, boot: pendingAnchor.current, saved, shiftId, level },
-        'A',
-      )
-      // #endregion
       finishRestore()
       return true
     }
@@ -454,14 +337,6 @@ export function SchedulePage() {
     pendingAnchor.current = ''
     saveTab(next, null)
     const search = `?school_level=${next}`
-    // #region agent log
-    dbg(
-      'SchedulePage.tsx:setLevel',
-      'navigate level',
-      { next, search, href: window.location.href },
-      'A',
-    )
-    // #endregion
     navigate(
       { pathname: '/schedule', search, hash: '' },
       { replace: true, preventScrollReset: true },
@@ -476,14 +351,6 @@ export function SchedulePage() {
     sp.set('school_level', level)
     sp.set('shift_id', String(id))
     const search = `?${sp.toString()}`
-    // #region agent log
-    dbg(
-      'SchedulePage.tsx:setShiftId',
-      'navigate shift',
-      { id, level, search, href: window.location.href },
-      'A',
-    )
-    // #endregion
     navigate(
       { pathname: '/schedule', search, hash: window.location.hash },
       { replace: true, preventScrollReset: true },
@@ -524,19 +391,6 @@ export function SchedulePage() {
       top: viewport.scrollTop,
       left: viewport.scrollLeft,
     })
-    // #region agent log
-    dbg(
-      'SchedulePage.tsx:syncHashFromScroll',
-      'sync from scroll',
-      {
-        current,
-        prevHash: window.location.hash,
-        scrollTop: viewport.scrollTop,
-        syncAllowed: syncAllowed.current,
-      },
-      'D',
-    )
-    // #endregion
     window.clearTimeout(hashTimer.current)
     hashTimer.current = window.setTimeout(() => {
       if (window.location.hash !== `#${current}`) replaceHash(current)
@@ -550,61 +404,7 @@ export function SchedulePage() {
     return () => clearTimeout(t)
   }, [toast])
 
-  useLayoutEffect(() => {
-    const expandBtn = document.querySelector('.schedule-expand-btn')
-    const header = document.querySelector('.page-header')
-    const actions = document.querySelector('.schedule-grid-actions')
-    const page = document.querySelector('.schedule-grid-page')
-    const inView = (box: ReturnType<typeof elBox>) => {
-      if (!box) return false
-      return box.w > 0 && box.h > 0 && box.b > 0 && box.t < window.innerHeight && box.rgt > 0 && box.l < window.innerWidth
-    }
-    const expandBox = elBox(expandBtn)
-    const headerBox = elBox(header)
-    const actionsBox = elBox(actions)
-    // #region agent log
-    dbg911(
-      'SchedulePage.tsx:layout',
-      'button geometry',
-      {
-        expanded,
-        stored: sessionStorage.getItem('schedule:expanded'),
-        bodyExpanded: document.body.classList.contains('schedule-grid-expanded'),
-        pageClass: page?.className ?? null,
-        href: window.location.href,
-        expandInDom: !!expandBtn,
-        expandParent: expandBtn?.parentElement?.className ?? null,
-        expandBox,
-        headerBox,
-        actionsBox,
-        expandVisible: inView(expandBox),
-        headerVisible: inView(headerBox),
-        chromeH: document.querySelector('.schedule-grid-chrome')?.getBoundingClientRect().height ?? null,
-        pageH: page?.getBoundingClientRect().height ?? null,
-        vw: window.innerWidth,
-        vh: window.innerHeight,
-      },
-      'A-B-D-E',
-    )
-    // #endregion
-  }, [expanded])
-
   useEffect(() => {
-    // #region agent log
-    dbg(
-      'SchedulePage.tsx:mount',
-      'resolved tab',
-      {
-        level,
-        shiftId,
-        urlLevel: params.get('school_level'),
-        urlShift: params.get('shift_id'),
-        href: window.location.href,
-        stored: loadTab(),
-      },
-      'A',
-    )
-    // #endregion
     saveTab(level, shiftId)
     if (params.get('school_level')) return
     const sp = new URLSearchParams()
@@ -627,6 +427,12 @@ export function SchedulePage() {
         `/api/schedule/grid?school_level=${level}${shiftId ? `&shift_id=${shiftId}` : ''}`,
       ),
   })
+
+  const teacherHoverCss = useMemo(() => {
+    const cells = gridQ.data?.cells ?? []
+    const keys = [...new Set(cells.map(teacherHoverKey).filter(Boolean))]
+    return buildTeacherHoverCss(keys)
+  }, [gridQ.data])
 
   const addM = useMutation({
     mutationFn: async (p: {
@@ -694,14 +500,6 @@ export function SchedulePage() {
       if (cancelled) return
       if (tryRestoreAnchor()) return
       if (tries++ > 60) {
-        // #region agent log
-        dbg(
-          'SchedulePage.tsx:restoreEffect',
-          'gave up after retries',
-          { tries, href: window.location.href, hash: window.location.hash },
-          'B',
-        )
-        // #endregion
         finishRestore()
         return
       }
@@ -712,25 +510,6 @@ export function SchedulePage() {
       cancelled = true
     }
   }, [gridQ.data, level, shiftId])
-
-  // #region agent log
-  dbg911(
-    'SchedulePage.tsx:render',
-    'render path',
-    {
-      expanded,
-      stored: sessionStorage.getItem('schedule:expanded'),
-      bodyExpanded:
-        typeof document !== 'undefined' &&
-        document.body.classList.contains('schedule-grid-expanded'),
-      pending: gridQ.isPending && !gridQ.data,
-      error: gridQ.isError,
-      hasData: !!gridQ.data,
-      classCount: gridQ.data?.classes.length ?? null,
-    },
-    'A-C-E',
-  )
-  // #endregion
 
   if (gridQ.isPending && !gridQ.data) return <p>Загрузка…</p>
   if (gridQ.isError) return <p className="text-danger">{(gridQ.error as Error).message}</p>
@@ -890,30 +669,32 @@ export function SchedulePage() {
         </div>
       ) : (
         <div className="card schedule-grid-card">
+          {teacherHoverCss ? <style>{teacherHoverCss}</style> : null}
           <OverlayScrollArea
             key={`${level}-${shiftId ?? 'auto'}`}
             onScroll={syncHashFromScroll}
-            onViewportReady={(el) => {
-              // #region agent log
-              dbg(
-                'SchedulePage.tsx:onViewportReady',
-                'viewport ready',
-                {
-                  ch: el.clientHeight,
-                  sh: el.scrollHeight,
-                  st: el.scrollTop,
-                  restoreDone: restoreDone.current,
-                },
-                'E',
-              )
-              // #endregion
+            onViewportReady={() => {
               tryRestoreAnchor()
             }}
           >
             <table
-              className={`table table-bordered mb-0 schedule-grid-table${
-                hoveredTeacherId != null ? ' is-teacher-hover' : ''
-              }`}
+              className="table table-bordered mb-0 schedule-grid-table"
+              onMouseOver={(e) => {
+                const card = (e.target as HTMLElement).closest('.lesson-card') as HTMLElement | null
+                const key = card?.dataset.teacherKey || ''
+                applyTeacherHover(e.currentTarget, key || null)
+              }}
+              onMouseOut={(e) => {
+                const table = e.currentTarget
+                const rel = e.relatedTarget
+                const next =
+                  rel instanceof Element ? (rel.closest('.lesson-card') as HTMLElement | null) : null
+                if (next && table.contains(next)) {
+                  applyTeacherHover(table, next.dataset.teacherKey || null)
+                  return
+                }
+                applyTeacherHover(table, null)
+              }}
             >
               <thead className="table-light">
                 <tr>
@@ -990,25 +771,21 @@ export function SchedulePage() {
                                 <div
                                   key={cell.id}
                                   draggable
+                                  data-teacher-key={teacherHoverKey(cell) || undefined}
                                   onDragStart={(e) => {
-                                    setHoveredTeacherId(null)
+                                    applyTeacherHover(
+                                      e.currentTarget.closest('.schedule-grid-table'),
+                                      null,
+                                    )
                                     onDragStartCell(e, cell)
                                   }}
-                                  className={`lesson-card border rounded p-1 mb-1 position-relative${
-                                    hoveredTeacherId != null && cell.teacher_id === hoveredTeacherId
-                                      ? ' teacher-highlight'
-                                      : ''
-                                  }`}
+                                  className="lesson-card border rounded p-1 mb-1 position-relative"
                                   style={{
                                     background: 'white',
                                     borderColor: cell.subject_color,
                                     borderWidth: 2,
                                     borderStyle: 'solid',
                                   }}
-                                  onMouseEnter={() => {
-                                    if (cell.teacher_id != null) setHoveredTeacherId(cell.teacher_id)
-                                  }}
-                                  onMouseLeave={() => setHoveredTeacherId(null)}
                                 >
                                   {i > 0 && <hr className="my-1" />}
                                   <div className="fw-semibold" style={{ color: cell.subject_color }}>

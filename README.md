@@ -9,13 +9,14 @@
 - **Нагрузка**: редактирование часов по предметам и классам
 - **Назначения**: связь учитель-предмет-класс, деление на группы
 - **Ручное расписание**: drag & drop, валидация конфликтов
-- **Автоматическое составление**: стратегия "лесенка" по учителю
+- **Автоматическое составление**: стратегия «лесенка» по учителю и CP-SAT solver
 - **Отчёты**: просмотр и экспорт в Excel
 
 ## Требования
 
 - Python 3.11+
-- PostgreSQL 14+
+- Node.js 20+
+- PostgreSQL 14+ (или SQLite для разработки)
 
 ## Установка
 
@@ -41,15 +42,11 @@ source venv/bin/activate
 
 ```bash
 pip install -r requirements.txt
+npm install
+npm install --prefix frontend
 ```
 
 ### 4. Настройте базу данных
-
-Создайте базу данных PostgreSQL:
-
-```sql
-CREATE DATABASE school_schedule;
-```
 
 Скопируйте файл конфигурации:
 
@@ -58,22 +55,25 @@ copy env.example .env   # Windows
 cp env.example .env     # Linux/Mac
 ```
 
-Отредактируйте `.env`:
+По умолчанию используется SQLite (`instance/school_schedule.db`). Для PostgreSQL создайте базу и укажите URL в `.env`:
+
+```sql
+CREATE DATABASE school_schedule;
+```
 
 ```
 DATABASE_URL=postgresql://postgres:your_password@localhost:5432/school_schedule
-SECRET_KEY=your-secret-key-here
 ```
 
-### 5. Инициализируйте базу данных
+### 5. Примените миграции
 
 ```bash
-flask db init
-flask db migrate -m "Initial migration"
-flask db upgrade
+alembic upgrade head
 ```
 
-### 6. Создайте Excel шаблоны
+При первом запуске API миграции применяются автоматически, если схема ещё не готова.
+
+### 6. Создайте Excel-шаблоны (опционально)
 
 ```bash
 python create_templates.py
@@ -81,29 +81,13 @@ python create_templates.py
 
 ### 7. Запустите приложение
 
-```bash
-python run.py
-```
-
-Откройте в браузере: http://localhost:5000
-
-### 8. Запуск (React + FastAPI)
-
-Основной интерфейс — React (Vite) на `:5173`, основной API — FastAPI на `:8000`. Все разделы переведены на React: Главная, Учителя, Кабинеты, Классы, Смены (с редактором звонков), Предметы, Нагрузка, Назначения (общая таблица + матрица по предмету), Сетка расписания, Авто-составление, Настройки, Импорт Excel, Отчёты и экспорт.
-
-Старый Flask UI (`run.py`, `:5000`) остаётся в репозитории как legacy для миграций БД и резервного доступа, но не нужен для повседневной работы.
-
-**Один командный dev-старт (рекомендуется):**
-
-Из корня репозитория, при установленном Python venv и выполненном `npm install --prefix frontend`:
+Из корня репозитория:
 
 ```bash
-npm install
 npm run dev
 ```
 
-`npm run dev` поднимает FastAPI (`python run_api.py`) и Vite одновременно через `concurrently`.
-Откройте http://127.0.0.1:5173 — все запросы `/api/*` проксируются на FastAPI (порт 8000). Если API ещё не поднялся, в шапке появится баннер «API недоступен».
+`npm run dev` поднимает FastAPI (`python run_api.py`, порт 8000) и Vite одновременно. Откройте http://127.0.0.1:5173 — запросы `/api/*` проксируются на API. Если API ещё не поднялся, в шапке появится баннер «API недоступен».
 
 **Раздельный запуск:**
 
@@ -119,63 +103,62 @@ cd frontend && npm run dev
 
 Документация OpenAPI: http://127.0.0.1:8000/docs
 
-Старый Flask UI (`python run.py`) остаётся работоспособным по `http://127.0.0.1:5000`, но в основном меню React-приложения ссылок на него уже нет.
+Production-сборка фронта (`npm run build`) кладёт файлы в `frontend/dist`; FastAPI отдаёт SPA с того же порта 8000.
 
-**Ошибка `no such table` в логах uvicorn:** у выбранного файла SQLite ещё нет таблиц из миграций. Flask и FastAPI читают один `DATABASE_URL` из `.env`. Выполните из корня проекта (с активированным venv): `flask db upgrade`. Если `flask` не находит приложение, задайте `FLASK_APP=run.py` (Windows: `set FLASK_APP=run.py`).
+**Ошибка `no such table`:** у выбранной базы ещё нет таблиц из миграций. Выполните из корня проекта (с активированным venv): `alembic upgrade head`.
 
 ## Структура проекта
 
 ```
 schedule/
 ├── app/
-│   ├── __init__.py          # Flask app factory
-│   ├── config.py            # Конфигурация
+│   ├── config.py            # Конфигурация и DATABASE_URL
+│   ├── db.py                # SQLAlchemy Base
 │   ├── models/              # Модели данных
-│   ├── routes/              # Маршруты API
-│   ├── services/            # Бизнес-логика
-│   ├── templates/           # HTML шаблоны
+│   ├── services/            # Бизнес-логика (автосоставление, валидация, импорт)
 │   └── excel_templates/     # Шаблоны для импорта
 ├── backend/                 # FastAPI (JSON API)
-├── frontend/                # React (Vite), новый UI
-├── migrations/              # Миграции БД
-├── tests/                   # Тесты (в т.ч. API)
+├── frontend/                # React (Vite + TypeScript)
+├── migrations/              # Alembic
+├── tests/                   # Pytest
 ├── uploads/                 # Загруженные файлы
+├── alembic.ini
 ├── requirements.txt
-├── run.py
-└── PROJECT_GOALS.md         # Цели и план разработки
+├── run_api.py
+└── PROJECT_GOALS.md
 ```
 
 ## Использование
 
 ### 1. Импорт данных
 
-1. Перейдите в раздел "Импорт"
+1. Перейдите в раздел «Импорт»
 2. Скачайте шаблоны Excel
 3. Заполните данные
 4. Загрузите файлы
 
 ### 2. Настройка
 
-1. Добавьте смены (Начальная/Основная школа)
+1. Добавьте смены (начальная / основная школа)
 2. Привяжите классы к сменам
 3. Назначьте учителей к предметам
 
 ### 3. Составление расписания
 
-1. Перейдите в "Расписание"
+1. Перейдите в «Расписание»
 2. Выберите уровень школы и смену
 3. Перетаскивайте предметы в ячейки
 4. Или используйте автоматическое заполнение
 
 ### 4. Экспорт
 
-1. Перейдите в "Отчёты"
+1. Перейдите в «Отчёты»
 2. Выберите класс или учителя
 3. Скачайте Excel или распечатайте
 
 ## Деление на группы
 
-Если нужно разделить предмет на группы (например, Информатика или Иностранный язык):
+Если нужно разделить предмет на группы (например, информатика или иностранный язык):
 
 1. Перейдите в «Предметы» и нажмите «Назначения» у нужного предмета
 2. Выберите уровень школы (НШ / ОШ) и добавьте до двух учителей
@@ -185,10 +168,11 @@ schedule/
 
 ## Технологии
 
-- **Backend**: Python, FastAPI (JSON API + сервисы на SQLAlchemy Session); Flask + Jinja — legacy UI и Alembic (`flask db upgrade`)
-- **Database**: PostgreSQL (или SQLite для разработки/тестов)
+- **Backend**: Python 3.11+, FastAPI, SQLAlchemy, Alembic
+- **Database**: PostgreSQL (или SQLite для разработки и тестов)
 - **Frontend**: React + Vite + TypeScript + `@tanstack/react-query`, Bootstrap 5
 - **Excel**: pandas, openpyxl
+- **Автосоставление**: OR-Tools CP-SAT
 
 ## Тесты
 
@@ -196,7 +180,7 @@ schedule/
 python -m pytest -q
 ```
 
-`tests/conftest.py` использует временный SQLite, миграции Flask не нужны.
+`tests/conftest.py` использует временный SQLite; миграции для тестов не нужны.
 
 ## Лицензия
 

@@ -1,10 +1,12 @@
-"""Database bootstrap for FastAPI startup (same DB as Flask)."""
+"""Database bootstrap for FastAPI startup."""
 from __future__ import annotations
 
 import logging
 from typing import Any
 
 from sqlalchemy import inspect, text
+
+from app.config import PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,6 @@ _CORE_TABLES = frozenset(
     }
 )
 
-# Columns required by current SQLAlchemy models (SQLite schema drift guard)
 _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "classrooms": frozenset({"classes_capacity"}),
     "shifts": frozenset(
@@ -28,6 +29,8 @@ _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "schedule_settings": frozenset({"classroom_mode", "elementary_group_subjects_leave"}),
     "teachers": frozenset({"home_classroom_id"}),
 }
+
+_SCHEMA_HINT = "Схема неполная. Из корня проекта: alembic upgrade head"
 
 
 def _missing_columns(engine) -> dict[str, list[str]]:
@@ -72,41 +75,44 @@ def check_schema(engine) -> dict[str, Any]:
         }
 
 
-def ensure_database(flask_app) -> dict[str, Any]:
+def _run_alembic_upgrade() -> None:
+    from alembic import command
+    from alembic.config import Config as AlembicConfig
+
+    cfg = AlembicConfig(str(PROJECT_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(PROJECT_ROOT / "migrations"))
+    command.upgrade(cfg, "head")
+
+
+def ensure_database(engine) -> dict[str, Any]:
     """Apply pending Alembic migrations; create tables in empty dev DB."""
-    from app import db
+    from app.db import Base
+    import app.models  # noqa: F401
 
-    with flask_app.app_context():
-        before = check_schema(db.engine)
-        if before["schema_ready"]:
-            return {**before, "migrated": False, "message": "ok"}
+    before = check_schema(engine)
+    if before["schema_ready"]:
+        return {**before, "migrated": False, "message": "ok"}
 
-        if before["tables_count"] == 0:
-            try:
-                from flask_migrate import upgrade
+    if before["tables_count"] == 0:
+        try:
+            _run_alembic_upgrade()
+            logger.info("Database: alembic upgrade head (empty database)")
+        except Exception as exc:
+            logger.warning("Migration failed (%s), using create_all()", exc)
+            Base.metadata.create_all(bind=engine)
+    else:
+        try:
+            _run_alembic_upgrade()
+            logger.info("Database: alembic upgrade head (pending revisions)")
+        except Exception as exc:
+            logger.warning("Could not run upgrade: %s", exc)
+            if not before["schema_ready"]:
+                Base.metadata.create_all(bind=engine)
 
-                upgrade()
-                logger.info("Database: flask db upgrade (empty database)")
-            except Exception as exc:
-                logger.warning("Migration failed (%s), using create_all()", exc)
-                db.create_all()
-        else:
-            try:
-                from flask_migrate import upgrade
-
-                upgrade()
-                logger.info("Database: flask db upgrade (pending revisions)")
-            except Exception as exc:
-                logger.warning("Could not run upgrade: %s", exc)
-                if not before["schema_ready"]:
-                    db.create_all()
-
-        after = check_schema(db.engine)
-        after["migrated"] = True
-        if not after["schema_ready"]:
-            after["message"] = (
-                "Схема неполная. Из корня проекта: set FLASK_APP=run.py && flask db upgrade"
-            )
-        else:
-            after["message"] = "ok"
-        return after
+    after = check_schema(engine)
+    after["migrated"] = True
+    if not after["schema_ready"]:
+        after["message"] = _SCHEMA_HINT
+    else:
+        after["message"] = "ok"
+    return after

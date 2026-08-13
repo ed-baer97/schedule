@@ -1,10 +1,9 @@
-"""SQLAlchemy session factory for FastAPI (same DATABASE_URL as Flask)."""
+"""SQLAlchemy session factory for FastAPI."""
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import create_app
 from app.config import Config
 
 _connect_args = (
@@ -18,9 +17,6 @@ engine = create_engine(
     connect_args=_connect_args,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-
-flask_app = create_app()
 
 
 def get_db() -> Generator[Session, None, None]:

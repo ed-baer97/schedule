@@ -57,27 +57,6 @@ export function ScheduleLayout() {
 
   const value = useMemo(() => ({ expanded, setExpanded }), [expanded])
 
-  // #region agent log
-  fetch('http://127.0.0.1:7749/ingest/55d6f9a3-7152-4cf5-827c-1203474325d2', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': '911585' },
-    body: JSON.stringify({
-      sessionId: '911585',
-      runId: 'post-fix',
-      hypothesisId: 'stale-dist',
-      location: 'ScheduleLayout.tsx:render',
-      message: 'header expand button',
-      data: {
-        expanded,
-        isGrid,
-        path: loc.pathname,
-        href: typeof window !== 'undefined' ? window.location.href : '',
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {})
-  // #endregion
-
   return (
     <ScheduleExpandContext.Provider value={value}>
       <div className="schedule-hub">

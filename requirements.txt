@@ -1,7 +1,6 @@
-# Flask and extensions
-flask==3.0.0
-flask-sqlalchemy==3.1.1
-flask-migrate==4.0.5
+# SQLAlchemy + Alembic
+sqlalchemy>=2.0.36,<3
+alembic>=1.13.0
 
 # Environment variables
 python-dotenv==1.0.0
@@ -10,18 +9,10 @@ python-dotenv==1.0.0
 pandas>=2.2.0
 openpyxl>=3.1.2
 
-# Forms and validation
-flask-wtf==1.2.1
-wtforms==3.1.1
-email-validator==2.1.0
-
-# PDF export (for reports)
-reportlab==4.0.8
-
 # Constraint programming (CP-SAT schedule solver)
 ortools>=9.8.3296
 
-# FastAPI JSON API (parallel to Flask)
+# FastAPI
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
 python-multipart>=0.0.9

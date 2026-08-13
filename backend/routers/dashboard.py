@@ -1,4 +1,4 @@
-"""Dashboard statistics (mirrors Flask main.index)."""
+"""Dashboard statistics."""
 from fastapi import APIRouter, Depends
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
