@@ -1,0 +1,547 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { ApiError, apiJson } from '../api/client'
+
+type SchoolLevel = 'elementary' | 'secondary'
+
+type ShiftBrief = {
+  id: number
+  name: string
+  school_level: string
+  working_days: number
+  max_lessons_per_day: number
+  start_lesson: number
+  lessons_count: number
+}
+
+type TeacherBrief = { id: number; full_name: string }
+type ClassroomMode = 'class_room' | 'teacher_room'
+type ScheduleSettings = {
+  school_level: string
+  max_lessons_per_subject_per_day: number
+  classroom_mode: ClassroomMode
+  elementary_group_subjects_leave: boolean
+}
+type Warning = { type: string; message: string }
+
+function defaultSettings(level: SchoolLevel): ScheduleSettings {
+  return {
+    school_level: level,
+    max_lessons_per_subject_per_day: 2,
+    classroom_mode: 'class_room',
+    elementary_group_subjects_leave: true,
+  }
+}
+
+type PageData = {
+  teachers: TeacherBrief[]
+  classes: { id: number; name: string; school_level: string }[]
+  elementary_warnings: Warning[]
+  secondary_warnings: Warning[]
+  elementary_settings: ScheduleSettings | null
+  secondary_settings: ScheduleSettings | null
+  shifts_elementary: ShiftBrief[]
+  shifts_secondary: ShiftBrief[]
+}
+
+type StreamEvent =
+  | { type: 'progress'; current: number; total: number; message?: string }
+  | { type: 'done'; count: number; [k: string]: unknown }
+  | { type: 'error'; message: string }
+
+async function streamNdjson(
+  path: string,
+  body: object,
+  onEvent: (e: StreamEvent) => void,
+): Promise<void> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => '')
+    throw new ApiError(res.status, text)
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder('utf-8')
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let nl = buffer.indexOf('\n')
+    while (nl !== -1) {
+      const line = buffer.slice(0, nl).trim()
+      buffer = buffer.slice(nl + 1)
+      if (line) {
+        try {
+          onEvent(JSON.parse(line) as StreamEvent)
+        } catch {
+          /* ignore malformed line */
+        }
+      }
+      nl = buffer.indexOf('\n')
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      onEvent(JSON.parse(buffer.trim()) as StreamEvent)
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function AutoSchedulerPage() {
+  const qc = useQueryClient()
+  const [level, setLevel] = useState<SchoolLevel>('elementary')
+  const [solver, setSolver] = useState<'legacy' | 'cp_sat_mvp'>('legacy')
+  const [shiftId, setShiftId] = useState<number | ''>('')
+  const [timeLimit, setTimeLimit] = useState<number>(60)
+  const [seed, setSeed] = useState<number>(1)
+  const [diagnose, setDiagnose] = useState<boolean>(false)
+  const [teacherId, setTeacherId] = useState<number | ''>('')
+  const [running, setRunning] = useState<boolean>(false)
+  const [progress, setProgress] = useState<{ current: number; total: number; message: string }>(
+    { current: 0, total: 0, message: '' },
+  )
+  const [log, setLog] = useState<string[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const logRef = useRef<HTMLDivElement | null>(null)
+
+  const q = useQuery({
+    queryKey: ['schedule', 'auto', 'page-data'],
+    queryFn: () => apiJson<PageData>('/api/schedule/auto/page-data'),
+  })
+
+  const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
+
+  useEffect(() => {
+    if (!rulesMsg) return
+    const t = setTimeout(() => setRulesMsg(null), 4000)
+    return () => clearTimeout(t)
+  }, [rulesMsg])
+
+  const saveRules = useMutation({
+    mutationFn: (p: { level: SchoolLevel; payload: Partial<ScheduleSettings> }) =>
+      apiJson<ScheduleSettings>(`/api/schedule/settings/${p.level}`, {
+        method: 'PUT',
+        body: JSON.stringify(p.payload),
+      }),
+    onSuccess: async () => {
+      setRulesMsg({ kind: 'success', text: 'Правила сохранены' })
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
+    },
+    onError: (e: Error) => setRulesMsg({ kind: 'danger', text: e.message }),
+  })
+
+  function appendLog(line: string) {
+    setLog((prev) => {
+      const next = [...prev, line]
+      if (next.length > 500) next.splice(0, next.length - 500)
+      return next
+    })
+    requestAnimationFrame(() => {
+      if (logRef.current) {
+        logRef.current.scrollTop = logRef.current.scrollHeight
+      }
+    })
+  }
+
+  function resetState() {
+    setError(null)
+    setProgress({ current: 0, total: 0, message: '' })
+    setLog([])
+  }
+
+  function handleEvent(e: StreamEvent) {
+    if (e.type === 'progress') {
+      setProgress({
+        current: e.current,
+        total: e.total,
+        message: e.message ?? '',
+      })
+      if (e.message) appendLog(`[${e.current}/${e.total}] ${e.message}`)
+    } else if (e.type === 'done') {
+      appendLog(`Готово. Размещено уроков: ${e.count}.`)
+      const placed = e.solver_placed_count as number | undefined
+      if (placed != null) {
+        const unplaced = (e.unplaced as unknown[] | undefined)?.length ?? 0
+        appendLog(`Solver-pass: добавлено ${placed}, остаток назначений ${unplaced}.`)
+      }
+      const status = e.cp_sat_status as string | undefined
+      if (status) appendLog(`CP-SAT status: ${status}`)
+    } else if (e.type === 'error') {
+      setError(e.message)
+      appendLog(`Ошибка: ${e.message}`)
+    }
+  }
+
+  async function runAll() {
+    if (solver === 'cp_sat_mvp' && shiftId === '') {
+      setError('Для CP-SAT выберите смену')
+      return
+    }
+    resetState()
+    setRunning(true)
+    try {
+      await streamNdjson('/api/schedule/auto/all/stream', {
+        school_level: level,
+        solver,
+        shift_id: solver === 'cp_sat_mvp' ? Number(shiftId) : null,
+        time_limit_sec: timeLimit,
+        random_seed: seed,
+        diagnose,
+      }, handleEvent)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  async function runTeacher() {
+    if (teacherId === '') {
+      setError('Выберите учителя')
+      return
+    }
+    resetState()
+    setRunning(true)
+    try {
+      await streamNdjson('/api/schedule/auto/by-teacher/stream', {
+        teacher_id: Number(teacherId),
+        school_level: level,
+        diagnose,
+      }, handleEvent)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  async function doClear(filter: { school_level?: string; class_id?: number; teacher_id?: number }) {
+    if (!confirm('Очистить расписание? Удалит уроки из выбранной области.')) return
+    resetState()
+    setRunning(true)
+    try {
+      const res = await apiJson<{ count: number }>('/api/schedule/clear', {
+        method: 'POST',
+        body: JSON.stringify(filter),
+      })
+      appendLog(`Удалено уроков: ${res.count}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  if (q.isLoading) return <p>Загрузка…</p>
+  if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
+  const data = q.data!
+
+  const shifts = level === 'elementary' ? data.shifts_elementary : data.shifts_secondary
+  const warnings = level === 'elementary' ? data.elementary_warnings : data.secondary_warnings
+  const rules =
+    (level === 'elementary' ? data.elementary_settings : data.secondary_settings)
+    ?? defaultSettings(level)
+  const percent = progress.total > 0 ? Math.min(100, Math.round((progress.current / progress.total) * 100)) : 0
+
+  return (
+    <div>
+      <ul className="nav nav-tabs mb-3">
+        <li className="nav-item">
+          <button
+            type="button"
+            className={`nav-link ${level === 'elementary' ? 'active' : ''}`}
+            onClick={() => setLevel('elementary')}
+          >
+            Начальная школа
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
+            type="button"
+            className={`nav-link ${level === 'secondary' ? 'active' : ''}`}
+            onClick={() => setLevel('secondary')}
+          >
+            Основная школа
+          </button>
+        </li>
+      </ul>
+
+      {warnings.length > 0 && (
+        <div className="alert alert-warning py-2">
+          <strong>{warnings.length}</strong> предупреждений по кабинетам:
+          <ul className="mb-0 small">
+            {warnings.slice(0, 5).map((w, i) => (
+              <li key={i}>{w.message}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {rulesMsg && <div className={`alert alert-${rulesMsg.kind} py-2`}>{rulesMsg.text}</div>}
+
+      <RulesCard
+        key={level}
+        level={level}
+        initial={rules}
+        disabled={saveRules.isPending || running}
+        onSave={(payload) => saveRules.mutate({ level, payload })}
+      />
+
+      <div className="row g-3 mt-0">
+        <div className="col-md-6">
+          <div className="card shadow-sm h-100">
+            <div className="card-header fw-semibold">Заполнить всё (по уровню)</div>
+            <div className="card-body">
+              <div className="row g-2">
+                <div className="col-md-6">
+                  <label className="form-label small">Стратегия</label>
+                  <select
+                    className="form-select"
+                    value={solver}
+                    onChange={(e) => setSolver(e.target.value as 'legacy' | 'cp_sat_mvp')}
+                  >
+                    <option value="legacy">legacy (эвристики + граф)</option>
+                    <option value="cp_sat_mvp">cp_sat_mvp (OR-Tools, одна смена)</option>
+                  </select>
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label small">Смена (только для CP-SAT)</label>
+                  <select
+                    className="form-select"
+                    value={shiftId === '' ? '' : String(shiftId)}
+                    onChange={(e) => setShiftId(e.target.value === '' ? '' : Number(e.target.value))}
+                    disabled={solver !== 'cp_sat_mvp'}
+                  >
+                    <option value="">—</option>
+                    {shifts.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label small">Time limit, сек</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    min={1}
+                    value={timeLimit}
+                    onChange={(e) => setTimeLimit(Number(e.target.value) || 60)}
+                    disabled={solver !== 'cp_sat_mvp'}
+                  />
+                </div>
+                <div className="col-md-6">
+                  <label className="form-label small">Random seed</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={seed}
+                    onChange={(e) => setSeed(Number(e.target.value) || 1)}
+                    disabled={solver !== 'cp_sat_mvp'}
+                  />
+                </div>
+                <div className="col-12 form-check ms-2 mt-2">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    id="diagnoseAll"
+                    checked={diagnose}
+                    onChange={(e) => setDiagnose(e.target.checked)}
+                  />
+                  <label className="form-check-label" htmlFor="diagnoseAll">
+                    Диагностика остатка
+                  </label>
+                </div>
+              </div>
+              <div className="mt-3 d-flex gap-2">
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  disabled={running}
+                  onClick={runAll}
+                >
+                  Запустить
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-danger"
+                  disabled={running}
+                  onClick={() => doClear({ school_level: level })}
+                >
+                  Очистить уровень
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="col-md-6">
+          <div className="card shadow-sm h-100">
+            <div className="card-header fw-semibold">Заполнить по учителю (лесенка)</div>
+            <div className="card-body">
+              <label className="form-label small">Учитель</label>
+              <select
+                className="form-select mb-3"
+                value={teacherId === '' ? '' : String(teacherId)}
+                onChange={(e) => setTeacherId(e.target.value === '' ? '' : Number(e.target.value))}
+              >
+                <option value="">—</option>
+                {data.teachers.map((t) => (
+                  <option key={t.id} value={t.id}>{t.full_name}</option>
+                ))}
+              </select>
+              <div className="d-flex gap-2">
+                <button
+                  type="button"
+                  className="btn btn-success"
+                  disabled={running || teacherId === ''}
+                  onClick={runTeacher}
+                >
+                  Запустить
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-danger"
+                  disabled={running || teacherId === ''}
+                  onClick={() =>
+                    doClear({ school_level: level, teacher_id: Number(teacherId) })
+                  }
+                >
+                  Очистить уроки учителя
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="card shadow-sm mt-3">
+        <div className="card-header d-flex justify-content-between align-items-center">
+          <span className="fw-semibold">Прогресс</span>
+          {running && <span className="text-muted small">выполняется…</span>}
+        </div>
+        <div className="card-body">
+          <div className="progress mb-2" role="progressbar" aria-label="Progress">
+            <div
+              className="progress-bar"
+              style={{ width: `${percent}%` }}
+            >
+              {percent}%
+            </div>
+          </div>
+          {progress.message && (
+            <div className="small text-muted mb-2">{progress.message}</div>
+          )}
+          {error && <div className="alert alert-danger py-2">{error}</div>}
+          <div
+            ref={logRef}
+            className="border rounded p-2 small bg-light"
+            style={{ maxHeight: 280, overflow: 'auto', fontFamily: 'monospace' }}
+          >
+            {log.length === 0 ? (
+              <span className="text-muted">Лог пуст. Запустите авто-составление.</span>
+            ) : (
+              log.map((line, i) => <div key={i}>{line}</div>)
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RulesCard(props: {
+  level: SchoolLevel
+  initial: ScheduleSettings
+  disabled: boolean
+  onSave: (p: Partial<ScheduleSettings>) => void
+}) {
+  const { level, initial, disabled, onSave } = props
+  const showGroupLeave = level === 'elementary'
+  const [maxPerDay, setMaxPerDay] = useState(initial.max_lessons_per_subject_per_day)
+  const [mode, setMode] = useState<ClassroomMode>(initial.classroom_mode)
+  const [groupLeave, setGroupLeave] = useState(initial.elementary_group_subjects_leave)
+
+  useEffect(() => {
+    setMaxPerDay(initial.max_lessons_per_subject_per_day)
+    setMode(initial.classroom_mode)
+    setGroupLeave(initial.elementary_group_subjects_leave)
+  }, [
+    initial.max_lessons_per_subject_per_day,
+    initial.classroom_mode,
+    initial.elementary_group_subjects_leave,
+  ])
+
+  return (
+    <div className="card shadow-sm mb-3">
+      <div className="card-header fw-semibold">Правила</div>
+      <div className="card-body">
+        <p className="text-muted small mb-3">
+          Учебные дни в неделю и максимум уроков в день задаются в настройках каждой{' '}
+          <Link to="/shifts">смены</Link>.
+        </p>
+        <div className="row g-2">
+          <div className="col-md-6">
+            <label className="form-label small">Уроки одного предмета в день</label>
+            <select
+              className="form-select"
+              value={String(maxPerDay)}
+              onChange={(e) => setMaxPerDay(Number(e.target.value))}
+            >
+              <option value="1">1 урок</option>
+              <option value="2">2 урока подряд</option>
+            </select>
+            <div className="form-text">
+              При «2 урока подряд» автосоставление сначала ставит сдвоенные уроки; если не умещается — перебирает слоты, сохраняя этот приоритет.
+            </div>
+          </div>
+          <div className="col-md-6">
+            <label className="form-label small">Режим кабинетов</label>
+            <select
+              className="form-select"
+              value={mode}
+              onChange={(e) => setMode(e.target.value as ClassroomMode)}
+            >
+              <option value="class_room">Учитель приходит к классу</option>
+              <option value="teacher_room">Дети приходят к учителю</option>
+            </select>
+          </div>
+          {showGroupLeave && (
+            <div className="col-12 form-check ms-2 mt-2">
+              <input
+                className="form-check-input"
+                type="checkbox"
+                id="group-leave-auto"
+                checked={groupLeave}
+                onChange={(e) => setGroupLeave(e.target.checked)}
+              />
+              <label className="form-check-label" htmlFor="group-leave-auto">
+                Групповые уроки: дети уходят к учителю
+              </label>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          className="btn btn-primary mt-3"
+          disabled={disabled}
+          onClick={() =>
+            onSave({
+              max_lessons_per_subject_per_day: maxPerDay,
+              classroom_mode: mode,
+              elementary_group_subjects_leave: showGroupLeave ? groupLeave : undefined,
+            })
+          }
+        >
+          Сохранить
+        </button>
+      </div>
+    </div>
+  )
+}

@@ -1,11 +1,32 @@
 """
 Subjects CRUD routes
 """
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+import re
+
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from app import db
-from app.models import Subject, Teacher, SchoolClass, TeachingAssignment, Classroom
+from app.models import Subject, Teacher, SchoolClass, TeachingAssignment, Classroom, ScheduleCell
 
 subjects_bp = Blueprint('subjects', __name__)
+
+_HEX_COLOR = re.compile(r'^#[0-9A-Fa-f]{6}$')
+
+
+def _reassign_cells_and_delete_assignment(assignment, target_assignment_id):
+    """Move schedule cells to another assignment, flush, then delete (avoids FK NULL on delete)."""
+    cells = ScheduleCell.query.filter_by(assignment_id=assignment.id).all()
+    for cell in cells:
+        cell.assignment_id = target_assignment_id
+    if cells:
+        db.session.flush()
+    db.session.delete(assignment)
+
+
+def _parse_subject_color(form):
+    raw = (form.get('color') or '').strip()
+    if raw and _HEX_COLOR.match(raw):
+        return raw
+    return Subject.DEFAULT_COLOR
 
 
 @subjects_bp.route('/')
@@ -13,7 +34,12 @@ def index():
     """Two-level navigation: level choice or subject list by level"""
     school_level = request.args.get('school_level')
     if not school_level:
-        return render_template('subjects/index.html', school_level=None, subjects=[])
+        return render_template(
+            'subjects/index.html',
+            school_level=None,
+            subjects=[],
+            color_palette=Subject.COLOR_PALETTE,
+        )
     if school_level not in ('elementary', 'secondary'):
         return redirect(url_for('subjects.index'))
     subject_ids = db.session.query(TeachingAssignment.subject_id)\
@@ -23,9 +49,12 @@ def index():
     subject_ids = [s[0] for s in subject_ids]
     subjects = Subject.query.filter(Subject.id.in_(subject_ids))\
         .order_by(Subject.name).all() if subject_ids else []
-    return render_template('subjects/index.html',
-                           school_level=school_level,
-                           subjects=subjects)
+    return render_template(
+        'subjects/index.html',
+        school_level=school_level,
+        subjects=subjects,
+        color_palette=Subject.COLOR_PALETTE,
+    )
 
 
 @subjects_bp.route('/create', methods=['GET', 'POST'])
@@ -35,6 +64,7 @@ def create():
     if request.method == 'POST':
         subject = Subject(
             name=request.form['name'],
+            color=_parse_subject_color(request.form),
             requires_fixed_classroom='requires_fixed_classroom' in request.form,
             default_classroom_id=int(request.form['default_classroom_id']) if request.form.get('default_classroom_id') else None
         )
@@ -42,7 +72,13 @@ def create():
         db.session.commit()
         flash('Предмет добавлен', 'success')
         return redirect(url_for('subjects.index'))
-    return render_template('subjects/form.html', subject=None, classrooms=classrooms)
+    return render_template(
+        'subjects/form.html',
+        subject=None,
+        classrooms=classrooms,
+        default_subject_color=Subject.DEFAULT_COLOR,
+        color_palette=Subject.COLOR_PALETTE,
+    )
 
 
 @subjects_bp.route('/<int:id>/edit', methods=['GET', 'POST'])
@@ -52,12 +88,19 @@ def edit(id):
     classrooms = Classroom.query.order_by(Classroom.number).all()
     if request.method == 'POST':
         subject.name = request.form['name']
+        subject.color = _parse_subject_color(request.form)
         subject.requires_fixed_classroom = 'requires_fixed_classroom' in request.form
         subject.default_classroom_id = int(request.form['default_classroom_id']) if request.form.get('default_classroom_id') else None
         db.session.commit()
         flash('Данные предмета обновлены', 'success')
         return redirect(url_for('subjects.index'))
-    return render_template('subjects/form.html', subject=subject, classrooms=classrooms)
+    return render_template(
+        'subjects/form.html',
+        subject=subject,
+        classrooms=classrooms,
+        default_subject_color=Subject.DEFAULT_COLOR,
+        color_palette=Subject.COLOR_PALETTE,
+    )
 
 
 @subjects_bp.route('/<int:id>/delete', methods=['POST'])
@@ -67,6 +110,21 @@ def delete(id):
     db.session.delete(subject)
     db.session.commit()
     flash('Предмет удалён', 'success')
+    return redirect(url_for('subjects.index'))
+
+
+@subjects_bp.route('/<int:id>/set-color', methods=['POST'])
+def set_color(id):
+    """Быстрое изменение цвета со списка предметов (клик по превью)."""
+    subject = Subject.query.get_or_404(id)
+    subject.color = _parse_subject_color(request.form)
+    db.session.commit()
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({'ok': True, 'color': subject.display_color})
+    school_level = request.form.get('school_level') or request.args.get('school_level')
+    flash('Цвет сохранён', 'success')
+    if school_level in ('elementary', 'secondary'):
+        return redirect(url_for('subjects.index', school_level=school_level))
     return redirect(url_for('subjects.index'))
 
 
@@ -96,13 +154,19 @@ def assignments(id):
 
     class_teachers = {}
     class_hours = {}
+    split_class_ids = set()
     for a in subject_assignments:
         if a.class_id not in class_teachers:
             class_teachers[a.class_id] = set()
         if a.teacher_id:
             class_teachers[a.class_id].add(a.teacher_id)
+        if a.group_number is not None:
+            split_class_ids.add(a.class_id)
         if a.class_id not in class_hours:
             class_hours[a.class_id] = a.hours_per_week
+
+    classes_not_assigned = [c for c in classes if not class_teachers.get(c.id)]
+    classes_split = [c for c in classes if c.id in split_class_ids]
 
     attached_teacher_ids = db.session.query(TeachingAssignment.teacher_id)\
         .filter(
@@ -121,6 +185,8 @@ def assignments(id):
                            classes=classes,
                            class_teachers=class_teachers,
                            class_hours=class_hours,
+                           classes_not_assigned=classes_not_assigned,
+                           classes_split=classes_split,
                            attached_teachers=attached_teachers,
                            all_teachers=all_teachers,
                            school_level=school_level)
@@ -171,9 +237,7 @@ def save_assignments(id):
                     a.teacher_id = None
                     a.group_number = None
                 else:
-                    for cell in a.schedule_cells:
-                        cell.assignment_id = existing[0].id
-                    db.session.delete(a)
+                    _reassign_cells_and_delete_assignment(a, existing[0].id)
 
         elif len(checked_teachers) == 1:
             for i, a in enumerate(existing):
@@ -181,9 +245,7 @@ def save_assignments(id):
                     a.teacher_id = checked_teachers[0]
                     a.group_number = None
                 else:
-                    for cell in a.schedule_cells:
-                        cell.assignment_id = existing[0].id
-                    db.session.delete(a)
+                    _reassign_cells_and_delete_assignment(a, existing[0].id)
 
         elif len(checked_teachers) == 2:
             if len(existing) >= 2:
@@ -192,7 +254,7 @@ def save_assignments(id):
                 existing[1].teacher_id = checked_teachers[1]
                 existing[1].group_number = 2
                 for a in existing[2:]:
-                    db.session.delete(a)
+                    _reassign_cells_and_delete_assignment(a, existing[0].id)
             else:
                 existing[0].teacher_id = checked_teachers[0]
                 existing[0].group_number = 1

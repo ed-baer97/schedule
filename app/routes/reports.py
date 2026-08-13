@@ -3,7 +3,7 @@ Reports and export routes
 """
 import io
 from flask import Blueprint, render_template, request, make_response, send_file
-from app.models import SchoolClass, Teacher, Shift, ScheduleCell, TeachingAssignment, ScheduleSettings
+from app.models import SchoolClass, Teacher, Shift, ScheduleCell, TeachingAssignment
 import pandas as pd
 
 reports_bp = Blueprint('reports', __name__)
@@ -26,10 +26,9 @@ def index():
 def class_schedule(class_id):
     """Schedule for a specific class"""
     school_class = SchoolClass.query.get_or_404(class_id)
-    
-    settings = ScheduleSettings.query.filter_by(school_level=school_class.school_level).first()
-    working_days = settings.working_days if settings else 5
-    max_lessons = settings.max_lessons_per_day if settings else 7
+    shift = school_class.shift if school_class.shift_id else None
+    working_days = shift.working_days if shift else 5
+    max_lessons = shift.max_lessons_per_day if shift else 7
     
     cells = ScheduleCell.query.filter_by(class_id=class_id).all()
     
@@ -70,12 +69,19 @@ def teacher_schedule(teacher_id):
         schedule[key].append(cell)
     
     day_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
-    
+    working_days = 5
+    max_lessons = 7
+    for cell in cells:
+        sh = cell.school_class.shift if cell.school_class.shift_id else None
+        if sh:
+            working_days = max(working_days, sh.working_days)
+            max_lessons = max(max_lessons, sh.max_lessons_per_day)
+
     return render_template('reports/teacher_schedule.html',
                          teacher=teacher,
                          schedule=schedule,
-                         working_days=6,
-                         max_lessons=8,
+                         working_days=working_days,
+                         max_lessons=max_lessons,
                          day_names=day_names)
 
 
@@ -83,10 +89,9 @@ def teacher_schedule(teacher_id):
 def export_class_excel(class_id):
     """Export class schedule to Excel"""
     school_class = SchoolClass.query.get_or_404(class_id)
-    
-    settings = ScheduleSettings.query.filter_by(school_level=school_class.school_level).first()
-    working_days = settings.working_days if settings else 5
-    max_lessons = settings.max_lessons_per_day if settings else 7
+    shift = school_class.shift if school_class.shift_id else None
+    working_days = shift.working_days if shift else 5
+    max_lessons = shift.max_lessons_per_day if shift else 7
     
     cells = ScheduleCell.query.filter_by(class_id=class_id).all()
     
@@ -145,11 +150,18 @@ def export_teacher_excel(teacher_id):
     ).all()
     
     day_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
+    working_days = 5
+    max_lessons = 7
+    for cell in cells:
+        sh = cell.school_class.shift if cell.school_class.shift_id else None
+        if sh:
+            working_days = max(working_days, sh.working_days)
+            max_lessons = max(max_lessons, sh.max_lessons_per_day)
     
     # Build DataFrame
     data = []
-    for day in range(1, 7):
-        for lesson in range(1, 9):
+    for day in range(1, working_days + 1):
+        for lesson in range(1, max_lessons + 1):
             row = {'День': day_names[day - 1], 'Урок': lesson}
             
             matching_cells = [c for c in cells if c.day_of_week == day and c.lesson_number == lesson]
@@ -201,9 +213,13 @@ def export_all_excel(school_level):
     classes = SchoolClass.query.filter_by(school_level=school_level)\
         .order_by(SchoolClass.grade, SchoolClass.name).all()
     
-    settings = ScheduleSettings.query.filter_by(school_level=school_level).first()
-    working_days = settings.working_days if settings else 5
-    max_lessons = settings.max_lessons_per_day if settings else 7
+    working_days = 5
+    max_lessons = 7
+    for c in classes:
+        sh = c.shift if c.shift_id else None
+        if sh:
+            working_days = max(working_days, sh.working_days)
+            max_lessons = max(max_lessons, sh.max_lessons_per_day)
     
     day_names = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
     

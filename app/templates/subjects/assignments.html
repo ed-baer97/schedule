@@ -85,7 +85,7 @@
         <i class="bi bi-arrow-left"></i> {{ 'Начальная школа' if school_level == 'elementary' else 'Основная школа' }} — Предметы
     </a>
     <h1 class="mt-2">
-        <span class="color-preview me-2" style="background-color: white; border: 2px solid {{ subject.color }};"></span>
+        <span class="color-preview me-2" style="background-color: white; border: 2px solid {{ subject.display_color }};"></span>
         {{ subject.name }}
         <small class="text-muted fs-5">— Назначения учителей</small>
     </h1>
@@ -110,6 +110,37 @@
 <form id="assignmentsForm" method="POST"
       action="{{ url_for('subjects.save_assignments', id=subject.id) }}">
     <input type="hidden" name="school_level" value="{{ school_level }}">
+
+    <div class="row mb-3">
+        <div class="col-md-6">
+            <div class="alert alert-warning mb-0">
+                <div class="fw-semibold mb-1">
+                    <i class="bi bi-exclamation-circle"></i> Не назначены учителя
+                </div>
+                {% if classes_not_assigned %}
+                    {% for c in classes_not_assigned %}
+                        <span class="badge bg-warning text-dark me-1 mb-1">{{ c.name }}</span>
+                    {% endfor %}
+                {% else %}
+                    <span class="text-muted">Все классы имеют назначенных учителей</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="alert alert-info mb-0">
+                <div class="fw-semibold mb-1">
+                    <i class="bi bi-diagram-2"></i> Поделены на подгруппы
+                </div>
+                {% if classes_split %}
+                    {% for c in classes_split %}
+                        <span class="badge bg-info text-dark me-1 mb-1">{{ c.name }}</span>
+                    {% endfor %}
+                {% else %}
+                    <span class="text-muted">Подразделений нет</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
 
     <!-- Add teacher -->
     <div class="add-teacher-row">

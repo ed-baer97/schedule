@@ -296,6 +296,14 @@
             display: inline-block;
             vertical-align: middle;
         }
+
+        body.sidebar-collapsed .app-sidebar {
+            display: none !important;
+        }
+        body.sidebar-collapsed .app-main-column {
+            flex: 0 0 100% !important;
+            max-width: 100% !important;
+        }
     </style>
     
     {% block extra_css %}{% endblock %}
@@ -304,6 +312,11 @@
     <!-- Navbar -->
     <nav class="navbar navbar-expand-lg navbar-dark">
         <div class="container-fluid">
+            <button type="button" class="btn btn-outline-light btn-sm me-2 align-self-center" id="sidebarToggleBtn"
+                    title="Скрыть боковое меню" aria-expanded="true" aria-controls="appSidebar">
+                <i class="bi bi-layout-sidebar-inset" id="sidebarToggleIcon" aria-hidden="true"></i>
+                <span class="d-none d-lg-inline ms-1" id="sidebarToggleLabel">Скрыть</span>
+            </button>
             <a class="navbar-brand" href="{{ url_for('main.index') }}">
                 <i class="bi bi-calendar3"></i> Школьное расписание
             </a>
@@ -325,7 +338,7 @@
     <div class="container-fluid">
         <div class="row">
             <!-- Sidebar -->
-            <div class="col-md-2 sidebar py-3">
+            <div class="col-md-2 sidebar py-3 app-sidebar" id="appSidebar">
                 <nav class="nav flex-column">
                     <a class="nav-link {% if request.endpoint == 'main.index' %}active{% endif %}" 
                        href="{{ url_for('main.index') }}">
@@ -386,7 +399,7 @@
             </div>
 
             <!-- Main content -->
-            <div class="col-md-10 main-content">
+            <div class="col-md-10 main-content app-main-column" id="appMainColumn">
                 <!-- Flash messages -->
                 {% with messages = get_flashed_messages(with_categories=true) %}
                     {% if messages %}
@@ -416,6 +429,40 @@
                 bootstrap.Alert.getOrCreateInstance(alert).close();
             });
         }, 5000);
+
+        (function () {
+            var KEY = 'schedule_sidebar_collapsed';
+            var btn = document.getElementById('sidebarToggleBtn');
+            var icon = document.getElementById('sidebarToggleIcon');
+            var label = document.getElementById('sidebarToggleLabel');
+            if (!btn) return;
+
+            function apply(collapsed) {
+                document.body.classList.toggle('sidebar-collapsed', collapsed);
+                btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                if (icon) {
+                    icon.className = 'bi ' + (collapsed ? 'bi-layout-sidebar' : 'bi-layout-sidebar-inset');
+                }
+                if (label) {
+                    label.textContent = collapsed ? 'Меню' : 'Скрыть';
+                }
+                btn.title = collapsed ? 'Показать боковое меню' : 'Скрыть боковое меню (больше места для сетки)';
+            }
+
+            btn.addEventListener('click', function () {
+                var next = !document.body.classList.contains('sidebar-collapsed');
+                apply(next);
+                try {
+                    localStorage.setItem(KEY, next ? '1' : '0');
+                } catch (e) {}
+            });
+
+            try {
+                if (localStorage.getItem(KEY) === '1') {
+                    apply(true);
+                }
+            } catch (e) {}
+        })();
     </script>
     
     {% block extra_js %}{% endblock %}

@@ -1,0 +1,100 @@
+# CoAlly Nexus — Shared AI Memory
+
+## Context Rules (MANDATORY — do NOT skip)
+
+You are connected to CoAlly Nexus, a shared memory system for AI coding agents.
+Multiple agents (Claude Code, Cursor, Windsurf, etc.) share this memory.
+You MUST automatically save and retrieve context — do NOT wait for the user to ask.
+
+### Auto-Save: When to save (ALWAYS, automatically)
+
+Call `save_session_context` after ANY of these — no exceptions:
+1. Completing a task or significant code change
+2. Making an architecture or design decision
+3. Finding and fixing a bug (MUST include root cause in details)
+4. Discovering important information about the codebase
+5. Adding new features, endpoints, or components
+6. Refactoring code (include reasoning)
+7. Changing configuration, DB schema, or API contracts
+8. Ending a session — save even if work is incomplete
+
+### How to save
+
+  save_session_context(
+    task_description="Brief one-line summary of what was done",
+    project_name="schedule",  // ALWAYS specify project to avoid misrouting!
+    details="DETAILED explanation: root cause analysis, approach taken, reasoning, "
+            "alternatives considered, code patterns discovered. Be VERBOSE — other "
+            "agents will rely on this to understand your work.",
+    author="Cursor",
+    modules_affected=["path/to/changed/file.py", "path/to/other.ts"],
+    decisions=["Chose approach X over Y because Z"],
+    findings=["Discovered that component X depends on Y"],
+    commit_hash="<git commit hash if available>",
+    commit_message="<commit message if available>",
+    external_task_id="<JIRA-123, GH-42, etc. if known>",
+    mark_task_done=true  // set when task is fully complete
+  )
+
+### Rules for saving
+- `details` is the MOST IMPORTANT field — be verbose and specific
+- Always set `author` to "Cursor"
+- List ALL changed files in `modules_affected`
+- Capture decision REASONING, not just the decision
+- For bugs: ALWAYS include root cause analysis
+- Set `mark_task_done=true` when a task is fully complete (generates summary)
+
+### Auto-Retrieve: Before starting work
+
+BEFORE starting any task, check if someone already worked on related topics:
+
+  retrieve_task_context(query="<describe your current task>", project_name="schedule")
+
+If you know a ticket/issue ID:
+
+  retrieve_task_context(external_task_id="JIRA-123")
+
+### Auto-Index: Keep project map updated
+
+When starting work on a project for the first time, or after major structural changes:
+
+  index_project(
+    path="/path/to/project",
+    project_name="schedule",
+    agent_type="cursor",
+    tree="<output of `find . -type f` or directory listing>",
+    config_contents={"README.md": "<content>", "package.json": "<content>"}
+  )
+
+IMPORTANT for remote/SSE connections: You MUST pass `tree` (directory listing as text)
+and `config_contents` (dict of filename→content for key config files). Do NOT rely on
+the server having filesystem access to your project — it runs on a remote machine.
+Generate `tree` by listing files (`find . -maxdepth 3 -not -path '*/node_modules/*' -not -path '*/.git/*'`)
+and pass key configs (README.md, package.json, pyproject.toml, CLAUDE.md, etc.) in config_contents.
+
+### Error Handling and Retry
+
+If a CoAlly tool call fails (timeout, network error, 502):
+1. **Retry up to 3 times** with 5-second delays between attempts
+2. If all retries fail, **log the error locally** — save what you intended to store
+   in a local file `.coally-pending.md` with timestamp and full payload
+3. On next successful connection, sync pending entries from `.coally-pending.md`
+4. Include error details in your response to the user:
+   "CoAlly sync failed (error: [message]). Context saved locally in .coally-pending.md.
+    Will retry on next session."
+
+Never silently drop context. If CoAlly is unreachable — save locally, inform the user.
+
+If you get error -32602 "Invalid request parameters":
+- The MCP server was updated and your cached tool schema is stale
+- Fix: Reconnect to CoAlly MCP (/mcp → select CoAlly → Restart)
+- Then retry the failed operation
+
+### Cross-Agent Collaboration
+
+Other AI agents share this memory. When you save context:
+- Other agents can retrieve it instantly
+- New team members get full project history
+- Context survives across sessions and tool switches
+
+Be descriptive. Write as if explaining to a colleague who will continue your work.

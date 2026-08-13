@@ -1,13 +1,38 @@
 """
 Schedule management routes
 """
-from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
+import json
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, Response, stream_with_context
 from app import db
 from app.models import SchoolClass, Shift, TeachingAssignment, ScheduleCell, Classroom, ScheduleSettings, Teacher
 from app.services.validators import ScheduleValidator
 from app.services.auto_scheduler import AutoScheduler
 
 schedule_bp = Blueprint('schedule', __name__)
+
+
+def _grid_redirect(class_id=None, day=None, lesson=None, school_class=None):
+    """Stay on the same school/shift and cell after add/move/delete."""
+    if school_class is None and class_id:
+        school_class = SchoolClass.query.get(class_id)
+    school_level = request.form.get('school_level') or request.args.get('school_level')
+    shift_id = request.form.get('shift_id', type=int) or request.args.get('shift_id', type=int)
+    if school_class is not None:
+        school_level = school_level or school_class.school_level
+        if shift_id is None:
+            shift_id = school_class.shift_id
+        if class_id is None:
+            class_id = school_class.id
+    url = url_for(
+        'schedule.index',
+        school_level=school_level or 'elementary',
+        shift_id=shift_id,
+    )
+    if class_id is not None and day is not None and lesson is not None:
+        url += f'#slot-{class_id}-{day}-{lesson}'
+    elif day:
+        url += f'#day-{day}'
+    return redirect(url)
 
 
 @schedule_bp.route('/')
@@ -30,10 +55,15 @@ def index():
         classes = SchoolClass.query.filter_by(school_level=school_level)\
             .order_by(SchoolClass.grade, SchoolClass.name).all()
     
-    # Get schedule settings
+    # Get schedule settings (режим кабинетов и т.д.) и сетку недели/дня по смене
     settings = ScheduleSettings.query.filter_by(school_level=school_level).first()
-    working_days = settings.working_days if settings else 5
-    max_lessons = settings.max_lessons_per_day if settings else 7
+    current_shift = Shift.query.get(shift_id) if shift_id else None
+    if current_shift:
+        working_days = current_shift.working_days
+        max_lessons = current_shift.max_lessons_per_day
+    else:
+        working_days = 5
+        max_lessons = 7
     
     # Get schedule cells
     class_ids = [c.id for c in classes]
@@ -50,18 +80,44 @@ def index():
     day_names = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота']
     scheduler = AutoScheduler()
     classroom_warnings = scheduler.get_classroom_warnings(school_level)
-    
+
+    lesson_times_by_day = {}
+    class_hour_time_label = ''
+    lessons_range = list(range(1, max_lessons + 1))
+
+    if current_shift:
+        for lt in current_shift.lesson_times.all():
+            lesson_times_by_day.setdefault(lt.day_of_week, {})[lt.lesson_number] = (
+                f'{lt.time_start.strftime("%H:%M")}–{lt.time_end.strftime("%H:%M")}'
+            )
+        lessons_range = list(range(
+            current_shift.start_lesson,
+            current_shift.start_lesson + current_shift.lessons_count,
+        ))
+        if (
+            current_shift.class_hour_start
+            and current_shift.class_hour_end
+        ):
+            class_hour_time_label = (
+                f'{current_shift.class_hour_start.strftime("%H:%M")}–'
+                f'{current_shift.class_hour_end.strftime("%H:%M")}'
+            )
+
     return render_template('schedule/index.html',
                          classes=classes,
                          shifts=shifts,
                          current_shift_id=shift_id,
+                         current_shift=current_shift,
                          school_level=school_level,
                          schedule=schedule,
                          working_days=working_days,
                          max_lessons=max_lessons,
+                         lessons_range=lessons_range,
                          day_names=day_names,
                          schedule_settings=settings,
-                         classroom_warnings=classroom_warnings)
+                         classroom_warnings=classroom_warnings,
+                         lesson_times_by_day=lesson_times_by_day,
+                         class_hour_time_label=class_hour_time_label)
 
 
 @schedule_bp.route('/add-cell', methods=['POST'])
@@ -89,7 +145,7 @@ def add_cell():
             return jsonify({'status': 'error', 'errors': errors}), 400
         for error in errors:
             flash(error, 'danger')
-        return redirect(url_for('schedule.index'))
+        return _grid_redirect(class_id=class_id, day=day, lesson=lesson)
     
     # Create cell
     cell = ScheduleCell(
@@ -103,24 +159,33 @@ def add_cell():
     db.session.commit()
     
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return jsonify({'status': 'ok', 'cell_id': cell.id})
+        return jsonify({
+            'status': 'ok',
+            'cell_id': cell.id,
+            'anchor': f'slot-{class_id}-{day}-{lesson}',
+        })
     
     flash('Урок добавлен в расписание', 'success')
-    return redirect(url_for('schedule.index'))
+    return _grid_redirect(class_id=class_id, day=day, lesson=lesson)
 
 
 @schedule_bp.route('/remove-cell/<int:id>', methods=['POST'])
 def remove_cell(id):
     """Remove lesson from schedule"""
     cell = ScheduleCell.query.get_or_404(id)
+    class_id, day, lesson = cell.class_id, cell.day_of_week, cell.lesson_number
+    school_class = cell.school_class
     db.session.delete(cell)
     db.session.commit()
     
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return jsonify({'status': 'ok'})
+        return jsonify({
+            'status': 'ok',
+            'anchor': f'slot-{class_id}-{day}-{lesson}',
+        })
     
     flash('Урок удалён из расписания', 'success')
-    return redirect(url_for('schedule.index'))
+    return _grid_redirect(class_id=class_id, day=day, lesson=lesson, school_class=school_class)
 
 
 @schedule_bp.route('/move-cell', methods=['POST'])
@@ -148,7 +213,11 @@ def move_cell():
             return jsonify({'status': 'error', 'errors': errors}), 400
         for error in errors:
             flash(error, 'danger')
-        return redirect(url_for('schedule.index'))
+        return _grid_redirect(
+            class_id=new_class_id or cell.class_id,
+            day=new_day,
+            lesson=new_lesson,
+        )
     
     # Update cell
     cell.day_of_week = new_day
@@ -158,10 +227,13 @@ def move_cell():
     db.session.commit()
     
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return jsonify({'status': 'ok'})
+        return jsonify({
+            'status': 'ok',
+            'anchor': f'slot-{cell.class_id}-{new_day}-{new_lesson}',
+        })
     
     flash('Урок перемещён', 'success')
-    return redirect(url_for('schedule.index'))
+    return _grid_redirect(class_id=cell.class_id, day=new_day, lesson=new_lesson)
 
 
 @schedule_bp.route('/assignments-for-class/<int:class_id>')
@@ -178,7 +250,7 @@ def assignments_for_class(class_id):
             result.append({
                 'id': a.id,
                 'subject_name': a.subject.display_name,
-                'subject_color': a.subject.color,
+                'subject_color': a.subject.display_color,
                 'teacher_name': a.teacher.display_name if a.teacher else '?',
                 'group_number': a.group_number,
                 'remaining_hours': a.remaining_hours,
@@ -202,8 +274,6 @@ def settings():
             settings = ScheduleSettings(school_level=school_level)
             db.session.add(settings)
         
-        settings.working_days = int(request.form.get('working_days', 5))
-        settings.max_lessons_per_day = int(request.form.get('max_lessons_per_day', 7))
         settings.max_lessons_per_subject_per_day = int(request.form.get('max_lessons_per_subject_per_day', 2))
         settings.classroom_mode = request.form.get('classroom_mode', 'class_room')
         if school_level == 'elementary':
@@ -232,13 +302,18 @@ def auto_schedule_page():
     elementary_settings = ScheduleSettings.query.filter_by(school_level='elementary').first()
     secondary_settings = ScheduleSettings.query.filter_by(school_level='secondary').first()
     
+    shifts_elementary = Shift.query.filter_by(school_level='elementary').order_by(Shift.name).all()
+    shifts_secondary = Shift.query.filter_by(school_level='secondary').order_by(Shift.name).all()
+
     return render_template('schedule/auto.html',
                          teachers=teachers,
                          classes=classes,
                          elementary_warnings=elementary_warnings,
                          secondary_warnings=secondary_warnings,
                          elementary_settings=elementary_settings,
-                         secondary_settings=secondary_settings)
+                         secondary_settings=secondary_settings,
+                         shifts_elementary=shifts_elementary,
+                         shifts_secondary=shifts_secondary)
 
 
 @schedule_bp.route('/auto/by-teacher', methods=['POST'])
@@ -246,11 +321,34 @@ def auto_by_teacher():
     """Auto schedule by teacher (ladder strategy)"""
     teacher_id = int(request.form['teacher_id'])
     school_level = request.form.get('school_level', 'elementary')
+    diagnose = request.form.get('diagnose') in ('1', 'true', 'on')
     
     scheduler = AutoScheduler()
-    count = scheduler.schedule_by_teacher_ladder(teacher_id, school_level)
+    done = scheduler.schedule_by_teacher_ladder_result(teacher_id, school_level)
+    count = done.get('count', 0)
+    solver_placed = done.get('solver_placed_count', 0)
+    unplaced = done.get('unplaced', [])
+    diagnostics = done.get('diagnostics', [])
     
     flash(f'Автоматически распределено уроков: {count}', 'success')
+    if done.get('solver_used'):
+        flash(
+            f'Графовый solver-pass: добавлено {solver_placed}, остаток назначений {len(unplaced)}',
+            'info'
+        )
+    if diagnose:
+        items = diagnostics[:10]
+        if items:
+            first = items[0]
+            reason = first['top_reasons'][0]['reason'] if first['top_reasons'] else 'Нет подходящих слотов'
+            flash(
+                f'Диагностика: осталось назначений {len(items)}. '
+                f'Пример: {first["class_name"]} — {first["subject_name"]}, '
+                f'остаток {first["remaining_hours"]}, причина: {reason}',
+                'warning'
+            )
+        else:
+            flash('Диагностика: остатка по выбранному учителю нет.', 'info')
     return redirect(url_for('schedule.index', school_level=school_level))
 
 
@@ -258,12 +356,139 @@ def auto_by_teacher():
 def auto_all():
     """Auto schedule all remaining lessons"""
     school_level = request.form.get('school_level', 'elementary')
-    
+    diagnose = request.form.get('diagnose') in ('1', 'true', 'on')
+    solver = request.form.get('solver', 'legacy')
+    shift_id = request.form.get('shift_id', type=int)
+    time_limit_sec = request.form.get('time_limit_sec', type=float) or 60.0
+    random_seed = request.form.get('random_seed', type=int) or 1
+
     scheduler = AutoScheduler()
-    count = scheduler.auto_schedule_all(school_level)
-    
-    flash(f'Автоматически распределено уроков: {count}', 'success')
+    done = scheduler.auto_schedule_all_result(
+        school_level,
+        solver=solver,
+        shift_id=shift_id,
+        time_limit_sec=time_limit_sec,
+        random_seed=random_seed,
+    )
+    if done.get('type') == 'error':
+        flash(done.get('message', 'Ошибка автозаполнения'), 'danger')
+        return redirect(url_for('schedule.auto_schedule_page'))
+
+    count = done.get('count', 0)
+    solver_placed = done.get('solver_placed_count', 0)
+    unplaced = done.get('unplaced', [])
+    diagnostics = done.get('diagnostics', [])
+
+    if solver == 'cp_sat_mvp':
+        flash(
+            f'CP-SAT: статус {done.get("cp_sat_status", "?")}, '
+            f'размещено уроков: {count}, время решения: {done.get("wall_time_sec")} с',
+            'success' if done.get('cp_sat_status') in ('OPTIMAL', 'FEASIBLE') else 'warning',
+        )
+        if done.get('metrics_before') is not None and done.get('metrics_after') is not None:
+            mb = done['metrics_before']
+            ma = done['metrics_after']
+            flash(
+                f'Окна (промежутки): было {mb.get("teacher_window_gaps", "?")}, '
+                f'стало {ma.get("teacher_window_gaps", "?")}; '
+                f'баланс дней (штраф): было {mb.get("class_load_penalty", "?")}, '
+                f'стало {ma.get("class_load_penalty", "?")}',
+                'info',
+            )
+    else:
+        flash(f'Автоматически распределено уроков: {count}', 'success')
+    if done.get('solver_used') and solver != 'cp_sat_mvp':
+        flash(
+            f'Графовый solver-pass: добавлено {solver_placed}, остаток назначений {len(unplaced)}',
+            'info'
+        )
+    if diagnose:
+        items = diagnostics[:10]
+        if items:
+            first = items[0]
+            reason = first['top_reasons'][0]['reason'] if first['top_reasons'] else 'Нет подходящих слотов'
+            flash(
+                f'Диагностика: осталось назначений {len(items)}. '
+                f'Пример: {first["class_name"]} — {first["subject_name"]}, '
+                f'остаток {first["remaining_hours"]}, причина: {reason}',
+                'warning'
+            )
+        else:
+            flash('Диагностика: остатка по уровню нет.', 'info')
     return redirect(url_for('schedule.index', school_level=school_level))
+
+
+def _ndjson_stream(generator):
+    """Поток NDJSON для прогресса автозаполнения."""
+
+    def generate():
+        scheduler = AutoScheduler()
+        try:
+            for event in generator(scheduler):
+                yield json.dumps(event, ensure_ascii=False) + '\n'
+        except Exception as e:
+            yield json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False) + '\n'
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='application/x-ndjson',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+    )
+
+
+@schedule_bp.route('/auto/all/stream', methods=['POST'])
+def auto_all_stream():
+    """Потоковое автозаполнение всего расписания с прогрессом."""
+    if request.is_json and request.json:
+        school_level = request.json.get('school_level', 'elementary')
+        diagnose = bool(request.json.get('diagnose'))
+        solver = request.json.get('solver', 'legacy')
+        shift_id = request.json.get('shift_id')
+        shift_id = int(shift_id) if shift_id is not None else None
+        time_limit_sec = float(request.json.get('time_limit_sec') or 60)
+        random_seed = int(request.json.get('random_seed') or 1)
+    else:
+        school_level = request.form.get('school_level', 'elementary')
+        diagnose = request.form.get('diagnose') in ('1', 'true', 'on')
+        solver = request.form.get('solver', 'legacy')
+        shift_id = request.form.get('shift_id', type=int)
+        time_limit_sec = float(request.form.get('time_limit_sec') or 60)
+        random_seed = int(request.form.get('random_seed') or 1)
+
+    def gen(scheduler):
+        for event in scheduler.auto_schedule_all_iter(
+            school_level,
+            solver=solver,
+            shift_id=shift_id,
+            time_limit_sec=time_limit_sec,
+            random_seed=random_seed,
+        ):
+            if event.get('type') == 'done' and not diagnose:
+                event.pop('diagnostics', None)
+            yield event
+
+    return _ndjson_stream(gen)
+
+
+@schedule_bp.route('/auto/by-teacher/stream', methods=['POST'])
+def auto_by_teacher_stream():
+    """Потоковое автозаполнение по учителю с прогрессом."""
+    if request.is_json and request.json:
+        teacher_id = int(request.json['teacher_id'])
+        school_level = request.json.get('school_level', 'elementary')
+        diagnose = bool(request.json.get('diagnose'))
+    else:
+        teacher_id = int(request.form['teacher_id'])
+        school_level = request.form.get('school_level', 'elementary')
+        diagnose = request.form.get('diagnose') in ('1', 'true', 'on')
+
+    def gen(scheduler):
+        for event in scheduler.schedule_by_teacher_ladder_iter(teacher_id, school_level):
+            if event.get('type') == 'done' and not diagnose:
+                event.pop('diagnostics', None)
+            yield event
+
+    return _ndjson_stream(gen)
 
 
 @schedule_bp.route('/clear', methods=['POST'])

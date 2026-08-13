@@ -1,0 +1,653 @@
+"""Smoke tests for the newly-migrated schedule / assignments / reports / import endpoints."""
+from __future__ import annotations
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import delete
+
+from app.models import (
+    Classroom,
+    ScheduleCell,
+    ScheduleSettings,
+    SchoolClass,
+    Shift,
+    Subject,
+    Teacher,
+    TeachingAssignment,
+)
+from backend.deps import SessionLocal
+from backend.main import app
+
+client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _clear_db() -> None:
+    with SessionLocal() as session:
+        for model in (
+            ScheduleCell,
+            TeachingAssignment,
+            ScheduleSettings,
+            SchoolClass,
+            Shift,
+            Subject,
+            Classroom,
+            Teacher,
+        ):
+            session.execute(delete(model))
+        session.commit()
+
+
+def test_schedule_grid_empty() -> None:
+    r = client.get("/api/schedule/grid?school_level=elementary")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["school_level"] == "elementary"
+    assert body["classes"] == []
+    assert body["cells"] == []
+    assert body["day_names"][0] == "Понедельник"
+
+
+def test_schedule_settings_roundtrip() -> None:
+    initial = client.get("/api/schedule/settings")
+    assert initial.status_code == 200
+    body = initial.json()
+    assert body == {"elementary": None, "secondary": None}
+
+    upd = client.put(
+        "/api/schedule/settings/elementary",
+        json={
+            "max_lessons_per_subject_per_day": 1,
+            "classroom_mode": "teacher_room",
+            "elementary_group_subjects_leave": False,
+        },
+    )
+    assert upd.status_code == 200, upd.text
+    assert upd.json()["classroom_mode"] == "teacher_room"
+
+    refreshed = client.get("/api/schedule/settings").json()
+    assert refreshed["elementary"]["max_lessons_per_subject_per_day"] == 1
+
+
+def test_auto_page_data_empty() -> None:
+    r = client.get("/api/schedule/auto/page-data")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["teachers"] == []
+    assert body["classes"] == []
+    assert body["shifts_elementary"] == []
+
+
+def test_assignments_empty_list() -> None:
+    r = client.get("/api/assignments/?school_level=elementary")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_assignments_crud_flow() -> None:
+    with SessionLocal() as session:
+        subject = Subject(name="Математика")
+        teacher = Teacher(full_name="Иванов И.И.")
+        cls = SchoolClass(name="1А", grade=1, school_level="elementary")
+        session.add_all([subject, teacher, cls])
+        session.commit()
+        subject_id, teacher_id, class_id = subject.id, teacher.id, cls.id
+
+    created = client.post(
+        "/api/assignments/",
+        json={
+            "subject_id": subject_id,
+            "teacher_id": teacher_id,
+            "class_id": class_id,
+            "hours_per_week": 4,
+        },
+    )
+    assert created.status_code == 201, created.text
+    aid = created.json()["id"]
+
+    # PATCH /teacher
+    patched = client.patch(
+        f"/api/assignments/{aid}/teacher", json={"teacher_id": None}
+    )
+    assert patched.status_code == 200
+    assert patched.json()["teacher_id"] is None
+
+    # DELETE
+    deleted = client.delete(f"/api/assignments/{aid}")
+    assert deleted.status_code == 204
+    assert client.get(f"/api/assignments/{aid}").status_code == 404
+
+
+def test_reports_not_found() -> None:
+    assert client.get("/api/reports/class/99999").status_code == 404
+    assert client.get("/api/reports/teacher/99999").status_code == 404
+
+
+def test_import_template_not_found() -> None:
+    r = client.get("/api/import/template/does-not-exist")
+    assert r.status_code == 404
+
+
+def test_shift_lesson_times_roundtrip() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            name="Первая",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=3,
+            working_days=5,
+            max_lessons_per_day=5,
+            class_hour_day=5,
+        )
+        session.add(shift)
+        session.commit()
+        shift_id = shift.id
+
+    body = {
+        "common": {
+            "1": {"time_start": "08:00", "time_end": "08:45"},
+            "2": {"time_start": "08:55", "time_end": "09:40"},
+            "3": {"time_start": "", "time_end": ""},
+        },
+        "class_day": {
+            "1": {"time_start": "08:00", "time_end": "08:30"},
+        },
+    }
+    r = client.put(f"/api/shifts/{shift_id}/lesson-times", json=body)
+    assert r.status_code == 200, r.text
+    data = r.json()
+    # 4 working days (Mon-Thu) * 2 valid lessons + 1 class-day lesson on Fri = 9
+    assert data["inserted"] == 4 * 2 + 1
+    assert data["warnings"] == []
+
+    refreshed = client.get(f"/api/shifts/{shift_id}").json()
+    times = refreshed["lesson_times"]
+    assert any(
+        lt["day_of_week"] == 5 and lt["lesson_number"] == 1 and lt["time_start"] == "08:00"
+        for lt in times
+    )
+    assert any(
+        lt["day_of_week"] == 1 and lt["lesson_number"] == 2 and lt["time_end"] == "09:40"
+        for lt in times
+    )
+
+
+def test_shift_lesson_times_validation_warning() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            name="Бракованная",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=2,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        session.add(shift)
+        session.commit()
+        shift_id = shift.id
+
+    r = client.put(
+        f"/api/shifts/{shift_id}/lesson-times",
+        json={
+            "common": {
+                "1": {"time_start": "09:00", "time_end": "08:00"},
+                "2": {"time_start": "09:00", "time_end": ""},
+            },
+            "class_day": {},
+        },
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["inserted"] == 0
+    assert any("конец позже начала" in w for w in data["warnings"])
+    assert any("укажите оба времени" in w for w in data["warnings"])
+
+
+def test_subject_assignments_split_flow() -> None:
+    with SessionLocal() as session:
+        subject = Subject(name="Английский")
+        teacher_a = Teacher(full_name="Алексеева А.А.")
+        teacher_b = Teacher(full_name="Борисов Б.Б.")
+        cls = SchoolClass(name="5А", grade=5, school_level="secondary")
+        session.add_all([subject, teacher_a, teacher_b, cls])
+        session.commit()
+        session.add(
+            TeachingAssignment(
+                subject_id=subject.id,
+                class_id=cls.id,
+                teacher_id=teacher_a.id,
+                hours_per_week=3,
+            )
+        )
+        session.commit()
+        subject_id = subject.id
+        class_id = cls.id
+        a_id, b_id = teacher_a.id, teacher_b.id
+
+    view = client.get(
+        f"/api/subjects/{subject_id}/assignments?school_level=secondary"
+    )
+    assert view.status_code == 200, view.text
+    body = view.json()
+    assert body["classes"][0]["teacher_ids"] == [a_id]
+
+    save = client.post(
+        f"/api/subjects/{subject_id}/assignments",
+        json={
+            "school_level": "secondary",
+            "teacher_ids": [a_id, b_id],
+            "selections": {str(class_id): [a_id, b_id]},
+        },
+    )
+    assert save.status_code == 200, save.text
+    assert save.json() == {"ok": True, "errors": []}
+
+    with SessionLocal() as session:
+        rows = (
+            session.query(TeachingAssignment)
+            .filter(TeachingAssignment.subject_id == subject_id)
+            .order_by(TeachingAssignment.group_number)
+            .all()
+        )
+        assert len(rows) == 2
+        assert {r.teacher_id for r in rows} == {a_id, b_id}
+        assert {r.group_number for r in rows} == {1, 2}
+        assert all(r.hours_per_week == 3 for r in rows)
+
+
+def test_subject_color_patch() -> None:
+    with SessionLocal() as session:
+        subject = Subject(name="ИЗО")
+        session.add(subject)
+        session.commit()
+        subject_id = subject.id
+
+    r = client.patch(
+        f"/api/subjects/{subject_id}/color",
+        json={"color": "#e74c3c"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["display_color"] == "#e74c3c"
+
+    palette = client.get("/api/subjects/meta/color-palette")
+    assert palette.status_code == 200
+    assert "#3498db" in palette.json()
+
+
+def test_schedule_cell_crud_and_report() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        subject = Subject(name="Математика")
+        teacher = Teacher(full_name="Сидоров С.С.")
+        cls = SchoolClass(name="1Б", grade=1, school_level="elementary")
+        session.add_all([shift, subject, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        assignment = TeachingAssignment(
+            subject_id=subject.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=4,
+        )
+        session.add(assignment)
+        session.commit()
+        class_id, assignment_id, teacher_id = cls.id, assignment.id, teacher.id
+
+    created = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    cell_id = created.json()["id"]
+    assert created.json()["subject_name"] == "Математика"
+
+    grid = client.get("/api/schedule/grid?school_level=elementary")
+    assert grid.status_code == 200
+    assert any(c["id"] == cell_id for c in grid.json()["cells"])
+
+    moved = client.patch(
+        f"/api/schedule/cells/{cell_id}",
+        json={"day_of_week": 2, "lesson_number": 2},
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["day_of_week"] == 2
+
+    report = client.get(f"/api/reports/class/{class_id}")
+    assert report.status_code == 200
+    assert len(report.json()["cells"]) == 1
+
+    xlsx = client.get(f"/api/reports/export/class/{class_id}")
+    assert xlsx.status_code == 200
+    assert "spreadsheetml" in xlsx.headers.get("content-type", "")
+
+    teacher_xlsx = client.get(f"/api/reports/export/teacher/{teacher_id}")
+    assert teacher_xlsx.status_code == 200
+
+    assert client.delete(f"/api/schedule/cells/{cell_id}").status_code == 204
+    assert client.get("/api/schedule/grid?school_level=elementary").json()["cells"] == []
+
+
+def test_subject_assignments_too_many_teachers() -> None:
+    with SessionLocal() as session:
+        subject = Subject(name="История")
+        teachers = [Teacher(full_name=f"T{i}") for i in range(3)]
+        cls = SchoolClass(name="7А", grade=7, school_level="secondary")
+        session.add_all([subject, *teachers, cls])
+        session.commit()
+        session.add(
+            TeachingAssignment(
+                subject_id=subject.id,
+                class_id=cls.id,
+                teacher_id=teachers[0].id,
+                hours_per_week=2,
+            )
+        )
+        session.commit()
+        subject_id = subject.id
+        class_id = cls.id
+        tids = [t.id for t in teachers]
+
+    r = client.post(
+        f"/api/subjects/{subject_id}/assignments",
+        json={
+            "school_level": "secondary",
+            "teacher_ids": tids,
+            "selections": {str(class_id): tids},
+        },
+    )
+    assert r.status_code == 200
+    res = r.json()
+    assert res["ok"] is False
+    assert any("максимум 2 учителя" in e for e in res["errors"])
+
+
+def _seed_two_classes_one_teacher() -> dict[str, int]:
+    with SessionLocal() as session:
+        shift = Shift(
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        math = Subject(name="Математика")
+        rus = Subject(name="Русский")
+        teacher = Teacher(full_name="Петров П.П.")
+        other = Teacher(full_name="Сидорова С.С.")
+        c1 = SchoolClass(name="1А", grade=1, school_level="elementary")
+        c2 = SchoolClass(name="1Б", grade=1, school_level="elementary")
+        session.add_all([shift, math, rus, teacher, other, c1, c2])
+        session.flush()
+        c1.shift_id = shift.id
+        c2.shift_id = shift.id
+        a1 = TeachingAssignment(
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c1.id,
+            hours_per_week=4,
+        )
+        a2 = TeachingAssignment(
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c2.id,
+            hours_per_week=4,
+        )
+        a3 = TeachingAssignment(
+            subject_id=rus.id,
+            teacher_id=other.id,
+            class_id=c1.id,
+            hours_per_week=1,
+        )
+        session.add_all([a1, a2, a3])
+        session.commit()
+        return {
+            "c1": c1.id,
+            "c2": c2.id,
+            "a1": a1.id,
+            "a2": a2.id,
+            "a3": a3.id,
+        }
+
+
+def test_manual_cell_teacher_conflict_returns_reason() -> None:
+    ids = _seed_two_classes_one_teacher()
+    first = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": ids["a1"],
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    conflict = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c2"],
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": ids["a2"],
+        },
+    )
+    assert conflict.status_code == 422, conflict.text
+    errors = conflict.json()["detail"]["errors"]
+    assert any("Петров" in e and "занят" in e and "1А" in e for e in errors)
+
+
+def test_manual_cell_class_conflict_returns_reason() -> None:
+    ids = _seed_two_classes_one_teacher()
+    first = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 1,
+            "lesson_number": 2,
+            "assignment_id": ids["a1"],
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    conflict = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 1,
+            "lesson_number": 2,
+            "assignment_id": ids["a3"],
+        },
+    )
+    assert conflict.status_code == 422, conflict.text
+    errors = conflict.json()["detail"]["errors"]
+    assert any("Класс уже занят" in e and "Математика" in e for e in errors)
+
+
+def test_manual_cell_hours_exhausted_returns_reason() -> None:
+    ids = _seed_two_classes_one_teacher()
+    first = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 1,
+            "lesson_number": 3,
+            "assignment_id": ids["a3"],
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    extra = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 2,
+            "lesson_number": 3,
+            "assignment_id": ids["a3"],
+        },
+    )
+    assert extra.status_code == 422, extra.text
+    errors = extra.json()["detail"]["errors"]
+    assert any("уже расставлены" in e and "Русский" in e for e in errors)
+
+
+def _seed_shift2_math_teacher(n_classes: int = 6, hours: int = 5) -> dict[str, int]:
+    """One teacher, N classes × `hours` in a 5×6 second-shift grid (exactly N*hours slots)."""
+    with SessionLocal() as session:
+        shift = Shift(
+            name="2 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=6,
+            working_days=5,
+            max_lessons_per_day=7,
+        )
+        math = Subject(name="Математика")
+        teacher = Teacher(full_name="Баер Эдуард Викторович")
+        session.add_all([shift, math, teacher])
+        session.flush()
+        classes = []
+        assignments = []
+        for i in range(n_classes):
+            cls = SchoolClass(
+                name=f"5{chr(ord('А') + i)}",
+                grade=5,
+                school_level="secondary",
+                shift_id=shift.id,
+            )
+            session.add(cls)
+            session.flush()
+            classes.append(cls)
+            assignments.append(
+                TeachingAssignment(
+                    subject_id=math.id,
+                    teacher_id=teacher.id,
+                    class_id=cls.id,
+                    hours_per_week=hours,
+                )
+            )
+        session.add_all(assignments)
+        session.add(
+            ScheduleSettings(
+                school_level="secondary",
+                max_lessons_per_subject_per_day=2,
+                classroom_mode="class_room",
+                elementary_group_subjects_leave=True,
+            )
+        )
+        session.commit()
+        return {
+            "teacher_id": teacher.id,
+            "shift_id": shift.id,
+            "class_ids": [c.id for c in classes],
+            "assignment_ids": [a.id for a in assignments],
+        }
+
+
+def _same_day_pair_stats(teacher_id: int) -> tuple[int, int]:
+    """Return (contiguous same-day blocks, split same-day blocks) for a teacher."""
+    from collections import defaultdict
+
+    with SessionLocal() as session:
+        cells = (
+            session.query(ScheduleCell)
+            .join(TeachingAssignment)
+            .filter(TeachingAssignment.teacher_id == teacher_id)
+            .all()
+        )
+        by: dict[tuple[int, int], list[int]] = defaultdict(list)
+        for cell in cells:
+            by[(cell.class_id, cell.day_of_week)].append(cell.lesson_number)
+        adjacent = 0
+        split = 0
+        for lessons in by.values():
+            if len(lessons) < 2:
+                continue
+            ordered = sorted(lessons)
+            if ordered[-1] - ordered[0] == len(ordered) - 1:
+                adjacent += 1
+            else:
+                split += 1
+        return adjacent, split
+
+
+def test_teacher_ladder_fits_30_hours_on_empty_grid() -> None:
+    ids = _seed_shift2_math_teacher()
+    with SessionLocal() as session:
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session).schedule_by_teacher_ladder_result(
+            ids["teacher_id"], "secondary"
+        )
+        remaining = sum(
+            a.remaining_hours
+            for a in session.query(TeachingAssignment).filter(
+                TeachingAssignment.teacher_id == ids["teacher_id"]
+            )
+        )
+    assert remaining == 0, result
+    assert result["count"] == 30
+    adjacent, split = _same_day_pair_stats(ids["teacher_id"])
+    assert split == 0, (adjacent, split)
+    assert adjacent == 12, (adjacent, split)
+
+
+def test_teacher_ladder_relocates_clustered_leftover_hour() -> None:
+    """Last class has 4 of 5 hours on Thu/Fri; only Fri-6 is free — must shift another lesson."""
+    ids = _seed_shift2_math_teacher()
+    class_ids = ids["class_ids"]
+    assignment_ids = ids["assignment_ids"]
+    # Clustered packing that leaves Fri lesson 6 empty and 5Е (last) needing 1 more hour.
+    # C0: Mon1-2 Tue1-2 Wed1 | C1: Mon3-4 Tue3-4 Wed2 | C2: Mon5-6 Tue5-6 Wed3
+    # C3: Wed4-5 Thu1-2 Fri1 | C4: Wed6 Thu3-4 Fri2-3 | C5: Thu5-6 Fri4-5 (4h)
+    layout = [
+        (0, [(1, 1), (1, 2), (2, 1), (2, 2), (3, 1)]),
+        (1, [(1, 3), (1, 4), (2, 3), (2, 4), (3, 2)]),
+        (2, [(1, 5), (1, 6), (2, 5), (2, 6), (3, 3)]),
+        (3, [(3, 4), (3, 5), (4, 1), (4, 2), (5, 1)]),
+        (4, [(3, 6), (4, 3), (4, 4), (5, 2), (5, 3)]),
+        (5, [(4, 5), (4, 6), (5, 4), (5, 5)]),
+    ]
+    with SessionLocal() as session:
+        for idx, slots in layout:
+            for day, lesson in slots:
+                session.add(
+                    ScheduleCell(
+                        class_id=class_ids[idx],
+                        day_of_week=day,
+                        lesson_number=lesson,
+                        assignment_id=assignment_ids[idx],
+                    )
+                )
+        session.commit()
+
+    with SessionLocal() as session:
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session).schedule_by_teacher_ladder_result(
+            ids["teacher_id"], "secondary"
+        )
+        session.expire_all()
+        last = session.get(TeachingAssignment, assignment_ids[5])
+        remaining = sum(
+            a.remaining_hours
+            for a in session.query(TeachingAssignment).filter(
+                TeachingAssignment.teacher_id == ids["teacher_id"]
+            )
+        )
+        assert last is not None
+        assert last.remaining_hours == 0, result
+        assert remaining == 0, result
+

@@ -17,3 +17,13 @@ email-validator==2.1.0
 
 # PDF export (for reports)
 reportlab==4.0.8
+
+# Constraint programming (CP-SAT schedule solver)
+ortools>=9.8.3296
+
+# FastAPI JSON API (parallel to Flask)
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+python-multipart>=0.0.9
+httpx>=0.27.0
+pytest>=8.3.0

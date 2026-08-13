@@ -136,9 +136,12 @@ def download_template(template_type):
     if template_type == 'teachers':
         filepath = os.path.join(templates_dir, 'teachers_template.xlsx')
         filename = 'шаблон_учителя.xlsx'
-    elif template_type == 'curriculum':
-        filepath = os.path.join(templates_dir, 'curriculum_template.xlsx')
-        filename = 'шаблон_учебный_план.xlsx'
+    elif template_type == 'curriculum_elementary':
+        filepath = os.path.join(templates_dir, 'curriculum_elementary_template.xlsx')
+        filename = 'шаблон_учебный_план_начальная.xlsx'
+    elif template_type == 'curriculum_secondary':
+        filepath = os.path.join(templates_dir, 'curriculum_secondary_template.xlsx')
+        filename = 'шаблон_учебный_план_основная.xlsx'
     elif template_type == 'classrooms':
         filepath = os.path.join(templates_dir, 'classrooms_template.xlsx')
         filename = 'шаблон_кабинеты.xlsx'

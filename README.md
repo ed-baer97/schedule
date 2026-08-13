@@ -87,6 +87,42 @@ python run.py
 
 Откройте в браузере: http://localhost:5000
 
+### 8. Запуск (React + FastAPI)
+
+Основной интерфейс — React (Vite) на `:5173`, основной API — FastAPI на `:8000`. Все разделы переведены на React: Главная, Учителя, Кабинеты, Классы, Смены (с редактором звонков), Предметы, Нагрузка, Назначения (общая таблица + матрица по предмету), Сетка расписания, Авто-составление, Настройки, Импорт Excel, Отчёты и экспорт.
+
+Старый Flask UI (`run.py`, `:5000`) остаётся в репозитории как legacy для миграций БД и резервного доступа, но не нужен для повседневной работы.
+
+**Один командный dev-старт (рекомендуется):**
+
+Из корня репозитория, при установленном Python venv и выполненном `npm install --prefix frontend`:
+
+```bash
+npm install
+npm run dev
+```
+
+`npm run dev` поднимает FastAPI (`python run_api.py`) и Vite одновременно через `concurrently`.
+Откройте http://127.0.0.1:5173 — все запросы `/api/*` проксируются на FastAPI (порт 8000). Если API ещё не поднялся, в шапке появится баннер «API недоступен».
+
+**Раздельный запуск:**
+
+```bash
+# Backend
+python run_api.py
+# или
+python -m uvicorn backend.main:app --reload --port 8000
+
+# Frontend
+cd frontend && npm run dev
+```
+
+Документация OpenAPI: http://127.0.0.1:8000/docs
+
+Старый Flask UI (`python run.py`) остаётся работоспособным по `http://127.0.0.1:5000`, но в основном меню React-приложения ссылок на него уже нет.
+
+**Ошибка `no such table` в логах uvicorn:** у выбранного файла SQLite ещё нет таблиц из миграций. Flask и FastAPI читают один `DATABASE_URL` из `.env`. Выполните из корня проекта (с активированным venv): `flask db upgrade`. Если `flask` не находит приложение, задайте `FLASK_APP=run.py` (Windows: `set FLASK_APP=run.py`).
+
 ## Структура проекта
 
 ```
@@ -99,7 +135,10 @@ schedule/
 │   ├── services/            # Бизнес-логика
 │   ├── templates/           # HTML шаблоны
 │   └── excel_templates/     # Шаблоны для импорта
+├── backend/                 # FastAPI (JSON API)
+├── frontend/                # React (Vite), новый UI
 ├── migrations/              # Миграции БД
+├── tests/                   # Тесты (в т.ч. API)
 ├── uploads/                 # Загруженные файлы
 ├── requirements.txt
 ├── run.py
@@ -138,17 +177,26 @@ schedule/
 
 Если нужно разделить предмет на группы (например, Информатика или Иностранный язык):
 
-1. Перейдите в "Назначения"
-2. Найдите нужный предмет
-3. Нажмите кнопку "Разделить на группы"
-4. Назначьте учителей для каждой группы
+1. Перейдите в «Предметы» и нажмите «Назначения» у нужного предмета
+2. Выберите уровень школы (НШ / ОШ) и добавьте до двух учителей
+3. Отметьте у обоих чекбокс одного и того же класса — он автоматически разделится на подгруппы
+
+Общий просмотр и точечная замена учителя по конкретной нагрузке доступны на странице «Назначения».
 
 ## Технологии
 
-- **Backend**: Python, Flask, SQLAlchemy
-- **Database**: PostgreSQL
-- **Frontend**: HTML5, CSS3, JavaScript, Bootstrap 5
+- **Backend**: Python, FastAPI (JSON API + сервисы на SQLAlchemy Session); Flask + Jinja — legacy UI и Alembic (`flask db upgrade`)
+- **Database**: PostgreSQL (или SQLite для разработки/тестов)
+- **Frontend**: React + Vite + TypeScript + `@tanstack/react-query`, Bootstrap 5
 - **Excel**: pandas, openpyxl
+
+## Тесты
+
+```bash
+python -m pytest -q
+```
+
+`tests/conftest.py` использует временный SQLite, миграции Flask не нужны.
 
 ## Лицензия
 

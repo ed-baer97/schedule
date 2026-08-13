@@ -45,7 +45,7 @@
                 <tr class="{% if not assignment.teacher %}table-warning{% endif %}">
                     <td><strong>{{ assignment.school_class.name }}</strong></td>
                     <td>
-                        <span class="color-preview me-1" style="background-color: white; border: 2px solid {{ assignment.subject.color }};"></span>
+                        <span class="color-preview me-1" style="background-color: white; border: 2px solid {{ assignment.subject.display_color }};"></span>
                         {{ assignment.subject.name }}
                     </td>
                     <td>{{ assignment.hours_per_week }}</td>

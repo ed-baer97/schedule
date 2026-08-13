@@ -39,7 +39,7 @@
                         <hr class="subgroup-divider">
                         {% endif %}
                         <div class="p-1 mb-1 rounded" 
-                             style="background: white; border: 2px solid {{ cell.subject.color }}; color: #333;">
+                             style="background: white; border: 2px solid {{ cell.subject.display_color }}; color: #333;">
                             <strong>{{ cell.subject.display_name }}</strong>
                             {% if cell.assignment.group_number %}
                             <span class="badge bg-warning text-dark">гр.{{ cell.assignment.group_number }}</span>

@@ -1,0 +1,15 @@
+{
+  "name": "schedule-dev",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Root dev scripts: run FastAPI + Vite together.",
+  "scripts": {
+    "dev:api": "python run_api.py",
+    "dev:web": "python scripts/wait_api.py && npm --prefix frontend run dev",
+    "dev": "concurrently -n api,web -c blue,green \"npm:dev:api\" \"npm:dev:web\"",
+    "build": "npm --prefix frontend run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

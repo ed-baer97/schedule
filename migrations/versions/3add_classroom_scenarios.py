@@ -25,12 +25,13 @@ def upgrade():
     conn = op.get_bind()
     if not _column_exists(conn, 'subjects', 'requires_fixed_classroom'):
         op.add_column('subjects', sa.Column('requires_fixed_classroom', sa.Boolean(), server_default='0'))
+    # SQLite: no inline FK on ALTER; ORM still references classrooms.id
     if not _column_exists(conn, 'subjects', 'default_classroom_id'):
-        op.add_column('subjects', sa.Column('default_classroom_id', sa.Integer(), sa.ForeignKey('classrooms.id'), nullable=True))
+        op.add_column('subjects', sa.Column('default_classroom_id', sa.Integer(), nullable=True))
     if not _column_exists(conn, 'teachers', 'home_classroom_id'):
-        op.add_column('teachers', sa.Column('home_classroom_id', sa.Integer(), sa.ForeignKey('classrooms.id'), nullable=True))
+        op.add_column('teachers', sa.Column('home_classroom_id', sa.Integer(), nullable=True))
     if not _column_exists(conn, 'school_classes', 'home_classroom_id'):
-        op.add_column('school_classes', sa.Column('home_classroom_id', sa.Integer(), sa.ForeignKey('classrooms.id'), nullable=True))
+        op.add_column('school_classes', sa.Column('home_classroom_id', sa.Integer(), nullable=True))
     if not _column_exists(conn, 'schedule_settings', 'classroom_mode'):
         op.add_column('schedule_settings', sa.Column('classroom_mode', sa.String(20), server_default='class_room'))
     if not _column_exists(conn, 'schedule_settings', 'elementary_group_subjects_leave'):

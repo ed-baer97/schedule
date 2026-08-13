@@ -7,6 +7,11 @@
     <h1><i class="bi bi-gear"></i> Настройки расписания</h1>
 </div>
 
+<p class="text-muted small mb-3">
+    Учебные дни в неделю и максимум уроков в день задаются в настройках каждой
+    <a href="{{ url_for('shifts.index') }}">смены</a>.
+</p>
+
 <div class="row">
     <div class="col-md-6">
         <div class="card">
@@ -18,28 +23,10 @@
                     <input type="hidden" name="school_level" value="elementary">
                     
                     <div class="mb-3">
-                        <label for="working_days_el" class="form-label">Учебных дней в неделю</label>
-                        <select class="form-select" id="working_days_el" name="working_days">
-                            <option value="5" {% if elementary_settings and elementary_settings.working_days == 5 %}selected{% endif %}>
-                                5 дней (Пн-Пт)
-                            </option>
-                            <option value="6" {% if elementary_settings and elementary_settings.working_days == 6 %}selected{% endif %}>
-                                6 дней (Пн-Сб)
-                            </option>
-                        </select>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="max_lessons_el" class="form-label">Максимум уроков в день</label>
-                        <input type="number" class="form-control" id="max_lessons_el" name="max_lessons_per_day"
-                               value="{{ elementary_settings.max_lessons_per_day if elementary_settings else 5 }}"
-                               min="1" max="10">
-                    </div>
-                    <div class="mb-3">
                         <label for="max_subject_el" class="form-label">Максимум уроков одного предмета в день</label>
                         <select class="form-select" id="max_subject_el" name="max_lessons_per_subject_per_day">
                             <option value="1" {% if elementary_settings and elementary_settings.max_lessons_per_subject_per_day == 1 %}selected{% endif %}>1 урок</option>
-                            <option value="2" {% if not elementary_settings or elementary_settings.max_lessons_per_subject_per_day == 2 %}selected{% endif %}>2 урока</option>
+                            <option value="2" {% if not elementary_settings or elementary_settings.max_lessons_per_subject_per_day == 2 %}selected{% endif %}>2 урока подряд</option>
                         </select>
                     </div>
 
@@ -76,28 +63,10 @@
                     <input type="hidden" name="school_level" value="secondary">
                     
                     <div class="mb-3">
-                        <label for="working_days_sec" class="form-label">Учебных дней в неделю</label>
-                        <select class="form-select" id="working_days_sec" name="working_days">
-                            <option value="5" {% if secondary_settings and secondary_settings.working_days == 5 %}selected{% endif %}>
-                                5 дней (Пн-Пт)
-                            </option>
-                            <option value="6" {% if secondary_settings and secondary_settings.working_days == 6 %}selected{% endif %}>
-                                6 дней (Пн-Сб)
-                            </option>
-                        </select>
-                    </div>
-                    
-                    <div class="mb-3">
-                        <label for="max_lessons_sec" class="form-label">Максимум уроков в день</label>
-                        <input type="number" class="form-control" id="max_lessons_sec" name="max_lessons_per_day"
-                               value="{{ secondary_settings.max_lessons_per_day if secondary_settings else 7 }}"
-                               min="1" max="10">
-                    </div>
-                    <div class="mb-3">
                         <label for="max_subject_sec" class="form-label">Максимум уроков одного предмета в день</label>
                         <select class="form-select" id="max_subject_sec" name="max_lessons_per_subject_per_day">
                             <option value="1" {% if secondary_settings and secondary_settings.max_lessons_per_subject_per_day == 1 %}selected{% endif %}>1 урок</option>
-                            <option value="2" {% if not secondary_settings or secondary_settings.max_lessons_per_subject_per_day == 2 %}selected{% endif %}>2 урока</option>
+                            <option value="2" {% if not secondary_settings or secondary_settings.max_lessons_per_subject_per_day == 2 %}selected{% endif %}>2 урока подряд</option>
                         </select>
                     </div>
 

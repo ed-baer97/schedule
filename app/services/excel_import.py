@@ -1,12 +1,17 @@
 """
 Excel import service
 """
-from app import db
+from sqlalchemy.orm import Session
+
 from app.models import Teacher, Subject, SchoolClass, TeachingAssignment, Classroom
+from app.services.session_util import resolve_session
 
 
 class ExcelImporter:
     """Service for importing data from Excel files"""
+
+    def __init__(self, session: Session | None = None):
+        self.session = resolve_session(session)
 
     def import_teachers(self, file_path):
         """
@@ -26,8 +31,7 @@ class ExcelImporter:
             if not full_name or full_name == 'nan':
                 continue
 
-            # Check if teacher already exists
-            existing = Teacher.query.filter_by(full_name=full_name).first()
+            existing = self.session.query(Teacher).filter_by(full_name=full_name).first()
             if existing:
                 continue
 
@@ -36,10 +40,10 @@ class ExcelImporter:
                 email=str(row.get('Email', '')).strip() if pd.notna(row.get('Email')) else '',
                 phone=str(row.get('Телефон', '')).strip() if pd.notna(row.get('Телефон')) else ''
             )
-            db.session.add(teacher)
+            self.session.add(teacher)
             count += 1
 
-        db.session.commit()
+        self.session.commit()
         return count
 
     def import_classrooms(self, file_path):
@@ -58,7 +62,7 @@ class ExcelImporter:
             if not number or number == 'nan':
                 continue
 
-            existing = Classroom.query.filter_by(number=number).first()
+            existing = self.session.query(Classroom).filter_by(number=number).first()
             if existing:
                 continue
 
@@ -77,10 +81,10 @@ class ExcelImporter:
                 building=str(row.get('Корпус', '')).strip() if pd.notna(row.get('Корпус')) else '',
                 classes_capacity=classes_cap
             )
-            db.session.add(classroom)
+            self.session.add(classroom)
             count += 1
 
-        db.session.commit()
+        self.session.commit()
         return count
 
     def import_curriculum(self, file_path, school_level):
@@ -109,11 +113,11 @@ class ExcelImporter:
             if not subject_name or subject_name == 'nan':
                 continue
 
-            subject = Subject.query.filter_by(name=subject_name).first()
+            subject = self.session.query(Subject).filter_by(name=subject_name).first()
             if not subject:
-                subject = Subject(name=subject_name)
-                db.session.add(subject)
-                db.session.flush()
+                subject = Subject(name=subject_name, color=Subject.DEFAULT_COLOR)
+                self.session.add(subject)
+                self.session.flush()
                 created_subjects += 1
             subjects_map[subject_name] = subject
 
@@ -140,13 +144,16 @@ class ExcelImporter:
 
                 subject = subjects_map[subject_name]
 
-                # Check if assignment already exists
-                existing = TeachingAssignment.query.filter_by(
-                    subject_id=subject.id,
-                    class_id=school_class.id,
-                    teacher_id=None,
-                    group_number=None
-                ).first()
+                existing = (
+                    self.session.query(TeachingAssignment)
+                    .filter_by(
+                        subject_id=subject.id,
+                        class_id=school_class.id,
+                        teacher_id=None,
+                        group_number=None
+                    )
+                    .first()
+                )
 
                 if existing:
                     existing.hours_per_week = hours
@@ -157,15 +164,15 @@ class ExcelImporter:
                         hours_per_week=hours,
                         teacher_id=None  # To be assigned later
                     )
-                    db.session.add(assignment)
+                    self.session.add(assignment)
                     created_assignments += 1
 
-        db.session.commit()
+        self.session.commit()
         return created_subjects, created_assignments
 
     def _get_or_create_class(self, name, school_level):
         """Get or create school class by name"""
-        school_class = SchoolClass.query.filter_by(name=name).first()
+        school_class = self.session.query(SchoolClass).filter_by(name=name).first()
         if not school_class:
             # Extract grade from name (e.g., "1А" -> 1, "10Б" -> 10)
             grade_str = ''.join(filter(str.isdigit, name))
@@ -176,6 +183,6 @@ class ExcelImporter:
                 grade=grade,
                 school_level=school_level
             )
-            db.session.add(school_class)
-            db.session.flush()
+            self.session.add(school_class)
+            self.session.flush()
         return school_class

@@ -67,24 +67,73 @@
         <table class="table table-bordered schedule-grid">
             <thead>
                 <tr>
-                    <th style="width: 80px;">Урок</th>
+                    <th style="width: 110px;">Урок</th>
                     {% for school_class in classes %}
-                    <th class="text-center">{{ school_class.name }}</th>
+                    <th class="text-center" id="class-{{ school_class.id }}">{{ school_class.name }}</th>
                     {% endfor %}
                 </tr>
             </thead>
             <tbody>
                 {% for day in range(1, working_days + 1) %}
-                <tr>
+                <tr id="day-{{ day }}">
                     <td colspan="{{ classes|length + 1 }}" class="day-header">
                         {{ day_names[day - 1] }}
                     </td>
                 </tr>
-                {% for lesson in range(1, max_lessons + 1) %}
+                {% if current_shift and current_shift.class_hour_day == day and current_shift.class_hour_start %}
                 <tr>
-                    <td class="text-center fw-bold">{{ lesson }}</td>
+                    <td class="text-center">
+                        <div class="fw-bold">Классный час</div>
+                        {% if class_hour_time_label %}
+                        <div class="small text-muted text-nowrap">{{ class_hour_time_label }}</div>
+                        {% endif %}
+                    </td>
                     {% for school_class in classes %}
-                    <td>
+                    <td id="slot-{{ school_class.id }}-{{ day }}-0">
+                        {% set cells = schedule.get((school_class.id, day, 0), []) %}
+                        <div class="schedule-cell {% if cells|length > 1 %}schedule-cell-multiple{% endif %}" 
+                             data-class-id="{{ school_class.id }}"
+                             data-class-name="{{ school_class.name }}"
+                             data-day="{{ day }}"
+                             data-lesson="0">
+                            {% for cell in cells %}
+                            {% if not loop.first %}
+                            <hr class="subgroup-divider">
+                            {% endif %}
+                            <div class="lesson-card" 
+                                 style="background: white; border-color: {{ cell.subject.display_color }}; color: #333;"
+                                 data-cell-id="{{ cell.id }}"
+                                 data-teacher-id="{{ cell.assignment.teacher_id or '' }}">
+                                <span class="subject">{{ cell.subject.display_name }}</span>
+                                {% if cell.assignment.group_number %}
+                                <span class="badge bg-warning text-dark">гр.{{ cell.assignment.group_number }}</span>
+                                {% endif %}
+                                <span class="teacher">{{ cell.teacher.display_name if cell.teacher else '?' }}</span>
+                                {% if cell.classroom %}
+                                <span class="room">каб. {{ cell.classroom.number }}</span>
+                                {% endif %}
+                                <button class="btn btn-sm btn-link text-danger p-0 remove-cell" 
+                                        data-cell-id="{{ cell.id }}" title="Удалить">
+                                    <i class="bi bi-x"></i>
+                                </button>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endif %}
+                {% for lesson in lessons_range %}
+                <tr>
+                    <td class="text-center">
+                        <div class="fw-bold">{{ lesson }}</div>
+                        {% set _lt = lesson_times_by_day.get(day, {}).get(lesson) %}
+                        {% if _lt %}
+                        <div class="small text-muted text-nowrap">{{ _lt }}</div>
+                        {% endif %}
+                    </td>
+                    {% for school_class in classes %}
+                    <td id="slot-{{ school_class.id }}-{{ day }}-{{ lesson }}">
                         {% set cells = schedule.get((school_class.id, day, lesson), []) %}
                         <div class="schedule-cell {% if cells|length > 1 %}schedule-cell-multiple{% endif %}" 
                              data-class-id="{{ school_class.id }}"
@@ -96,7 +145,7 @@
                             <hr class="subgroup-divider">
                             {% endif %}
                             <div class="lesson-card" 
-                                 style="background: white; border-color: {{ cell.subject.color }}; color: #333;"
+                                 style="background: white; border-color: {{ cell.subject.display_color }}; color: #333;"
                                  data-cell-id="{{ cell.id }}"
                                  data-teacher-id="{{ cell.assignment.teacher_id or '' }}">
                                 <span class="subject">{{ cell.subject.display_name }}</span>
@@ -211,6 +260,11 @@
     .schedule-cell-empty:hover {
         background-color: #e8f4fc;
     }
+    [id^="day-"] > td,
+    [id^="slot-"] {
+        scroll-margin-top: 80px;
+        scroll-margin-left: 16px;
+    }
 </style>
 {% endblock %}
 
@@ -232,8 +286,11 @@ document.querySelectorAll('.schedule-cell').forEach(function(cell) {
         };
 
         const dayNames = ['Понедельник', 'Вторник', 'Среда', 'Четверг', 'Пятница', 'Суббота'];
+        const slotLabel = currentSlot.lesson === '0'
+            ? 'классный час'
+            : `урок ${currentSlot.lesson}`;
         document.getElementById('modalSlotInfo').textContent =
-            `${currentSlot.className}, ${dayNames[currentSlot.day - 1]}, урок ${currentSlot.lesson}`;
+            `${currentSlot.className}, ${dayNames[currentSlot.day - 1]}, ${slotLabel}`;
 
         resetModal();
         addLessonModal.show();
@@ -381,6 +438,8 @@ document.getElementById('modalSaveBtn').addEventListener('click', function() {
     .then(({ok, data}) => {
         if (data.status === 'ok') {
             addLessonModal.hide();
+            const anchor = data.anchor || ('slot-' + currentSlot.classId + '-' + currentSlot.day + '-' + currentSlot.lesson);
+            location.hash = anchor;
             location.reload();
         } else {
             alert(data.errors ? data.errors.join('\n') : 'Ошибка при добавлении');
@@ -423,10 +482,41 @@ document.querySelectorAll('.remove-cell').forEach(function(btn) {
         .then(r => r.json())
         .then(data => {
             if (data.status === 'ok') {
-                this.closest('.lesson-card').remove();
+                const card = this.closest('.lesson-card');
+                const cell = this.closest('td');
+                card.remove();
+                if (data.anchor) {
+                    history.replaceState(null, '', location.pathname + location.search + '#' + data.anchor);
+                } else if (cell && cell.id) {
+                    history.replaceState(null, '', location.pathname + location.search + '#' + cell.id);
+                }
             }
         });
     });
 });
+
+(function restoreScheduleAnchor() {
+    const id = location.hash.replace(/^#/, '');
+    if (!id) return;
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ block: 'start', inline: 'nearest' });
+})();
+
+let hashScrollTimer = 0;
+window.addEventListener('scroll', function() {
+    clearTimeout(hashScrollTimer);
+    hashScrollTimer = setTimeout(function() {
+        const days = document.querySelectorAll('[id^="day-"]');
+        if (!days.length) return;
+        let current = days[0].id;
+        const top = 90;
+        days.forEach(function(el) {
+            if (el.getBoundingClientRect().top <= top) current = el.id;
+        });
+        if (location.hash !== '#' + current) {
+            history.replaceState(null, '', location.pathname + location.search + '#' + current);
+        }
+    }, 120);
+}, { passive: true });
 </script>
 {% endblock %}

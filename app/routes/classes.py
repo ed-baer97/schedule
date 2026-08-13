@@ -22,7 +22,15 @@ def index():
         joinedload(SchoolClass.home_classroom)
     ).order_by(SchoolClass.grade, SchoolClass.name).all()
     shifts = Shift.query.order_by(Shift.school_level, Shift.name).all()
-    return render_template('classes/index.html', classes=classes, shifts=shifts)
+    elementary_classes = [c for c in classes if c.school_level == 'elementary']
+    secondary_classes = [c for c in classes if c.school_level == 'secondary']
+    return render_template(
+        'classes/index.html',
+        classes=classes,
+        elementary_classes=elementary_classes,
+        secondary_classes=secondary_classes,
+        shifts=shifts,
+    )
 
 
 @classes_bp.route('/batch-shift', methods=['POST'])

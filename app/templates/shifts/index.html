@@ -18,8 +18,10 @@
                 <tr>
                     <th>Название</th>
                     <th>Уровень школы</th>
+                    <th>Дней / макс. уроков</th>
                     <th>Начальный урок</th>
                     <th>Количество уроков</th>
+                    <th>Звонки</th>
                     <th>Классов</th>
                     <th>Действия</th>
                 </tr>
@@ -34,8 +36,17 @@
                             {{ shift.school_level_display }}
                         </span>
                     </td>
+                    <td>{{ shift.working_days }} / {{ shift.max_lessons_per_day }}</td>
                     <td>{{ shift.start_lesson }}</td>
                     <td>{{ shift.lessons_count }}</td>
+                    <td>
+                        {% set nc = shift.lesson_times.count() %}
+                        {% if nc %}
+                        <span class="badge bg-info text-dark">{{ nc }} слотов</span>
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                     <td>{{ shift.classes.count() }}</td>
                     <td>
                         <a href="{{ url_for('shifts.edit', id=shift.id) }}" 

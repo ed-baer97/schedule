@@ -16,10 +16,8 @@ depends_on = None
 
 
 def _column_exists(connection, table, column):
-    """Check if column exists (SQLite)"""
-    result = connection.execute(sa.text(
-        "PRAGMA table_info(:table)"
-    ), {"table": table})
+    """Check if column exists (SQLite). PRAGMA does not accept bound parameters."""
+    result = connection.execute(sa.text(f"PRAGMA table_info({table!r})"))
     return any(row[1] == column for row in result)
 
 
