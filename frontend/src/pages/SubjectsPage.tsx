@@ -2,19 +2,20 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
+import { ModalPortal } from '../components/ModalPortal'
 import { apiJson } from '../api/client'
 
 const DEFAULT_PALETTE = [
-  '#3498db',
-  '#e74c3c',
-  '#27ae60',
-  '#f39c12',
-  '#9b59b6',
-  '#1abc9c',
-  '#e67e22',
-  '#34495e',
-  '#16a085',
-  '#c0392b',
+  '#147f78',
+  '#c45a42',
+  '#c4842e',
+  '#0e5c57',
+  '#3f5248',
+  '#1a6a64',
+  '#a65a48',
+  '#8b6b3e',
+  '#2a403a',
+  '#b86b2e',
 ]
 
 type Classroom = { id: number; display_name: string }
@@ -36,7 +37,7 @@ export function SubjectsPage() {
   const [colorPick, setColorPick] = useState<Subject | null>(null)
   const [form, setForm] = useState({
     name: '',
-    color: '#3498db',
+    color: '#147f78',
     requires_fixed_classroom: false,
     default_classroom_id: '',
   })
@@ -113,7 +114,7 @@ export function SubjectsPage() {
   function openNew() {
     setForm({
       name: '',
-      color: '#3498db',
+      color: '#147f78',
       requires_fixed_classroom: false,
       default_classroom_id: '',
     })
@@ -225,6 +226,7 @@ export function SubjectsPage() {
       </div>
 
       {colorPick && (
+        <ModalPortal>
         <div className="modal show d-block" tabIndex={-1} style={{ background: 'rgba(0,0,0,.35)' }}>
           <div className="modal-dialog modal-sm">
             <div className="modal-content">
@@ -258,9 +260,11 @@ export function SubjectsPage() {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
 
       {editingId !== null && (
+        <ModalPortal>
         <div className="modal show d-block" tabIndex={-1} style={{ background: 'rgba(0,0,0,.35)' }}>
           <div className="modal-dialog">
             <div className="modal-content">
@@ -328,6 +332,7 @@ export function SubjectsPage() {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   )

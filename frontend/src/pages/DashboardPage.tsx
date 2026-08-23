@@ -17,7 +17,7 @@ type Stats = {
 }
 
 const QUICK_LINKS = [
-  { to: '/import', icon: 'bi-file-earmark-excel', label: 'Импорт Excel', desc: 'Учителя и учебный план' },
+  { to: '/import', icon: 'bi-file-earmark-excel', label: 'Импорт Excel', desc: 'Нагрузка по предметам и кабинеты' },
   { to: '/workload', icon: 'bi-table', label: 'Нагрузка', desc: 'Часы по классам' },
   { to: '/subjects', icon: 'bi-journal-text', label: 'Предметы', desc: 'Справочник и назначения' },
   { to: '/schedule', icon: 'bi-calendar3', label: 'Расписание', desc: 'Сетка и авто-составление' },
@@ -35,7 +35,7 @@ export function DashboardPage() {
   const s = q.data!
 
   return (
-    <div>
+    <div className="dashboard-page">
       <PageHeader title="Главная" subtitle="Сводка по школе и быстрый переход к разделам" />
 
       <div className="row g-3 mb-4">
@@ -43,12 +43,12 @@ export function DashboardPage() {
           <div key={item.to} className="col-sm-6 col-lg-4">
             <Link to={item.to} className="card quick-link-card text-decoration-none h-100">
               <div className="card-body d-flex gap-3 align-items-start">
-                <span className="text-primary fs-4">
+                <span className="quick-link-icon">
                   <i className={`bi ${item.icon}`} />
                 </span>
                 <div>
-                  <div className="fw-semibold text-dark">{item.label}</div>
-                  <div className="small text-muted">{item.desc}</div>
+                  <div className="quick-link-title">{item.label}</div>
+                  <div className="quick-link-desc">{item.desc}</div>
                 </div>
               </div>
             </Link>
@@ -78,7 +78,7 @@ export function DashboardPage() {
       <div className="row g-3">
         <div className="col-md-6">
           <div className="card h-100">
-            <div className="card-header bg-white">Начальная школа</div>
+            <div className="card-header">Начальная школа</div>
             <ul className="list-group list-group-flush">
               <li className="list-group-item d-flex justify-content-between">
                 <span>Классов</span>
@@ -97,7 +97,7 @@ export function DashboardPage() {
         </div>
         <div className="col-md-6">
           <div className="card h-100">
-            <div className="card-header bg-white">Основная школа</div>
+            <div className="card-header">Основная школа</div>
             <ul className="list-group list-group-flush">
               <li className="list-group-item d-flex justify-content-between">
                 <span>Классов</span>

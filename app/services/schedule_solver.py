@@ -198,6 +198,7 @@ class ResidualGraphSolver:
                 continue
 
             cell = ScheduleCell(
+                school_id=getattr(assignment, "school_id", None),
                 class_id=assignment.class_id,
                 day_of_week=slot.day,
                 lesson_number=slot.lesson,
@@ -912,6 +913,7 @@ class CpSatScheduleSolver:
                     )
 
                 cell = ScheduleCell(
+                    school_id=getattr(a, "school_id", None),
                     class_id=a.class_id,
                     day_of_week=chosen.day,
                     lesson_number=chosen.lesson,

@@ -67,7 +67,7 @@ export function ScheduleLayout() {
             isGrid ? (
               <button
                 type="button"
-                className={`btn btn-sm schedule-expand-btn ${expanded ? 'btn-dark' : 'btn-outline-secondary'}`}
+                className={`btn btn-sm schedule-expand-btn ${expanded ? 'btn-dark' : 'btn-outline-light'}`}
                 title={expanded ? 'Свернуть таблицу' : 'Растянуть таблицу на весь экран'}
                 aria-pressed={expanded}
                 aria-label={expanded ? 'Свернуть таблицу' : 'Растянуть таблицу на весь экран'}

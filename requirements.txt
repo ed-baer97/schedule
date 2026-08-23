@@ -2,6 +2,9 @@
 sqlalchemy>=2.0.36,<3
 alembic>=1.13.0
 
+# PostgreSQL (Docker / production)
+psycopg[binary]>=3.2.0
+
 # Environment variables
 python-dotenv==1.0.0
 
@@ -18,3 +21,12 @@ uvicorn[standard]>=0.32.0
 python-multipart>=0.0.9
 httpx>=0.27.0
 pytest>=8.3.0
+
+# Auth
+PyJWT>=2.9.0
+argon2-cffi>=23.1.0
+email-validator>=2.1.0
+
+# Background jobs (stage 4 — optional until --profile queue)
+celery[redis]>=5.4.0
+redis>=5.0.0

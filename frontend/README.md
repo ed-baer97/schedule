@@ -1,9 +1,13 @@
 # Frontend (React + Vite)
 
-Интерфейс школьного расписания. Запуск и сборка описаны в корневом [README](../README.md).
+UI школьного расписания. Документация проекта — в [docs/](../docs/README.md).
 
-```bash
-# из корня репозитория
-npm run dev     # Vite :5173 + FastAPI :8000
-npm run build   # production-сборка в frontend/dist
+Локально фронт и бэк запускаются **отдельно** (два окна PowerShell). Полная инструкция: [docs/local-windows.md](../docs/local-windows.md).
+
+```powershell
+# из папки frontend, при уже запущенном python run_api.py
+npm run dev      # Vite :5173, прокси /api → FastAPI :8000
+npm run build    # → frontend/dist (отдаёт FastAPI / Docker-образ)
 ```
+
+Маршруты: `/login`, `/invite`, `/admin` (platform), остальное — приложение школы после auth.

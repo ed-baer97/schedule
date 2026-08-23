@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
+import { ModalPortal } from '../components/ModalPortal'
 import { apiJson } from '../api/client'
 
 type Classroom = {
@@ -161,6 +162,7 @@ export function TeachersPage() {
       </div>
 
       {editingId !== null && (
+        <ModalPortal>
         <div className="modal show d-block" tabIndex={-1} style={{ background: 'rgba(0,0,0,.35)' }}>
           <div className="modal-dialog">
             <div className="modal-content">
@@ -233,6 +235,7 @@ export function TeachersPage() {
             </div>
           </div>
         </div>
+        </ModalPortal>
       )}
     </div>
   )

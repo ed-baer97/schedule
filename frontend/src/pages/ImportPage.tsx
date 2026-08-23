@@ -1,187 +1,190 @@
 import { useState } from 'react'
+import { PageHeader } from '../components/PageHeader'
 
-type ImportKind = 'teachers' | 'classrooms' | 'curriculum_elementary' | 'curriculum_secondary'
-
-type CardConfig = {
-  kind: ImportKind
-  title: string
-  description: string
-  bullets: string[]
-  uploadPath: string
-  templatePath: string
-  headerClass: string
-  buttonClass: string
+type HoursResult = {
+  message?: string
+  detail?: string
+  files?: Array<{
+    subject: string
+    teachers_created: number
+    classes_created: number
+    assignments_created: number
+    assignments_updated: number
+    subgroup_classes: number
+    warnings: string[]
+  }>
 }
 
-const CARDS: CardConfig[] = [
-  {
-    kind: 'teachers',
-    title: 'Список учителей',
-    description: 'Excel файл с колонками:',
-    bullets: ['ФИО — полное имя (обязательно)', 'Краткое имя', 'Email', 'Телефон'],
-    uploadPath: '/api/import/teachers',
-    templatePath: '/api/import/template/teachers',
-    headerClass: 'bg-primary text-white',
-    buttonClass: 'btn btn-primary',
-  },
-  {
-    kind: 'classrooms',
-    title: 'Кабинеты',
-    description: 'Excel файл с колонками:',
-    bullets: [
-      'Номер — номер кабинета (обязательно)',
-      'Название — тип кабинета',
-      'Вместимость классов',
-      'Этаж, Корпус',
-    ],
-    uploadPath: '/api/import/classrooms',
-    templatePath: '/api/import/template/classrooms',
-    headerClass: 'bg-info text-white',
-    buttonClass: 'btn btn-info text-white',
-  },
-  {
-    kind: 'curriculum_elementary',
-    title: 'Учебный план: Начальная школа',
-    description: 'Таблица часов: строки — классы, столбцы — предметы, ячейки — часы в неделю.',
-    bullets: [
-      'Строки — классы (1А, 1Б…)',
-      'Столбцы — предметы',
-      'Ячейки — часы в неделю (0 = не преподаётся)',
-    ],
-    uploadPath: '/api/import/curriculum/elementary',
-    templatePath: '/api/import/template/curriculum_elementary',
-    headerClass: 'bg-success text-white',
-    buttonClass: 'btn btn-success',
-  },
-  {
-    kind: 'curriculum_secondary',
-    title: 'Учебный план: Основная школа',
-    description: 'Таблица часов: строки — классы, столбцы — предметы, ячейки — часы в неделю.',
-    bullets: [
-      'Строки — классы (5А, 6Б, 11В…)',
-      'Столбцы — предметы',
-      'Ячейки — часы в неделю (0 = не преподаётся)',
-    ],
-    uploadPath: '/api/import/curriculum/secondary',
-    templatePath: '/api/import/template/curriculum_secondary',
-    headerClass: 'text-white',
-    buttonClass: 'btn text-white',
-  },
-]
-
-type UploadResult = { kind: 'success' | 'danger'; text: string }
+type Flash = { kind: 'success' | 'danger'; text: string }
 
 export function ImportPage() {
-  const [results, setResults] = useState<Record<ImportKind, UploadResult | null>>({
-    teachers: null,
-    classrooms: null,
-    curriculum_elementary: null,
-    curriculum_secondary: null,
-  })
-  const [pending, setPending] = useState<Record<ImportKind, boolean>>({
-    teachers: false,
-    classrooms: false,
-    curriculum_elementary: false,
-    curriculum_secondary: false,
-  })
+  const [hoursPending, setHoursPending] = useState(false)
+  const [hoursFlash, setHoursFlash] = useState<Flash | null>(null)
+  const [hoursWarnings, setHoursWarnings] = useState<string[]>([])
+  const [subjectOverride, setSubjectOverride] = useState('')
 
-  async function handleUpload(kind: ImportKind, path: string, file: File) {
-    setPending((p) => ({ ...p, [kind]: true }))
-    setResults((r) => ({ ...r, [kind]: null }))
+  async function uploadSubjectHours(fileList: FileList) {
+    const files = Array.from(fileList)
+    if (files.length === 0) return
+    setHoursPending(true)
+    setHoursFlash(null)
+    setHoursWarnings([])
     try {
       const fd = new FormData()
-      fd.append('file', file)
-      const res = await fetch(path, { method: 'POST', body: fd })
+      for (const file of files) {
+        fd.append('files', file)
+      }
+      const override = subjectOverride.trim()
+      if (override) {
+        if (files.length > 1) {
+          setHoursFlash({
+            kind: 'danger',
+            text: 'Название предмета можно задать только при загрузке одного файла',
+          })
+          return
+        }
+        fd.append('subject', override)
+      }
+      const res = await fetch('/api/import/subject-hours', {
+        method: 'POST',
+        body: fd,
+        credentials: 'include',
+      })
       const text = await res.text()
-      let parsed: { message?: string; detail?: string } = {}
+      let parsed: HoursResult = {}
       try {
         parsed = text ? JSON.parse(text) : {}
       } catch {
-        /* leave as text */
+        /* leave */
       }
       if (!res.ok) {
         const detail = parsed.detail ?? text ?? `HTTP ${res.status}`
-        setResults((r) => ({ ...r, [kind]: { kind: 'danger', text: String(detail) } }))
-      } else {
-        setResults((r) => ({
-          ...r,
-          [kind]: { kind: 'success', text: parsed.message ?? 'Импорт завершён' },
-        }))
+        setHoursFlash({ kind: 'danger', text: String(detail) })
+        return
       }
+      const warnings = (parsed.files ?? []).flatMap((f) => f.warnings)
+      setHoursWarnings(warnings)
+      setHoursFlash({
+        kind: 'success',
+        text: parsed.message ?? 'Импорт завершён',
+      })
     } catch (e) {
-      setResults((r) => ({
-        ...r,
-        [kind]: { kind: 'danger', text: e instanceof Error ? e.message : String(e) },
-      }))
+      setHoursFlash({
+        kind: 'danger',
+        text: e instanceof Error ? e.message : String(e),
+      })
     } finally {
-      setPending((p) => ({ ...p, [kind]: false }))
+      setHoursPending(false)
     }
   }
 
   return (
     <div>
-      <h1 className="h3 mb-3">Импорт данных из Excel</h1>
+      <PageHeader
+        title="Импорт данных из Excel"
+        subtitle="Два типа файлов: нагрузка по предметам и кабинеты. Шаблон кабинетов будет добавлен отдельно."
+      />
+
       <div className="row g-3">
-        {CARDS.map((c) => (
-          <div className="col-md-6" key={c.kind}>
-            <div className="card shadow-sm h-100">
-              <div
-                className={`card-header ${c.headerClass}`}
-                style={c.kind === 'curriculum_secondary' ? { background: '#9b59b6' } : undefined}
-              >
-                {c.title}
-              </div>
-              <div className="card-body">
-                <p className="text-muted small mb-1">{c.description}</p>
-                <ul className="small text-muted">
-                  {c.bullets.map((b, i) => (
-                    <li key={i}>{b}</li>
+        <div className="col-lg-7">
+          <div className="card shadow-sm h-100">
+            <div className="card-header">Нагрузка по предметам</div>
+            <div className="card-body">
+              <p className="text-muted small mb-2">
+                Один Excel-файл на предмет. Можно выбрать сразу несколько файлов.
+              </p>
+              <ul className="small text-muted">
+                <li>Первый столбец — список учителей</li>
+                <li>Дальше столбцы — классы (1А, 5Б…)</li>
+                <li>В ячейках — часы в неделю (пусто или 0 = не ведёт)</li>
+                <li>
+                  Два учителя с часами в одном классе → предмет на подгруппы
+                </li>
+                <li>
+                  Один и тот же учитель в нескольких файлах → несколько предметов
+                </li>
+              </ul>
+              <p className="small text-muted">
+                Название предмета берётся из имени файла (например{' '}
+                <code>Математика.xlsx</code>), либо задайте его ниже для одного
+                файла.
+              </p>
+
+              <label className="form-label small mb-1" htmlFor="subject-override">
+                Предмет (необязательно, только для одного файла)
+              </label>
+              <input
+                id="subject-override"
+                className="form-control form-control-sm mb-3"
+                value={subjectOverride}
+                onChange={(e) => setSubjectOverride(e.target.value)}
+                placeholder="Математика"
+                disabled={hoursPending}
+              />
+
+              <input
+                type="file"
+                className="form-control mb-2"
+                accept=".xlsx,.xls"
+                multiple
+                onChange={(e) => {
+                  const list = e.target.files
+                  if (!list?.length) return
+                  void uploadSubjectHours(list)
+                  e.target.value = ''
+                }}
+                disabled={hoursPending}
+              />
+
+              {hoursPending && <div className="small text-muted">Загрузка…</div>}
+              {hoursFlash && (
+                <div className={`alert alert-${hoursFlash.kind} py-2 mt-2 mb-0`}>
+                  {hoursFlash.text}
+                </div>
+              )}
+              {hoursWarnings.length > 0 && (
+                <ul className="small text-warning mt-2 mb-0">
+                  {hoursWarnings.map((w, i) => (
+                    <li key={i}>{w}</li>
                   ))}
                 </ul>
-
-                <a
-                  href={c.templatePath}
-                  className="btn btn-outline-secondary btn-sm mb-3"
-                >
-                  Скачать шаблон
-                </a>
-
-                <input
-                  type="file"
-                  className="form-control mb-2"
-                  accept=".xlsx,.xls"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    if (!file) return
-                    handleUpload(c.kind, c.uploadPath, file)
-                    e.target.value = ''
-                  }}
-                  disabled={pending[c.kind]}
-                />
-
-                {pending[c.kind] && (
-                  <div className="small text-muted">Загрузка…</div>
-                )}
-                {results[c.kind] && (
-                  <div className={`alert alert-${results[c.kind]!.kind} py-2 mt-2 mb-0`}>
-                    {results[c.kind]!.text}
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </div>
-        ))}
+        </div>
+
+        <div className="col-lg-5">
+          <div className="card shadow-sm h-100">
+            <div className="card-header">Кабинеты и предметы</div>
+            <div className="card-body">
+              <p className="text-muted small mb-2">
+                Второй файл: кабинеты и предметы, которые в них проводятся.
+              </p>
+              <p className="small text-muted mb-0">
+                Шаблон пока не фиксируем — загрузка откроется, когда придёт
+                формат файла.
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="card mt-3">
-        <div className="card-header fw-semibold">Порядок импорта</div>
+        <div className="card-header fw-semibold">Как это сохраняется</div>
         <div className="card-body small text-muted">
           <ol className="mb-0">
-            <li>Список учителей</li>
-            <li>Кабинеты</li>
-            <li>Учебный план начальной школы</li>
-            <li>Учебный план основной школы</li>
-            <li>В разделе «Назначения» распределите учителей по предметам</li>
+            <li>Учителя, классы и предмет создаются из файла нагрузки</li>
+            <li>
+              Каждая ячейка с часами — назначение: учитель + предмет + класс +
+              часы
+            </li>
+            <li>
+              Если в одном классе по этому предмету часы у двух учителей —
+              ставятся подгруппы
+            </li>
+            <li>
+              Кабинеты пока заводятся вручную или после появления второго шаблона
+            </li>
           </ol>
         </div>
       </div>

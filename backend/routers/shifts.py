@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.models import Shift, ShiftLessonTime
+from app.models import School, Shift, ShiftLessonTime
 
-from backend.deps import get_db
+from backend.deps import get_current_school, get_db, school_owned
 from backend.schemas.shifts import (
     BellScheduleApplied,
     BellScheduleUpdate,
@@ -60,27 +60,33 @@ def _serialize_shift(db: Session, shift: Shift) -> dict[str, Any]:
 
 
 @router.get("/", response_model=list[ShiftOut])
-def list_shifts(db: Session = Depends(get_db)) -> list[dict[str, Any]]:
+def list_shifts(db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> list[dict[str, Any]]:
     rows = list(
-        db.scalars(select(Shift).order_by(Shift.school_level, Shift.name)).all()
+        db.scalars(
+            select(Shift)
+            .where(Shift.school_id == school.id)
+            .order_by(Shift.school_level, Shift.name)
+        ).all()
     )
     return [_serialize_shift(db, s) for s in rows]
 
 
 @router.get("/{shift_id}", response_model=ShiftOut)
-def get_shift(shift_id: int, db: Session = Depends(get_db)) -> dict[str, Any]:
-    row = db.get(Shift, shift_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+def get_shift(shift_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> dict[str, Any]:
+    row = school_owned(db, Shift, shift_id, school.id)
     return _serialize_shift(db, row)
 
 
 @router.post("/", response_model=ShiftOut)
-def create_shift(body: ShiftCreate, db: Session = Depends(get_db)) -> Shift:
+def create_shift(body: ShiftCreate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> Shift:
     start, count = _clamp_shift_bounds(
         body.start_lesson, body.lessons_count, body.max_lessons_per_day
     )
     shift = Shift(
+        school_id=school.id,
         name=body.name.strip(),
         school_level=body.school_level,
         start_lesson=start,
@@ -99,16 +105,15 @@ def create_shift(body: ShiftCreate, db: Session = Depends(get_db)) -> Shift:
     db.add(shift)
     db.commit()
     db.refresh(shift)
-    return get_shift(shift.id, db)
+    return get_shift(shift.id, db, school)
 
 
 @router.put("/{shift_id}", response_model=ShiftOut)
 def update_shift(
-    shift_id: int, body: ShiftUpdate, db: Session = Depends(get_db)
+    shift_id: int, body: ShiftUpdate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> Shift:
-    shift = db.get(Shift, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    shift = school_owned(db, Shift, shift_id, school.id)
     data = body.model_dump(exclude_unset=True)
     if "name" in data and data["name"] is not None:
         shift.name = str(data["name"]).strip()
@@ -142,14 +147,13 @@ def update_shift(
         shift.class_hour_end = None
     db.commit()
     db.refresh(shift)
-    return get_shift(shift.id, db)
+    return get_shift(shift.id, db, school)
 
 
 @router.delete("/{shift_id}", status_code=204)
-def delete_shift(shift_id: int, db: Session = Depends(get_db)) -> None:
-    shift = db.get(Shift, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+def delete_shift(shift_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> None:
+    shift = school_owned(db, Shift, shift_id, school.id)
     db.delete(shift)
     db.commit()
 
@@ -176,15 +180,14 @@ def update_lesson_times(
     shift_id: int,
     body: BellScheduleUpdate,
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> BellScheduleApplied:
     """Replace the bell schedule for a shift.
 
     `common` applies to every working day except the class-hour day;
     `class_day` applies to the class-hour day only (if set).
     """
-    shift = db.get(Shift, shift_id)
-    if shift is None:
-        raise HTTPException(status_code=404, detail="Shift not found")
+    shift = school_owned(db, Shift, shift_id, school.id)
 
     start = shift.start_lesson
     wd = shift.working_days or 5
@@ -234,6 +237,7 @@ def update_lesson_times(
             ts, te = pair
             db.add(
                 ShiftLessonTime(
+                    school_id=school.id,
                     shift_id=shift.id,
                     day_of_week=day,
                     lesson_number=n,

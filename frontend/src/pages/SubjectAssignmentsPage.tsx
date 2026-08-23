@@ -212,7 +212,7 @@ export function SubjectAssignmentsPage() {
             <p className="mb-0">
               Сначала добавьте часы на странице{' '}
               <Link to="/workload">Нагрузка</Link> или{' '}
-              <Link to="/import">импортируйте учебный план</Link>.
+              <Link to="/import">импортируйте файлы нагрузки по предметам</Link>.
             </p>
           </div>
         </div>

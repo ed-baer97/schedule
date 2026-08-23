@@ -7,6 +7,10 @@ import 'bootstrap-icons/font/bootstrap-icons.css'
 import './index.css'
 import './styles/theme.css'
 import App from './App.tsx'
+import { AuthProvider } from './auth/AuthContext'
+import { initTheme } from './theme'
+
+initTheme()
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -18,7 +22,9 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <App />
+        <AuthProvider>
+          <App />
+        </AuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

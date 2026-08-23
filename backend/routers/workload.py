@@ -3,9 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import SchoolClass, Subject, TeachingAssignment
-
-from backend.deps import get_db
+from app.models import School, SchoolClass, Subject, TeachingAssignment
+from backend.deps import get_current_school, get_db, school_owned
 from backend.schemas.workload import (
     SchoolClassBrief,
     SubjectBrief,
@@ -20,21 +19,34 @@ router = APIRouter()
 @router.get("/", response_model=WorkloadOut)
 def get_workload(
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
     school_level: str = Query("elementary", pattern="^(elementary|secondary)$"),
 ) -> WorkloadOut:
     classes = list(
         db.scalars(
             select(SchoolClass)
-            .where(SchoolClass.school_level == school_level)
+            .where(
+                SchoolClass.school_id == school.id,
+                SchoolClass.school_level == school_level,
+            )
             .order_by(SchoolClass.grade, SchoolClass.name)
         ).all()
     )
-    subjects = list(db.scalars(select(Subject).order_by(Subject.name)).all())
+    subjects = list(
+        db.scalars(
+            select(Subject)
+            .where(Subject.school_id == school.id)
+            .order_by(Subject.name)
+        ).all()
+    )
     assignments = list(
         db.scalars(
             select(TeachingAssignment)
             .join(SchoolClass, SchoolClass.id == TeachingAssignment.class_id)
-            .where(SchoolClass.school_level == school_level)
+            .where(
+                TeachingAssignment.school_id == school.id,
+                SchoolClass.school_level == school_level,
+            )
         ).all()
     )
     totals: dict[tuple[int, int], int] = {}
@@ -54,16 +66,19 @@ def get_workload(
 
 
 @router.put("/cell", response_model=dict)
-def update_workload_cell(body: WorkloadCellUpdate, db: Session = Depends(get_db)) -> dict:
+def update_workload_cell(
+    body: WorkloadCellUpdate,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> dict:
     if body.hours < 0:
         raise HTTPException(status_code=400, detail="hours must be >= 0")
-    if db.get(SchoolClass, body.class_id) is None:
-        raise HTTPException(status_code=400, detail="class not found")
-    if db.get(Subject, body.subject_id) is None:
-        raise HTTPException(status_code=400, detail="subject not found")
+    school_owned(db, SchoolClass, body.class_id, school.id)
+    school_owned(db, Subject, body.subject_id, school.id)
 
     assignment = db.scalars(
         select(TeachingAssignment).where(
+            TeachingAssignment.school_id == school.id,
             TeachingAssignment.class_id == body.class_id,
             TeachingAssignment.subject_id == body.subject_id,
             TeachingAssignment.teacher_id.is_(None),
@@ -81,6 +96,7 @@ def update_workload_cell(body: WorkloadCellUpdate, db: Session = Depends(get_db)
     else:
         db.add(
             TeachingAssignment(
+                school_id=school.id,
                 class_id=body.class_id,
                 subject_id=body.subject_id,
                 hours_per_week=body.hours,

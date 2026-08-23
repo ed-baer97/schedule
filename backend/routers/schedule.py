@@ -4,23 +4,30 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
+    School,
     Classroom,
     ScheduleCell,
     ScheduleSettings,
     SchoolClass,
     Shift,
+    Subject,
     Teacher,
     TeachingAssignment,
+    User,
 )
 from app.services.auto_scheduler import AutoScheduler
 from app.services.validators import ScheduleValidator
 
-from backend.deps import SessionLocal, get_db
+from backend.deps import (
+    get_current_school,
+    get_current_user,
+    get_db,
+    school_owned,
+)
 from backend.schemas.schedule import (
     AssignmentChoiceOut,
     AssignmentsForClassOut,
@@ -90,7 +97,7 @@ def _cell_to_out(cell: ScheduleCell) -> ScheduleCellOut:
         classroom_id=cell.classroom_id,
         subject_id=subj.id if subj else 0,
         subject_name=subj.display_name if subj else "?",
-        subject_color=(subj.display_color if subj else "#3498db"),
+        subject_color=(subj.display_color if subj else Subject.DEFAULT_COLOR),
         teacher_id=teacher.id if teacher else None,
         teacher_name=teacher.display_name if teacher else None,
         group_number=a.group_number if a else None,
@@ -115,10 +122,14 @@ def get_grid(
     school_level: str = Query("elementary", pattern="^(elementary|secondary)$"),
     shift_id: int | None = Query(None),
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> ScheduleGridOut:
     shifts = list(
         db.scalars(
-            select(Shift).where(Shift.school_level == school_level).order_by(Shift.name)
+            select(Shift).where(
+            Shift.school_level == school_level,
+            Shift.school_id == school.id,
+        ).order_by(Shift.name)
         ).all()
     )
 
@@ -126,6 +137,9 @@ def get_grid(
         shift_id = shifts[0].id
 
     current_shift = db.get(Shift, shift_id) if shift_id else None
+    if current_shift is not None and current_shift.school_id != school.id:
+        current_shift = None
+        shift_id = None
     if current_shift and current_shift.school_level != school_level:
         current_shift = None
         shift_id = None
@@ -134,7 +148,10 @@ def get_grid(
         classes = list(
             db.scalars(
                 select(SchoolClass)
-                .where(SchoolClass.shift_id == current_shift.id)
+                .where(
+                    SchoolClass.shift_id == current_shift.id,
+                    SchoolClass.school_id == school.id,
+                )
                 .order_by(SchoolClass.grade, SchoolClass.name)
             ).all()
         )
@@ -142,13 +159,19 @@ def get_grid(
         classes = list(
             db.scalars(
                 select(SchoolClass)
-                .where(SchoolClass.school_level == school_level)
+                .where(
+                    SchoolClass.school_level == school_level,
+                    SchoolClass.school_id == school.id,
+                )
                 .order_by(SchoolClass.grade, SchoolClass.name)
             ).all()
         )
 
     settings = db.scalars(
-        select(ScheduleSettings).where(ScheduleSettings.school_level == school_level)
+        select(ScheduleSettings).where(
+        ScheduleSettings.school_level == school_level,
+        ScheduleSettings.school_id == school.id,
+    )
     ).first()
 
     if current_shift:
@@ -171,7 +194,10 @@ def get_grid(
             db.execute(
                 select(ScheduleCell)
                 .options(*_CELL_LOAD)
-                .where(ScheduleCell.class_id.in_(class_ids))
+                .where(
+                    ScheduleCell.class_id.in_(class_ids),
+                    ScheduleCell.school_id == school.id,
+                )
             )
             .scalars()
             .unique()
@@ -193,7 +219,7 @@ def get_grid(
                 f"{_fmt_time(current_shift.class_hour_end)}"
             )
 
-    raw_warnings = AutoScheduler(db).get_classroom_warnings(school_level)
+    raw_warnings = AutoScheduler(db, school_id=school.id).get_classroom_warnings(school_level)
     warnings = [
         ClassroomWarningOut(type=t, message=msg) for (t, msg, _entity) in raw_warnings
     ]
@@ -223,8 +249,10 @@ def get_grid(
     response_model=AssignmentsForClassOut,
 )
 def assignments_for_class(
-    class_id: int, db: Session = Depends(get_db)
+    class_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> AssignmentsForClassOut:
+    school_owned(db, SchoolClass, class_id, school.id)
     assignments = list(
         db.execute(
             select(TeachingAssignment)
@@ -234,6 +262,7 @@ def assignments_for_class(
             )
             .where(
                 TeachingAssignment.class_id == class_id,
+                TeachingAssignment.school_id == school.id,
                 TeachingAssignment.teacher_id.isnot(None),
             )
         )
@@ -253,7 +282,7 @@ def assignments_for_class(
                 id=a.id,
                 subject_id=subj.id if subj else 0,
                 subject_name=subj.display_name if subj else "?",
-                subject_color=(subj.display_color if subj else "#3498db"),
+                subject_color=(subj.display_color if subj else Subject.DEFAULT_COLOR),
                 teacher_id=teacher.id if teacher else None,
                 teacher_name=teacher.display_name if teacher else None,
                 group_number=a.group_number,
@@ -263,7 +292,9 @@ def assignments_for_class(
         )
 
     classrooms = list(
-        db.scalars(select(Classroom).order_by(Classroom.number)).all()
+        db.scalars(
+        select(Classroom).where(Classroom.school_id == school.id).order_by(Classroom.number)
+    ).all()
     )
     return AssignmentsForClassOut(
         assignments=result,
@@ -273,23 +304,21 @@ def assignments_for_class(
 
 @router.post("/cells", response_model=ScheduleCellOut, status_code=201)
 def create_cell(
-    body: ScheduleCellCreate, db: Session = Depends(get_db)
+    body: ScheduleCellCreate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> ScheduleCellOut:
-    assignment = db.get(TeachingAssignment, body.assignment_id)
-    if assignment is None:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-    if db.get(SchoolClass, body.class_id) is None:
-        raise HTTPException(status_code=404, detail="Class not found")
+    assignment = school_owned(db, TeachingAssignment, body.assignment_id, school.id)
+    school_owned(db, SchoolClass, body.class_id, school.id)
     if assignment.class_id != body.class_id:
         raise HTTPException(
             status_code=422,
             detail={"errors": ["Этот предмет назначен другому классу"]},
         )
-    if body.classroom_id is not None and db.get(Classroom, body.classroom_id) is None:
-        raise HTTPException(status_code=404, detail="Classroom not found")
+    if body.classroom_id is not None:
+        school_owned(db, Classroom, body.classroom_id, school.id)
 
     _ = assignment.school_class, assignment.teacher, assignment.subject
-    errors = ScheduleValidator(db).validate_cell(
+    errors = ScheduleValidator(db, school_id=school.id).validate_cell(
         assignment=assignment,
         day=body.day_of_week,
         lesson=body.lesson_number,
@@ -299,6 +328,7 @@ def create_cell(
         raise HTTPException(status_code=422, detail={"errors": errors})
 
     cell = ScheduleCell(
+        school_id=school.id,
         class_id=body.class_id,
         day_of_week=body.day_of_week,
         lesson_number=body.lesson_number,
@@ -312,21 +342,20 @@ def create_cell(
 
 @router.patch("/cells/{cell_id}", response_model=ScheduleCellOut)
 def move_cell(
-    cell_id: int, body: ScheduleCellMove, db: Session = Depends(get_db)
+    cell_id: int, body: ScheduleCellMove, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> ScheduleCellOut:
-    cell = db.get(ScheduleCell, cell_id)
-    if cell is None:
-        raise HTTPException(status_code=404, detail="Cell not found")
+    cell = school_owned(db, ScheduleCell, cell_id, school.id)
 
     new_class_id = body.class_id if body.class_id is not None else cell.class_id
-    if body.class_id is not None and db.get(SchoolClass, body.class_id) is None:
-        raise HTTPException(status_code=404, detail="Class not found")
+    if body.class_id is not None:
+        school_owned(db, SchoolClass, body.class_id, school.id)
 
     new_classroom_id = cell.classroom_id
     if body.set_classroom:
         new_classroom_id = body.classroom_id
-        if new_classroom_id is not None and db.get(Classroom, new_classroom_id) is None:
-            raise HTTPException(status_code=404, detail="Classroom not found")
+        if new_classroom_id is not None:
+            school_owned(db, Classroom, new_classroom_id, school.id)
 
     assignment = cell.assignment
     if new_class_id != assignment.class_id:
@@ -336,6 +365,7 @@ def move_cell(
                 TeachingAssignment.subject_id == assignment.subject_id,
                 TeachingAssignment.teacher_id == assignment.teacher_id,
                 TeachingAssignment.group_number == assignment.group_number,
+                TeachingAssignment.school_id == school.id,
             )
         ).first()
         if assignment_for_target is None:
@@ -356,7 +386,7 @@ def move_cell(
         validation_assignment.teacher,
         validation_assignment.subject,
     )
-    errors = ScheduleValidator(db).validate_cell(
+    errors = ScheduleValidator(db, school_id=school.id).validate_cell(
         assignment=validation_assignment,
         day=body.day_of_week,
         lesson=body.lesson_number,
@@ -378,24 +408,30 @@ def move_cell(
 
 
 @router.delete("/cells/{cell_id}", status_code=204, response_class=Response)
-def delete_cell(cell_id: int, db: Session = Depends(get_db)) -> Response:
-    cell = db.get(ScheduleCell, cell_id)
-    if cell is None:
-        raise HTTPException(status_code=404, detail="Cell not found")
+def delete_cell(cell_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> Response:
+    cell = school_owned(db, ScheduleCell, cell_id, school.id)
     db.delete(cell)
     db.commit()
     return Response(status_code=204)
 
 
 @router.get("/auto/page-data", response_model=AutoPageData)
-def auto_page_data(db: Session = Depends(get_db)) -> AutoPageData:
-    teachers = list(db.scalars(select(Teacher).order_by(Teacher.full_name)).all())
-    classes = list(
+def auto_page_data(db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> AutoPageData:
+    teachers = list(
         db.scalars(
-            select(SchoolClass).order_by(SchoolClass.grade, SchoolClass.name)
+            select(Teacher).where(Teacher.school_id == school.id).order_by(Teacher.full_name)
         ).all()
     )
-    scheduler = AutoScheduler(db)
+    classes = list(
+        db.scalars(
+            select(SchoolClass)
+            .where(SchoolClass.school_id == school.id)
+            .order_by(SchoolClass.grade, SchoolClass.name)
+        ).all()
+    )
+    scheduler = AutoScheduler(db, school_id=school.id)
     elementary_warnings = [
         ClassroomWarningOut(type=t, message=m)
         for (t, m, _e) in scheduler.get_classroom_warnings("elementary")
@@ -405,19 +441,31 @@ def auto_page_data(db: Session = Depends(get_db)) -> AutoPageData:
         for (t, m, _e) in scheduler.get_classroom_warnings("secondary")
     ]
     elementary_settings = db.scalars(
-        select(ScheduleSettings).where(ScheduleSettings.school_level == "elementary")
+        select(ScheduleSettings).where(
+        ScheduleSettings.school_level == "elementary",
+        ScheduleSettings.school_id == school.id,
+    )
     ).first()
     secondary_settings = db.scalars(
-        select(ScheduleSettings).where(ScheduleSettings.school_level == "secondary")
+        select(ScheduleSettings).where(
+        ScheduleSettings.school_level == "secondary",
+        ScheduleSettings.school_id == school.id,
+    )
     ).first()
     shifts_el = list(
         db.scalars(
-            select(Shift).where(Shift.school_level == "elementary").order_by(Shift.name)
+            select(Shift).where(
+            Shift.school_level == "elementary",
+            Shift.school_id == school.id,
+        ).order_by(Shift.name)
         ).all()
     )
     shifts_se = list(
         db.scalars(
-            select(Shift).where(Shift.school_level == "secondary").order_by(Shift.name)
+            select(Shift).where(
+            Shift.school_level == "secondary",
+            Shift.school_id == school.id,
+        ).order_by(Shift.name)
         ).all()
     )
     return AutoPageData(
@@ -440,70 +488,104 @@ def auto_page_data(db: Session = Depends(get_db)) -> AutoPageData:
     )
 
 
-def _ndjson_response(events_factory) -> StreamingResponse:
-    """Stream NDJSON from AutoScheduler using a dedicated SQLAlchemy session."""
+def _enqueue_auto_job(
+    *,
+    db: Session,
+    school: School,
+    user: User,
+    kind: str,
+    payload: dict,
+) -> dict:
+    """Create a Job row and dispatch to Celery (sync fallback if broker down)."""
+    from sqlalchemy import select
 
-    def gen():
-        db = SessionLocal()
-        try:
-            for event in events_factory(db):
-                yield (
-                    json.dumps(event, ensure_ascii=False) + "\n"
-                ).encode("utf-8")
-        except Exception as exc:  # noqa: BLE001 — broadcast errors to client
-            yield (
-                json.dumps(
-                    {"type": "error", "message": str(exc)}, ensure_ascii=False
-                )
-                + "\n"
-            ).encode("utf-8")
-        finally:
-            db.close()
+    from app.config import Config
+    from app.models import Job
+    from app.models.job import JOB_PENDING, JOB_RUNNING
+    from backend.tasks import run_auto_schedule
 
-    return StreamingResponse(
-        gen(),
-        media_type="application/x-ndjson",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    active = db.scalars(
+        select(Job).where(
+            Job.school_id == school.id,
+            Job.status.in_([JOB_PENDING, JOB_RUNNING]),
+        )
+    ).first()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Уже выполняется задача #{active.id}. Дождитесь завершения.",
+        )
+
+    if "time_limit_sec" not in payload:
+        payload["time_limit_sec"] = Config.SOLVER_TIME_LIMIT_SEC
+    else:
+        payload["time_limit_sec"] = min(
+            float(payload["time_limit_sec"]), float(Config.SOLVER_TIME_LIMIT_SEC)
+        )
+
+    job = Job(
+        school_id=school.id,
+        kind=kind,
+        status=JOB_PENDING,
+        progress=json.dumps(payload, ensure_ascii=False),
+        created_by_id=user.id,
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    try:
+        async_result = run_auto_schedule.delay(job.id)
+        job.celery_task_id = async_result.id
+        db.commit()
+    except Exception:
+        # No Redis/worker (local/dev): run inline so UI still works.
+        run_auto_schedule(job.id)
+
+    return {"job_id": job.id, "status": JOB_PENDING}
+
+
+@router.post("/auto", status_code=202)
+def enqueue_auto_all(
+    body: AutoAllStreamBody,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+    user: User = Depends(get_current_user),
+) -> dict:
+    if body.shift_id is not None:
+        school_owned(db, Shift, body.shift_id, school.id)
+    return _enqueue_auto_job(
+        db=db,
+        school=school,
+        user=user,
+        kind="auto_all",
+        payload=body.model_dump(),
     )
 
 
-@router.post("/auto/all/stream")
-def auto_all_stream(body: AutoAllStreamBody) -> StreamingResponse:
-    def events(db: Session):
-        scheduler = AutoScheduler(db)
-        for event in scheduler.auto_schedule_all_iter(
-            body.school_level,
-            solver=body.solver,
-            shift_id=body.shift_id,
-            time_limit_sec=body.time_limit_sec,
-            random_seed=body.random_seed,
-        ):
-            if event.get("type") == "done" and not body.diagnose:
-                event.pop("diagnostics", None)
-            yield event
-
-    return _ndjson_response(events)
-
-
-@router.post("/auto/by-teacher/stream")
-def auto_by_teacher_stream(body: AutoByTeacherStreamBody) -> StreamingResponse:
-    def events(db: Session):
-        scheduler = AutoScheduler(db)
-        for event in scheduler.schedule_by_teacher_ladder_iter(
-            body.teacher_id, body.school_level
-        ):
-            if event.get("type") == "done" and not body.diagnose:
-                event.pop("diagnostics", None)
-            yield event
-
-    return _ndjson_response(events)
+@router.post("/auto/by-teacher", status_code=202)
+def enqueue_auto_by_teacher(
+    body: AutoByTeacherStreamBody,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+    user: User = Depends(get_current_user),
+) -> dict:
+    school_owned(db, Teacher, body.teacher_id, school.id)
+    return _enqueue_auto_job(
+        db=db,
+        school=school,
+        user=user,
+        kind="auto_by_teacher",
+        payload=body.model_dump(),
+    )
 
 
 @router.post("/clear", response_model=ClearScheduleResult)
 def clear_schedule(
-    body: ClearScheduleBody, db: Session = Depends(get_db)
+    body: ClearScheduleBody, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> ClearScheduleResult:
-    scheduler = AutoScheduler(db)
+    scheduler = AutoScheduler(db, school_id=school.id)
     count = scheduler.clear_schedule(
         school_level=body.school_level,
         class_id=body.class_id,
@@ -513,12 +595,19 @@ def clear_schedule(
 
 
 @router.get("/settings", response_model=SettingsPair)
-def get_settings(db: Session = Depends(get_db)) -> SettingsPair:
+def get_settings(db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> SettingsPair:
     el = db.scalars(
-        select(ScheduleSettings).where(ScheduleSettings.school_level == "elementary")
+        select(ScheduleSettings).where(
+        ScheduleSettings.school_level == "elementary",
+        ScheduleSettings.school_id == school.id,
+    )
     ).first()
     se = db.scalars(
-        select(ScheduleSettings).where(ScheduleSettings.school_level == "secondary")
+        select(ScheduleSettings).where(
+        ScheduleSettings.school_level == "secondary",
+        ScheduleSettings.school_id == school.id,
+    )
     ).first()
     return SettingsPair(
         elementary=ScheduleSettingsOut.model_validate(el) if el else None,
@@ -528,15 +617,19 @@ def get_settings(db: Session = Depends(get_db)) -> SettingsPair:
 
 @router.put("/settings/{school_level}", response_model=ScheduleSettingsOut)
 def update_settings(
-    school_level: str, body: SettingsUpdate, db: Session = Depends(get_db)
+    school_level: str, body: SettingsUpdate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> ScheduleSettingsOut:
     if school_level not in ("elementary", "secondary"):
         raise HTTPException(status_code=400, detail="Invalid school_level")
     s = db.scalars(
-        select(ScheduleSettings).where(ScheduleSettings.school_level == school_level)
+        select(ScheduleSettings).where(
+        ScheduleSettings.school_level == school_level,
+        ScheduleSettings.school_id == school.id,
+    )
     ).first()
     if s is None:
-        s = ScheduleSettings(school_level=school_level)
+        s = ScheduleSettings(school_id=school.id, school_level=school_level)
         db.add(s)
     s.max_lessons_per_subject_per_day = body.max_lessons_per_subject_per_day
     s.classroom_mode = body.classroom_mode

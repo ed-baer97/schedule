@@ -3,19 +3,22 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import Classroom, Teacher
-
-from backend.deps import get_db
+from app.models import Classroom, School, Teacher
+from backend.deps import get_current_school, get_db, school_owned
 from backend.schemas.teachers import TeacherCreate, TeacherOut, TeacherUpdate
 
 router = APIRouter()
 
 
 @router.get("/", response_model=list[TeacherOut])
-def list_teachers(db: Session = Depends(get_db)) -> list[Teacher]:
+def list_teachers(
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> list[Teacher]:
     stmt = (
         select(Teacher)
         .options(joinedload(Teacher.home_classroom))
+        .where(Teacher.school_id == school.id)
         .order_by(Teacher.full_name)
     )
     result = db.execute(stmt)
@@ -23,11 +26,15 @@ def list_teachers(db: Session = Depends(get_db)) -> list[Teacher]:
 
 
 @router.get("/{teacher_id}", response_model=TeacherOut)
-def get_teacher(teacher_id: int, db: Session = Depends(get_db)) -> Teacher:
+def get_teacher(
+    teacher_id: int,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> Teacher:
     stmt = (
         select(Teacher)
         .options(joinedload(Teacher.home_classroom))
-        .where(Teacher.id == teacher_id)
+        .where(Teacher.id == teacher_id, Teacher.school_id == school.id)
     )
     result = db.execute(stmt)
     teacher = result.scalars().unique().one_or_none()
@@ -37,11 +44,15 @@ def get_teacher(teacher_id: int, db: Session = Depends(get_db)) -> Teacher:
 
 
 @router.post("/", response_model=TeacherOut)
-def create_teacher(body: TeacherCreate, db: Session = Depends(get_db)) -> Teacher:
+def create_teacher(
+    body: TeacherCreate,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> Teacher:
     if body.home_classroom_id is not None:
-        if db.get(Classroom, body.home_classroom_id) is None:
-            raise HTTPException(status_code=400, detail="home_classroom not found")
+        school_owned(db, Classroom, body.home_classroom_id, school.id)
     t = Teacher(
+        school_id=school.id,
         full_name=body.full_name.strip(),
         email=(body.email or "").strip() or None,
         phone=(body.phone or "").strip() or None,
@@ -50,20 +61,20 @@ def create_teacher(body: TeacherCreate, db: Session = Depends(get_db)) -> Teache
     db.add(t)
     db.commit()
     db.refresh(t)
-    return get_teacher(t.id, db)
+    return get_teacher(t.id, db, school)
 
 
 @router.put("/{teacher_id}", response_model=TeacherOut)
 def update_teacher(
-    teacher_id: int, body: TeacherUpdate, db: Session = Depends(get_db)
+    teacher_id: int,
+    body: TeacherUpdate,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> Teacher:
-    t = db.get(Teacher, teacher_id)
-    if t is None:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+    t = school_owned(db, Teacher, teacher_id, school.id)
     data = body.model_dump(exclude_unset=True)
     if "home_classroom_id" in data and data["home_classroom_id"] is not None:
-        if db.get(Classroom, data["home_classroom_id"]) is None:
-            raise HTTPException(status_code=400, detail="home_classroom not found")
+        school_owned(db, Classroom, data["home_classroom_id"], school.id)
     if "full_name" in data and data["full_name"] is not None:
         t.full_name = str(data["full_name"]).strip()
     if "email" in data:
@@ -76,13 +87,15 @@ def update_teacher(
         t.home_classroom_id = data["home_classroom_id"]
     db.commit()
     db.refresh(t)
-    return get_teacher(t.id, db)
+    return get_teacher(t.id, db, school)
 
 
 @router.delete("/{teacher_id}", status_code=204)
-def delete_teacher(teacher_id: int, db: Session = Depends(get_db)) -> None:
-    t = db.get(Teacher, teacher_id)
-    if t is None:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+def delete_teacher(
+    teacher_id: int,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> None:
+    t = school_owned(db, Teacher, teacher_id, school.id)
     db.delete(t)
     db.commit()

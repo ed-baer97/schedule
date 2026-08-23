@@ -1,186 +1,80 @@
 # Система составления школьного расписания
 
-Веб-приложение для составления и управления школьным расписанием с поддержкой ручного и автоматического режимов.
+Веб-приложение для составления и управления школьным расписанием: справочники, нагрузка, ручная сетка, автосоставление (OR-Tools), отчёты. Стек — **FastAPI + React**, мультиарендность (школы), JWT-auth, Docker.
 
-## Возможности
+## Документация
 
-- **Импорт данных** из Excel (учителя, учебный план)
-- **Справочники**: учителя, кабинеты, классы, смены, предметы
-- **Нагрузка**: редактирование часов по предметам и классам
-- **Назначения**: связь учитель-предмет-класс, деление на группы
-- **Ручное расписание**: drag & drop, валидация конфликтов
-- **Автоматическое составление**: стратегия «лесенка» по учителю и CP-SAT solver
-- **Отчёты**: просмотр и экспорт в Excel
+| Документ | О чём |
+|----------|--------|
+| [docs/](docs/README.md) | Оглавление |
+| [Архитектура и структура](docs/architecture.md) | Дерево репозитория, слои, модели, API, страницы |
+| [Продукт](docs/product.md) | Цель, сущности, роли, правила, стек |
+| [Этапы выкладки](docs/stages.md) | Чеклист стенда (хост, Docker, auth, очередь) |
+| [Локальная разработка (Windows)](docs/local-windows.md) | Первый раз и ежедневный запуск |
+| [Стенд / Docker](docs/deploy.md) | Compose, бэкапы, ограничения RAM |
 
-## Требования
+## Запуск на Windows (фронт и бэк отдельно)
 
-- Python 3.11+
-- Node.js 20+
-- PostgreSQL 14+ (или SQLite для разработки)
+Нужны Python 3.11+ и Node.js 20+.
 
-## Установка
+### Первый раз
 
-### 1. Клонируйте репозиторий
-
-```bash
+```powershell
 cd schedule
-```
-
-### 2. Создайте виртуальное окружение
-
-```bash
 python -m venv venv
-
-# Windows
-venv\Scripts\activate
-
-# Linux/Mac
-source venv/bin/activate
-```
-
-### 3. Установите зависимости
-
-```bash
+.\venv\Scripts\activate
 pip install -r requirements.txt
-npm install
 npm install --prefix frontend
-```
-
-### 4. Настройте базу данных
-
-Скопируйте файл конфигурации:
-
-```bash
-copy env.example .env   # Windows
-cp env.example .env     # Linux/Mac
-```
-
-По умолчанию используется SQLite (`instance/school_schedule.db`). Для PostgreSQL создайте базу и укажите URL в `.env`:
-
-```sql
-CREATE DATABASE school_schedule;
-```
-
-```
-DATABASE_URL=postgresql://postgres:your_password@localhost:5432/school_schedule
-```
-
-### 5. Примените миграции
-
-```bash
+Copy-Item env.example .env
 alembic upgrade head
 ```
 
-При первом запуске API миграции применяются автоматически, если схема ещё не готова.
+В `.env` для локального HTTP: `COOKIE_SECURE=false`.
 
-### 6. Создайте Excel-шаблоны (опционально)
+Логин из `env.example` (создаётся при пустой таблице `users`): `admin@example.com` / `admin12345`.
 
-```bash
-python create_templates.py
+После входа `platform_admin` без школы попадает в **/admin** — создайте школу и пригласите админа школы. Дальше работайте под админом школы.
+
+### Каждый день — два окна PowerShell
+
+**Backend** (окно 1):
+
+```powershell
+cd schedule
+.\venv\Scripts\activate
+python run_api.py
 ```
 
-### 7. Запустите приложение
+API / OpenAPI: http://127.0.0.1:8000/docs
 
-Из корня репозитория:
+**Frontend** (окно 2):
 
-```bash
+```powershell
+cd schedule\frontend
 npm run dev
 ```
 
-`npm run dev` поднимает FastAPI (`python run_api.py`, порт 8000) и Vite одновременно. Откройте http://127.0.0.1:5173 — запросы `/api/*` проксируются на API. Если API ещё не поднялся, в шапке появится баннер «API недоступен».
+UI: http://127.0.0.1:5173 — Vite проксирует `/api` на порт 8000. Сначала поднимите API, затем Vite.
 
-**Раздельный запуск:**
+Подробности: [docs/local-windows.md](docs/local-windows.md).
+
+## Docker (стенд)
 
 ```bash
-# Backend
-python run_api.py
-# или
-python -m uvicorn backend.main:app --reload --port 8000
-
-# Frontend
-cd frontend && npm run dev
+git clone <repo> /opt/schedule && cd /opt/schedule
+cp env.example .env
+docker compose up -d --build
+docker compose --profile queue up -d   # автосоставление в фоне
 ```
 
-Документация OpenAPI: http://127.0.0.1:8000/docs
-
-Production-сборка фронта (`npm run build`) кладёт файлы в `frontend/dist`; FastAPI отдаёт SPA с того же порта 8000.
-
-**Ошибка `no such table`:** у выбранной базы ещё нет таблиц из миграций. Выполните из корня проекта (с активированным venv): `alembic upgrade head`.
-
-## Структура проекта
-
-```
-schedule/
-├── app/
-│   ├── config.py            # Конфигурация и DATABASE_URL
-│   ├── db.py                # SQLAlchemy Base
-│   ├── models/              # Модели данных
-│   ├── services/            # Бизнес-логика (автосоставление, валидация, импорт)
-│   └── excel_templates/     # Шаблоны для импорта
-├── backend/                 # FastAPI (JSON API)
-├── frontend/                # React (Vite + TypeScript)
-├── migrations/              # Alembic
-├── tests/                   # Pytest
-├── uploads/                 # Загруженные файлы
-├── alembic.ini
-├── requirements.txt
-├── run_api.py
-└── PROJECT_GOALS.md
-```
-
-## Использование
-
-### 1. Импорт данных
-
-1. Перейдите в раздел «Импорт»
-2. Скачайте шаблоны Excel
-3. Заполните данные
-4. Загрузите файлы
-
-### 2. Настройка
-
-1. Добавьте смены (начальная / основная школа)
-2. Привяжите классы к сменам
-3. Назначьте учителей к предметам
-
-### 3. Составление расписания
-
-1. Перейдите в «Расписание»
-2. Выберите уровень школы и смену
-3. Перетаскивайте предметы в ячейки
-4. Или используйте автоматическое заполнение
-
-### 4. Экспорт
-
-1. Перейдите в «Отчёты»
-2. Выберите класс или учителя
-3. Скачайте Excel или распечатайте
-
-## Деление на группы
-
-Если нужно разделить предмет на группы (например, информатика или иностранный язык):
-
-1. Перейдите в «Предметы» и нажмите «Назначения» у нужного предмета
-2. Выберите уровень школы (НШ / ОШ) и добавьте до двух учителей
-3. Отметьте у обоих чекбокс одного и того же класса — он автоматически разделится на подгруппы
-
-Общий просмотр и точечная замена учителя по конкретной нагрузке доступны на странице «Назначения».
-
-## Технологии
-
-- **Backend**: Python 3.11+, FastAPI, SQLAlchemy, Alembic
-- **Database**: PostgreSQL (или SQLite для разработки и тестов)
-- **Frontend**: React + Vite + TypeScript + `@tanstack/react-query`, Bootstrap 5
-- **Excel**: pandas, openpyxl
-- **Автосоставление**: OR-Tools CP-SAT
+Не делать `docker compose down -v` (сотрёт БД). Полная инструкция: [docs/deploy.md](docs/deploy.md).
 
 ## Тесты
 
-```bash
+```powershell
+.\venv\Scripts\activate
 python -m pytest -q
 ```
-
-`tests/conftest.py` использует временный SQLite; миграции для тестов не нужны.
 
 ## Лицензия
 

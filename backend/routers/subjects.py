@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
+    School,
     Classroom,
     ScheduleCell,
     SchoolClass,
@@ -12,7 +13,7 @@ from app.models import (
     TeachingAssignment,
 )
 
-from backend.deps import get_db
+from backend.deps import get_current_school, get_db, school_owned
 from backend.schemas.subjects import (
     SubjectAssignClassRow,
     SubjectAssignmentsSave,
@@ -29,13 +30,16 @@ from backend.schemas.subjects import (
 router = APIRouter()
 
 
-def _list_query(db: Session, school_level: str | None) -> list[Subject]:
+def _list_query(db: Session, school_id: int, school_level: str | None) -> list[Subject]:
     if school_level in ("elementary", "secondary"):
         ids = list(
             db.scalars(
                 select(TeachingAssignment.subject_id)
                 .join(SchoolClass, SchoolClass.id == TeachingAssignment.class_id)
-                .where(SchoolClass.school_level == school_level)
+                .where(
+                    SchoolClass.school_level == school_level,
+                    SchoolClass.school_id == school_id,
+                )
                 .distinct()
             ).all()
         )
@@ -43,7 +47,7 @@ def _list_query(db: Session, school_level: str | None) -> list[Subject]:
             return []
         stmt = (
             select(Subject)
-            .where(Subject.id.in_(ids))
+            .where(Subject.id.in_(ids), Subject.school_id == school_id)
             .options(joinedload(Subject.default_classroom))
             .order_by(Subject.name)
         )
@@ -51,6 +55,7 @@ def _list_query(db: Session, school_level: str | None) -> list[Subject]:
         return list(rows)
     stmt = (
         select(Subject)
+        .where(Subject.school_id == school_id)
         .options(joinedload(Subject.default_classroom))
         .order_by(Subject.name)
     )
@@ -60,9 +65,10 @@ def _list_query(db: Session, school_level: str | None) -> list[Subject]:
 @router.get("/", response_model=list[SubjectOut])
 def list_subjects(
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
     school_level: str | None = Query(None, pattern="^(elementary|secondary)$"),
 ) -> list[Subject]:
-    return _list_query(db, school_level)
+    return _list_query(db, school.id, school_level)
 
 
 @router.get("/meta/color-palette", response_model=list[str])
@@ -71,11 +77,12 @@ def color_palette() -> list[str]:
 
 
 @router.get("/{subject_id}", response_model=SubjectOut)
-def get_subject(subject_id: int, db: Session = Depends(get_db)) -> Subject:
+def get_subject(subject_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> Subject:
     stmt = (
         select(Subject)
         .options(joinedload(Subject.default_classroom))
-        .where(Subject.id == subject_id)
+        .where(Subject.id == subject_id, Subject.school_id == school.id)
     )
     row = db.execute(stmt).scalars().unique().one_or_none()
     if row is None:
@@ -84,11 +91,12 @@ def get_subject(subject_id: int, db: Session = Depends(get_db)) -> Subject:
 
 
 @router.post("/", response_model=SubjectOut)
-def create_subject(body: SubjectCreate, db: Session = Depends(get_db)) -> Subject:
+def create_subject(body: SubjectCreate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> Subject:
     if body.default_classroom_id is not None:
-        if db.get(Classroom, body.default_classroom_id) is None:
-            raise HTTPException(status_code=400, detail="default_classroom not found")
+        school_owned(db, Classroom, body.default_classroom_id, school.id)
     s = Subject(
+        school_id=school.id,
         name=body.name.strip(),
         color=body.color,
         requires_fixed_classroom=body.requires_fixed_classroom,
@@ -97,20 +105,18 @@ def create_subject(body: SubjectCreate, db: Session = Depends(get_db)) -> Subjec
     db.add(s)
     db.commit()
     db.refresh(s)
-    return get_subject(s.id, db)
+    return get_subject(s.id, db, school)
 
 
 @router.put("/{subject_id}", response_model=SubjectOut)
 def update_subject(
-    subject_id: int, body: SubjectUpdate, db: Session = Depends(get_db)
+    subject_id: int, body: SubjectUpdate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> Subject:
-    s = db.get(Subject, subject_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="Subject not found")
+    s = school_owned(db, Subject, subject_id, school.id)
     data = body.model_dump(exclude_unset=True)
     if "default_classroom_id" in data and data["default_classroom_id"] is not None:
-        if db.get(Classroom, data["default_classroom_id"]) is None:
-            raise HTTPException(status_code=400, detail="default_classroom not found")
+        school_owned(db, Classroom, data["default_classroom_id"], school.id)
     if "name" in data and data["name"] is not None:
         s.name = str(data["name"]).strip()
     if "color" in data and data["color"] is not None:
@@ -121,17 +127,16 @@ def update_subject(
         s.default_classroom_id = data["default_classroom_id"]
     db.commit()
     db.refresh(s)
-    return get_subject(s.id, db)
+    return get_subject(s.id, db, school)
 
 
 @router.patch("/{subject_id}/color", response_model=SubjectColorOut)
 def set_subject_color(
-    subject_id: int, body: SubjectColorUpdate, db: Session = Depends(get_db)
+    subject_id: int, body: SubjectColorUpdate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> SubjectColorOut:
     """Quick color change from the subjects list."""
-    s = db.get(Subject, subject_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="Subject not found")
+    s = school_owned(db, Subject, subject_id, school.id)
     s.color = body.color
     db.commit()
     db.refresh(s)
@@ -139,10 +144,9 @@ def set_subject_color(
 
 
 @router.delete("/{subject_id}", status_code=204)
-def delete_subject(subject_id: int, db: Session = Depends(get_db)) -> None:
-    s = db.get(Subject, subject_id)
-    if s is None:
-        raise HTTPException(status_code=404, detail="Subject not found")
+def delete_subject(subject_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> None:
+    s = school_owned(db, Subject, subject_id, school.id)
     db.delete(s)
     db.commit()
 
@@ -169,11 +173,12 @@ def get_subject_assignments(
     subject_id: int,
     school_level: str = Query("elementary", pattern="^(elementary|secondary)$"),
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> SubjectAssignmentsView:
     subject = db.execute(
         select(Subject)
         .options(joinedload(Subject.default_classroom))
-        .where(Subject.id == subject_id)
+        .where(Subject.id == subject_id, Subject.school_id == school.id)
     ).scalars().unique().one_or_none()
     if subject is None:
         raise HTTPException(status_code=404, detail="Subject not found")
@@ -184,6 +189,7 @@ def get_subject_assignments(
             .join(SchoolClass, SchoolClass.id == TeachingAssignment.class_id)
             .where(
                 TeachingAssignment.subject_id == subject.id,
+                TeachingAssignment.school_id == school.id,
                 SchoolClass.school_level == school_level,
             )
             .distinct()
@@ -193,7 +199,7 @@ def get_subject_assignments(
         list(
             db.scalars(
                 select(SchoolClass)
-                .where(SchoolClass.id.in_(class_ids))
+                .where(SchoolClass.id.in_(class_ids), SchoolClass.school_id == school.id)
                 .order_by(SchoolClass.grade, SchoolClass.name)
             ).all()
         )
@@ -208,6 +214,7 @@ def get_subject_assignments(
                 .join(SchoolClass, SchoolClass.id == TeachingAssignment.class_id)
                 .where(
                     TeachingAssignment.subject_id == subject.id,
+                    TeachingAssignment.school_id == school.id,
                     SchoolClass.school_level == school_level,
                 )
             ).all()
@@ -253,7 +260,7 @@ def get_subject_assignments(
         list(
             db.scalars(
                 select(Teacher)
-                .where(Teacher.id.in_(attached_ids))
+                .where(Teacher.id.in_(attached_ids), Teacher.school_id == school.id)
                 .order_by(Teacher.full_name)
             ).all()
         )
@@ -261,7 +268,9 @@ def get_subject_assignments(
         else []
     )
     all_teachers = list(
-        db.scalars(select(Teacher).order_by(Teacher.full_name)).all()
+        db.scalars(
+            select(Teacher).where(Teacher.school_id == school.id).order_by(Teacher.full_name)
+        ).all()
     )
 
     return SubjectAssignmentsView(
@@ -284,10 +293,9 @@ def save_subject_assignments(
     subject_id: int,
     body: SubjectAssignmentsSave,
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> SubjectAssignmentsSaveResult:
-    subject = db.get(Subject, subject_id)
-    if subject is None:
-        raise HTTPException(status_code=404, detail="Subject not found")
+    subject = school_owned(db, Subject, subject_id, school.id)
 
     class_ids = list(
         db.scalars(
@@ -295,6 +303,7 @@ def save_subject_assignments(
             .join(SchoolClass, SchoolClass.id == TeachingAssignment.class_id)
             .where(
                 TeachingAssignment.subject_id == subject.id,
+                TeachingAssignment.school_id == school.id,
                 SchoolClass.school_level == body.school_level,
             )
             .distinct()
@@ -305,7 +314,7 @@ def save_subject_assignments(
 
     classes = list(
         db.scalars(
-            select(SchoolClass).where(SchoolClass.id.in_(class_ids))
+            select(SchoolClass).where(SchoolClass.id.in_(class_ids), SchoolClass.school_id == school.id)
         ).all()
     )
     allowed_teacher_ids = set(body.teacher_ids)
@@ -362,6 +371,7 @@ def save_subject_assignments(
                 existing[0].group_number = 1
                 db.add(
                     TeachingAssignment(
+                        school_id=school.id,
                         subject_id=subject.id,
                         class_id=school_class.id,
                         teacher_id=checked_teachers[1],

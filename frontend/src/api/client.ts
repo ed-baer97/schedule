@@ -12,12 +12,34 @@ export class ApiError extends Error {
   }
 }
 
+const FIELD_RU: Record<string, string> = {
+  name: 'название',
+  full_name: 'ФИО',
+  email: 'email',
+  password: 'пароль',
+}
+
 function formatErrorItem(item: unknown): string {
   if (typeof item === 'string') return item
   if (item && typeof item === 'object') {
-    const o = item as { msg?: string; message?: string }
-    if (typeof o.msg === 'string') return o.msg
-    if (typeof o.message === 'string') return o.message
+    const o = item as { msg?: string; message?: string; loc?: unknown; type?: string }
+    const locParts = Array.isArray(o.loc)
+      ? o.loc.filter((x) => typeof x === 'string' && x !== 'body' && x !== 'query' && x !== 'path')
+      : []
+    const field = locParts.length ? String(locParts[locParts.length - 1]) : ''
+    const raw =
+      (typeof o.msg === 'string' && o.msg) || (typeof o.message === 'string' && o.message) || ''
+    const type = o.type ?? ''
+    const empty =
+      type.includes('missing') ||
+      type.includes('too_short') ||
+      /field required|at least 1 character/i.test(raw)
+
+    if (field === 'name' && empty) return 'Укажите название смены'
+    const label = FIELD_RU[field]
+    if (label && empty) return `Укажите ${label}`
+    if (label && raw) return `${label}: ${raw}`
+    if (raw) return raw
   }
   return JSON.stringify(item)
 }
@@ -55,18 +77,28 @@ export function extractApiError(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+let onUnauthorized: (() => void) | null = null
+
+export function setUnauthorizedHandler(handler: (() => void) | null) {
+  onUnauthorized = handler
+}
+
 export async function apiJson<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
   const res = await fetch(path, {
     ...init,
+    credentials: 'include',
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       ...init?.headers,
     },
   })
   const text = await res.text()
+  if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    onUnauthorized?.()
+  }
   if (!res.ok) {
     throw new ApiError(res.status, text)
   }

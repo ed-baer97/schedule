@@ -2,6 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
 import { Link, NavLink, Outlet } from 'react-router-dom'
 import { apiJson } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
+import { AtmosphereBg } from '../components/AtmosphereBg'
+import { BrandMark } from '../components/BrandMark'
+import { ThemeToggle } from '../components/ThemeToggle'
 
 type HealthResponse = {
   status: string
@@ -86,7 +90,6 @@ const NAV = [
   { type: 'link' as const, to: '/subjects', icon: 'bi-journal-text', label: 'Предметы' },
   { type: 'section' as const, label: 'Нагрузка' },
   { type: 'link' as const, to: '/workload', icon: 'bi-table', label: 'Часы' },
-  { type: 'link' as const, to: '/assignments', icon: 'bi-person-check', label: 'Назначения' },
   { type: 'section' as const, label: 'Расписание' },
   { type: 'link' as const, to: '/schedule', icon: 'bi-calendar3', label: 'Сетка и настройки' },
   { type: 'section' as const, label: 'Данные' },
@@ -94,15 +97,37 @@ const NAV = [
   { type: 'link' as const, to: '/reports', icon: 'bi-printer', label: 'Отчёты' },
 ]
 
+function UserMenu() {
+  const { user, logout } = useAuth()
+  if (!user) return null
+  return (
+    <div className="d-flex align-items-center gap-2 text-white-50 small">
+      <ThemeToggle />
+      {user.role === 'platform_admin' ? (
+        <Link className="btn btn-sm btn-outline-light" to="/admin">
+          Админка
+        </Link>
+      ) : null}
+      <span className="d-none d-md-inline">{user.email}</span>
+      <button type="button" className="btn btn-sm btn-outline-light" onClick={() => void logout()}>
+        Выйти
+      </button>
+    </div>
+  )
+}
+
 export function AppLayout() {
   return (
     <div className="app-shell">
+      <AtmosphereBg className="app-atmosphere" />
+      <div className="app-glass" aria-hidden />
       <nav className="navbar navbar-dark app-navbar">
         <div className="container-fluid px-3">
-          <Link className="navbar-brand text-white" to="/">
-            <i className="bi bi-calendar-week me-2" />
-            Школьное расписание
+          <Link className="navbar-brand text-white d-flex align-items-center gap-2" to="/">
+            <BrandMark size={32} />
+            KiVi
           </Link>
+          <UserMenu />
         </div>
       </nav>
       <ApiHealthBanner />
@@ -124,7 +149,9 @@ export function AppLayout() {
           </nav>
         </aside>
         <main className="app-main">
-          <Outlet />
+          <div className="app-main-scroll">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

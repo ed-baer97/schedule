@@ -4,7 +4,17 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Школьное расписание</title>
+    <title>KiVi</title>
+    <link rel="icon" type="image/png" href="/kivi-mark.png" />
+    <script>
+      try {
+        var t = localStorage.getItem('kivi-theme')
+        if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t
+        else if (window.matchMedia('(prefers-color-scheme: dark)').matches)
+          document.documentElement.dataset.theme = 'dark'
+        else document.documentElement.dataset.theme = 'light'
+      } catch (e) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

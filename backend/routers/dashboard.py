@@ -6,33 +6,67 @@ from sqlalchemy.orm import Session
 from app.models import (
     Classroom,
     ScheduleCell,
+    School,
     SchoolClass,
     Subject,
     Teacher,
     TeachingAssignment,
 )
-
-from backend.deps import get_db
+from backend.deps import get_current_school, get_db
 from backend.schemas.dashboard import DashboardStatsOut
 
 router = APIRouter()
 
 
 @router.get("/stats", response_model=DashboardStatsOut)
-def get_stats(db: Session = Depends(get_db)) -> DashboardStatsOut:
-    teachers_count = db.scalar(select(func.count()).select_from(Teacher)) or 0
-    classes_count = db.scalar(select(func.count()).select_from(SchoolClass)) or 0
-    subjects_count = db.scalar(select(func.count()).select_from(Subject)) or 0
-    classrooms_count = db.scalar(select(func.count()).select_from(Classroom)) or 0
+def get_stats(
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> DashboardStatsOut:
+    sid = school.id
+    teachers_count = (
+        db.scalar(
+            select(func.count()).select_from(Teacher).where(Teacher.school_id == sid)
+        )
+        or 0
+    )
+    classes_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(SchoolClass)
+            .where(SchoolClass.school_id == sid)
+        )
+        or 0
+    )
+    subjects_count = (
+        db.scalar(
+            select(func.count()).select_from(Subject).where(Subject.school_id == sid)
+        )
+        or 0
+    )
+    classrooms_count = (
+        db.scalar(
+            select(func.count())
+            .select_from(Classroom)
+            .where(Classroom.school_id == sid)
+        )
+        or 0
+    )
 
     el_ids = list(
         db.scalars(
-            select(SchoolClass.id).where(SchoolClass.school_level == "elementary")
+            select(SchoolClass.id).where(
+                SchoolClass.school_id == sid,
+                SchoolClass.school_level == "elementary",
+            )
         ).all()
     )
     sec_ids = list(
         db.scalars(
-            select(SchoolClass.id).where(SchoolClass.school_level == "secondary")
+            select(SchoolClass.id).where(
+                SchoolClass.school_id == sid,
+                SchoolClass.school_level == "secondary",
+            )
         ).all()
     )
 
@@ -43,7 +77,10 @@ def get_stats(db: Session = Depends(get_db)) -> DashboardStatsOut:
             db.scalar(
                 select(func.count())
                 .select_from(TeachingAssignment)
-                .where(TeachingAssignment.class_id.in_(class_ids))
+                .where(
+                    TeachingAssignment.school_id == sid,
+                    TeachingAssignment.class_id.in_(class_ids),
+                )
             )
             or 0
         )
@@ -55,7 +92,10 @@ def get_stats(db: Session = Depends(get_db)) -> DashboardStatsOut:
             db.scalar(
                 select(func.count())
                 .select_from(ScheduleCell)
-                .where(ScheduleCell.class_id.in_(class_ids))
+                .where(
+                    ScheduleCell.school_id == sid,
+                    ScheduleCell.class_id.in_(class_ids),
+                )
             )
             or 0
         )

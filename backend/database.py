@@ -12,6 +12,8 @@ logger = logging.getLogger(__name__)
 
 _CORE_TABLES = frozenset(
     {
+        "schools",
+        "users",
         "teachers",
         "classrooms",
         "school_classes",

@@ -15,6 +15,7 @@ class Teacher(Base):
     __tablename__ = "teachers"
 
     id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     full_name = Column(String(200), nullable=False)
     email = Column(String(100))
     phone = Column(String(20))
@@ -22,6 +23,7 @@ class Teacher(Base):
     created_at = Column(DateTime, default=_utc_now)
     updated_at = Column(DateTime, default=_utc_now, onupdate=_utc_now)
 
+    school = relationship("School")
     assignments = relationship("TeachingAssignment", back_populates="teacher", lazy="dynamic")
     home_classroom = relationship("Classroom", foreign_keys=[home_classroom_id])
 

@@ -1,5 +1,5 @@
 """Shift model."""
-from sqlalchemy import Column, Integer, String, Time
+from sqlalchemy import Column, ForeignKey, Integer, String, Time
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -9,6 +9,7 @@ class Shift(Base):
     __tablename__ = "shifts"
 
     id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     name = Column(String(50), nullable=False)
     school_level = Column(String(20), nullable=False)
     start_lesson = Column(Integer, default=1)
@@ -19,6 +20,7 @@ class Shift(Base):
     class_hour_start = Column(Time, nullable=True)
     class_hour_end = Column(Time, nullable=True)
 
+    school = relationship("School")
     classes = relationship("SchoolClass", back_populates="shift", lazy="dynamic")
     lesson_times = relationship(
         "ShiftLessonTime",

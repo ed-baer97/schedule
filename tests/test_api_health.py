@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
 from app.models import Teacher
+from tests.conftest import TEST_SCHOOL_ID
 from backend.deps import SessionLocal
 from backend.main import app
 
@@ -47,7 +48,7 @@ def test_teacher_not_found() -> None:
 
 def test_teachers_list_one() -> None:
     with SessionLocal() as session:
-        session.add(Teacher(full_name="Тестовый учитель", email="t@example.com"))
+        session.add(Teacher(school_id=TEST_SCHOOL_ID, full_name="Тестовый учитель", email="t@example.com"))
         session.commit()
 
     response = client.get("/api/teachers/")
@@ -61,3 +62,16 @@ def test_teachers_list_one() -> None:
     one = client.get(f"/api/teachers/{tid}")
     assert one.status_code == 200
     assert one.json()["full_name"] == "Тестовый учитель"
+
+
+def test_teachers_requires_auth_without_override() -> None:
+    from backend.deps import get_current_user
+    from backend.main import app
+    from tests.conftest import _override_user_attached
+
+    app.dependency_overrides.pop(get_current_user, None)
+    try:
+        r = client.get("/api/teachers/")
+        assert r.status_code == 401
+    finally:
+        app.dependency_overrides[get_current_user] = _override_user_attached

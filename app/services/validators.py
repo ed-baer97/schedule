@@ -28,8 +28,15 @@ def _cell_brief(cell: ScheduleCell) -> str:
 class ScheduleValidator:
     """Validates schedule for conflicts"""
 
-    def __init__(self, session: Session | None = None):
+    def __init__(self, session: Session | None = None, school_id: int | None = None):
         self.session = resolve_session(session)
+        self.school_id = school_id
+
+    def _settings_for(self, school_level: str):
+        q = self.session.query(ScheduleSettings).filter_by(school_level=school_level)
+        if self.school_id is not None:
+            q = q.filter_by(school_id=self.school_id)
+        return q.first()
 
     def validate_cell(self, assignment, day, lesson, classroom_id=None, exclude_cell_id=None):
         """
@@ -112,9 +119,7 @@ class ScheduleValidator:
         # Check max lessons per subject per day
         if self.check_subject_per_day_limit(assignment, day, exclude_cell_id):
             settings = (
-                self.session.query(ScheduleSettings)
-                .filter_by(school_level=assignment.school_class.school_level)
-                .first()
+                self._settings_for(assignment.school_class.school_level)
             )
             max_per_day = settings.max_lessons_per_subject_per_day if settings else 2
             subject_name = assignment.subject.display_name if assignment.subject else "предмет"
@@ -138,9 +143,7 @@ class ScheduleValidator:
         Returns True if limit exceeded.
         """
         settings = (
-            self.session.query(ScheduleSettings)
-            .filter_by(school_level=assignment.school_class.school_level)
-            .first()
+            self._settings_for(assignment.school_class.school_level)
         )
         max_per_day = settings.max_lessons_per_subject_per_day if settings else 2
 

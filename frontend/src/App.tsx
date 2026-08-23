@@ -1,11 +1,13 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
+import { useAuth } from './auth/AuthContext'
 import { AppLayout } from './layouts/AppLayout'
 import { ScheduleLayout } from './layouts/ScheduleLayout'
-import { AssignmentsPage } from './pages/AssignmentsPage'
+import { AdminSchoolsPage } from './pages/AdminSchoolsPage'
 import { AutoSchedulerPage } from './pages/AutoSchedulerPage'
 import { ClassroomsPage } from './pages/ClassroomsPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { ImportPage } from './pages/ImportPage'
+import { LoginPage } from './pages/LoginPage'
 import { ReportsClassPage } from './pages/ReportsClassPage'
 import { ReportsPage } from './pages/ReportsPage'
 import { ReportsTeacherPage } from './pages/ReportsTeacherPage'
@@ -17,10 +19,52 @@ import { SubjectsPage } from './pages/SubjectsPage'
 import { TeachersPage } from './pages/TeachersPage'
 import { WorkloadPage } from './pages/WorkloadPage'
 
+function RequireAuth({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) {
+    return (
+      <div className="container py-5 text-center text-muted">Загрузка сессии…</div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role === 'platform_admin' && !user.school_id) {
+    return <Navigate to="/admin" replace />
+  }
+  return <>{children}</>
+}
+
+function RequirePlatformAdmin({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth()
+  if (loading) {
+    return (
+      <div className="container py-5 text-center text-muted">Загрузка сессии…</div>
+    )
+  }
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role !== 'platform_admin') return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<AppLayout />}>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/admin"
+        element={
+          <RequirePlatformAdmin>
+            <AdminSchoolsPage />
+          </RequirePlatformAdmin>
+        }
+      />
+      <Route
+        path="/"
+        element={
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        }
+      >
         <Route index element={<DashboardPage />} />
         <Route path="teachers" element={<TeachersPage />} />
         <Route path="classrooms" element={<ClassroomsPage />} />
@@ -34,7 +78,7 @@ export default function App() {
           <Route path="auto" element={<AutoSchedulerPage />} />
           <Route path="settings" element={<Navigate to="/schedule/auto" replace />} />
         </Route>
-        <Route path="assignments" element={<AssignmentsPage />} />
+        <Route path="assignments" element={<Navigate to="/subjects" replace />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="reports/class/:id" element={<ReportsClassPage />} />
         <Route path="reports/teacher/:id" element={<ReportsTeacherPage />} />

@@ -15,11 +15,23 @@ class AutoScheduler:
     Supports: teacher_room (дети приходят к учителю), class_room (учитель приходит к классу).
     """
 
-    def __init__(self, session=None):
+    def __init__(self, session=None, school_id=None):
         self.session = resolve_session(session)
-        self.validator = ScheduleValidator(self.session)
+        self.school_id = school_id
+        self.validator = ScheduleValidator(self.session, school_id=school_id)
         self.graph_solver = ResidualGraphSolver(self._get_classroom_for_cell, session=self.session)
         self.cp_sat_solver = CpSatScheduleSolver(self._get_classroom_for_cell, session=self.session)
+
+    def _settings_for(self, school_level):
+        q = self.session.query(ScheduleSettings).filter_by(school_level=school_level)
+        if self.school_id is not None:
+            q = q.filter_by(school_id=self.school_id)
+        return q.first()
+
+    def _scope(self, query, model):
+        if self.school_id is not None and hasattr(model, "school_id"):
+            return query.filter(model.school_id == self.school_id)
+        return query
 
     def cp_sat_schedule_shift_iter(
         self,
@@ -167,7 +179,7 @@ class AutoScheduler:
         subject = assignment.subject
         teacher = assignment.teacher
         school_class = assignment.school_class
-        settings = self.session.query(ScheduleSettings).filter_by(school_level=school_level).first()
+        settings = self._settings_for(school_level)
 
         # 1. Предмет с фиксированным кабинетом (Информатика, Физкультура, Технология)
         if subject.requires_fixed_classroom:
@@ -221,7 +233,7 @@ class AutoScheduler:
     def _prefer_consecutive_pairs(self, school_level):
         """True when settings allow 2 lessons of a subject per day — place them back-to-back."""
         settings = (
-            self.session.query(ScheduleSettings).filter_by(school_level=school_level).first()
+            self._settings_for(school_level)
         )
         max_per = settings.max_lessons_per_subject_per_day if settings else 2
         return max_per >= 2
@@ -330,6 +342,7 @@ class AutoScheduler:
         if errors:
             return 0
         cell = ScheduleCell(
+            **({'school_id': self.school_id} if self.school_id is not None else {}),
             class_id=assignment.class_id,
             day_of_week=day,
             lesson_number=lesson,
@@ -675,6 +688,8 @@ class AutoScheduler:
             )
             self._delete_cells(rebuilt)
             for row in snapshot:
+                if self.school_id is not None:
+                    row = {**row, 'school_id': self.school_id}
                 self.session.add(ScheduleCell(**row))
             self.session.flush()
             return 0
@@ -687,12 +702,18 @@ class AutoScheduler:
         разных классов чередуются. Если не умещается — перебирает дни и слоты,
         сохраняя приоритет пар.
         """
-        assignments = self.session.query(TeachingAssignment)\
+        aq = self.session.query(TeachingAssignment)\
             .join(SchoolClass)\
             .filter(
                 TeachingAssignment.teacher_id == teacher_id,
                 SchoolClass.school_level == school_level
-            ).order_by(SchoolClass.name, TeachingAssignment.id).all()
+            )
+        if self.school_id is not None:
+            aq = aq.filter(
+                TeachingAssignment.school_id == self.school_id,
+                SchoolClass.school_id == self.school_id,
+            )
+        assignments = aq.order_by(SchoolClass.name, TeachingAssignment.id).all()
 
         working_days = 5
         max_lessons = 7
@@ -820,10 +841,13 @@ class AutoScheduler:
         max_lessons = shift.max_lessons_per_day if shift else 7
 
         # Get unscheduled assignments for this class
-        assignments = self.session.query(TeachingAssignment).filter(
+        aq = self.session.query(TeachingAssignment).filter(
             TeachingAssignment.class_id == class_id,
             TeachingAssignment.teacher_id.isnot(None)
-        ).all()
+        )
+        if self.school_id is not None:
+            aq = aq.filter(TeachingAssignment.school_id == self.school_id)
+        assignments = aq.all()
 
         # Get assignments with remaining hours, sorted by remaining hours (most first)
         available = []
@@ -874,6 +898,7 @@ class AutoScheduler:
 
                     if not errors:
                         cell = ScheduleCell(
+                            **({'school_id': self.school_id} if self.school_id is not None else {}),
                             class_id=class_id,
                             day_of_week=day,
                             lesson_number=lesson_num,
@@ -987,6 +1012,7 @@ class AutoScheduler:
                     if e_i:
                         continue
                     cell_i = ScheduleCell(
+                        **({'school_id': self.school_id} if self.school_id is not None else {}),
                         class_id=class_id,
                         day_of_week=day,
                         lesson_number=lesson_num,
@@ -1003,6 +1029,7 @@ class AutoScheduler:
                         self.session.flush()
                         continue
                     cell_j = ScheduleCell(
+                        **({'school_id': self.school_id} if self.school_id is not None else {}),
                         class_id=class_id,
                         day_of_week=day,
                         lesson_number=lesson_num,
@@ -1043,6 +1070,7 @@ class AutoScheduler:
             )
             if not errors:
                 cell = ScheduleCell(
+                    **({'school_id': self.school_id} if self.school_id is not None else {}),
                     class_id=class_id,
                     day_of_week=day,
                     lesson_number=lesson_num,
@@ -1065,13 +1093,16 @@ class AutoScheduler:
         find and place the complementary subgroup (possibly from another teacher)
         in the same slot. Returns 1 if placed, 0 otherwise.
         """
-        complementary_assignments = self.session.query(TeachingAssignment).filter(
+        cq = self.session.query(TeachingAssignment).filter(
             TeachingAssignment.class_id == placed_assignment.class_id,
             TeachingAssignment.subject_id == placed_assignment.subject_id,
             TeachingAssignment.group_number.isnot(None),
             TeachingAssignment.group_number != placed_assignment.group_number,
             TeachingAssignment.teacher_id.isnot(None)
-        ).all()
+        )
+        if self.school_id is not None:
+            cq = cq.filter(TeachingAssignment.school_id == self.school_id)
+        complementary_assignments = cq.all()
 
         for comp in complementary_assignments:
             if comp.remaining_hours <= 0:
@@ -1085,6 +1116,7 @@ class AutoScheduler:
             )
             if not errors:
                 cell = ScheduleCell(
+                    **({'school_id': self.school_id} if self.school_id is not None else {}),
                     class_id=comp.class_id,
                     day_of_week=day,
                     lesson_number=lesson,
@@ -1144,17 +1176,23 @@ class AutoScheduler:
             )
             return
 
-        classes = self.session.query(SchoolClass).filter_by(school_level=school_level)\
+        classes = self._scope(self.session.query(SchoolClass), SchoolClass).filter_by(school_level=school_level)\
             .order_by(SchoolClass.grade, SchoolClass.name).all()
-        teachers = self.session.query(Teacher).join(TeachingAssignment).join(SchoolClass).filter(
+        tq = self.session.query(Teacher).join(TeachingAssignment).join(SchoolClass).filter(
             SchoolClass.school_level == school_level
-        ).distinct().order_by(Teacher.full_name).all()
+        )
+        if self.school_id is not None:
+            tq = tq.filter(Teacher.school_id == self.school_id, SchoolClass.school_id == self.school_id)
+        teachers = tq.distinct().order_by(Teacher.full_name).all()
 
         # Если сетка уровня пустая, сначала используем teacher-ladder:
         # это заметно уменьшает окна у учителей на старте.
-        has_cells = self.session.query(ScheduleCell).join(SchoolClass).filter(
+        hq = self.session.query(ScheduleCell).join(SchoolClass).filter(
             SchoolClass.school_level == school_level
-        ).first() is not None
+        )
+        if self.school_id is not None:
+            hq = hq.filter(ScheduleCell.school_id == self.school_id)
+        has_cells = hq.first() is not None
 
         total_steps = 0
         for sc in classes:
@@ -1228,6 +1266,8 @@ class AutoScheduler:
         Clear schedule (delete cells) with optional filters.
         """
         query = self.session.query(ScheduleCell)
+        if self.school_id is not None:
+            query = query.filter(ScheduleCell.school_id == self.school_id)
 
         if class_id:
             query = query.filter(ScheduleCell.class_id == class_id)
@@ -1256,6 +1296,11 @@ class AutoScheduler:
             SchoolClass.school_level == school_level,
             TeachingAssignment.teacher_id.isnot(None),
         )
+        if self.school_id is not None:
+            query = query.filter(
+                TeachingAssignment.school_id == self.school_id,
+                SchoolClass.school_id == self.school_id,
+            )
         if teacher_id:
             query = query.filter(TeachingAssignment.teacher_id == teacher_id)
         if class_id:
@@ -1324,7 +1369,7 @@ class AutoScheduler:
         seen = set()  # (type, id) для дедупликации
 
         if school_level:
-            settings = self.session.query(ScheduleSettings).filter_by(school_level=school_level).first()
+            settings = self._settings_for(school_level)
             mode = settings.classroom_mode if settings else 'class_room'
         else:
             settings = None
@@ -1332,6 +1377,8 @@ class AutoScheduler:
 
         # Уроки без кабинета в расписании
         cells = self.session.query(ScheduleCell).filter(ScheduleCell.classroom_id.is_(None))
+        if self.school_id is not None:
+            cells = cells.filter(ScheduleCell.school_id == self.school_id)
         if school_level:
             cells = cells.join(SchoolClass).filter(SchoolClass.school_level == school_level)
         for cell in cells.all():
@@ -1355,10 +1402,13 @@ class AutoScheduler:
 
         # Учителя без кабинета (для teacher_room) — если ещё нет уроков в расписании
         if school_level and mode == 'teacher_room':
-            for t in self.session.query(Teacher).join(TeachingAssignment).join(SchoolClass).filter(
+            tq = self.session.query(Teacher).join(TeachingAssignment).join(SchoolClass).filter(
                 SchoolClass.school_level == school_level,
                 Teacher.home_classroom_id.is_(None)
-            ).distinct().all():
+            )
+            if self.school_id is not None:
+                tq = tq.filter(Teacher.school_id == self.school_id)
+            for t in tq.distinct().all():
                 key = ('teacher_no_room', t.id)
                 if key not in seen:
                     seen.add(key)
@@ -1366,7 +1416,7 @@ class AutoScheduler:
 
         # Классы без кабинета (для class_room)
         if school_level and mode == 'class_room':
-            for c in self.session.query(SchoolClass).filter_by(school_level=school_level).filter(
+            for c in self._scope(self.session.query(SchoolClass), SchoolClass).filter_by(school_level=school_level).filter(
                     SchoolClass.home_classroom_id.is_(None)).all():
                 if c.assignments.filter(TeachingAssignment.teacher_id.isnot(None)).first():
                     key = ('class_no_room', c.id)
@@ -1375,7 +1425,7 @@ class AutoScheduler:
                         warnings.append(('class_no_room', f'Класс {c.name} не имеет прикреплённого кабинета', c))
 
         # Предметы с requires_fixed_classroom без default_classroom
-        for s in self.session.query(Subject).filter_by(requires_fixed_classroom=True).filter(
+        for s in self._scope(self.session.query(Subject), Subject).filter_by(requires_fixed_classroom=True).filter(
                 Subject.default_classroom_id.is_(None)).all():
             if any(not a.preferred_classroom_id for a in s.assignments):
                 key = ('fixed_subject_default', s.id)

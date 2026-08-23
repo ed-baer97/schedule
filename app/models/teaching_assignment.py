@@ -9,6 +9,7 @@ class TeachingAssignment(Base):
     __tablename__ = "teaching_assignments"
 
     id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("school_classes.id"), nullable=False)
@@ -16,6 +17,7 @@ class TeachingAssignment(Base):
     group_number = Column(Integer, nullable=True)
     preferred_classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
 
+    school = relationship("School")
     subject = relationship("Subject", back_populates="assignments")
     teacher = relationship("Teacher", back_populates="assignments")
     school_class = relationship("SchoolClass", back_populates="assignments")

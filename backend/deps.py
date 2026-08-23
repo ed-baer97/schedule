@@ -1,10 +1,14 @@
-"""SQLAlchemy session factory for FastAPI."""
+"""SQLAlchemy session factory and auth/tenant dependencies for FastAPI."""
 from collections.abc import Generator
 
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Config
+from app.models import School, User
+from app.models.user import ROLE_PLATFORM_ADMIN
+from backend.security import decode_access_token
 
 _connect_args = (
     {"check_same_thread": False}
@@ -25,3 +29,70 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def get_current_user(
+    request: Request, db: Session = Depends(get_db)
+) -> User:
+    token = request.cookies.get(Config.COOKIE_NAME)
+    if not token:
+        auth = request.headers.get("Authorization") or ""
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Требуется вход",
+        )
+    try:
+        payload = decode_access_token(token)
+        user_id = int(payload["sub"])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Сессия недействительна",
+        ) from exc
+
+    user = db.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Пользователь не найден или отключён",
+        )
+    return user
+
+
+def get_current_school(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> School:
+    """School-scoped routes: platform_admin without school_id cannot access."""
+    if user.school_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Нет привязки к школе. Используйте раздел админки платформы.",
+        )
+    school = db.get(School, user.school_id)
+    if school is None or not school.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Школа не найдена или отключена",
+        )
+    return school
+
+
+def require_platform_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != ROLE_PLATFORM_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Только администратор платформы",
+        )
+    return user
+
+
+def school_owned(db: Session, model, obj_id: int, school_id: int):
+    """Load entity by id and ensure it belongs to school; 404 otherwise."""
+    obj = db.get(model, obj_id)
+    if obj is None or getattr(obj, "school_id", None) != school_id:
+        raise HTTPException(status_code=404, detail="Not found")
+    return obj

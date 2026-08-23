@@ -13,6 +13,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.pytest_cache/
 
 # IDE
 .idea/
@@ -20,8 +21,15 @@ build/
 *.swp
 *.swo
 
-# Uploads
+# Uploads / local data
 uploads/
+instance/*.db
+instance/*.db.bak*
+instance/*.sqlite3
+backups/
+
+# CoAlly / agent scratch
+.coally-pending.md
 
 # Database
 *.db

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ApiError, apiJson } from '../api/client'
+import { apiJson } from '../api/client'
 
 type SchoolLevel = 'elementary' | 'secondary'
 
@@ -45,51 +45,40 @@ type PageData = {
   shifts_secondary: ShiftBrief[]
 }
 
-type StreamEvent =
-  | { type: 'progress'; current: number; total: number; message?: string }
-  | { type: 'done'; count: number; [k: string]: unknown }
-  | { type: 'error'; message: string }
+type JobOut = {
+  id: number
+  kind: string
+  status: string
+  progress: { current?: number; total?: number; message?: string } | null
+  result: { type?: string; count?: number; message?: string; [k: string]: unknown } | null
+  error: string | null
+}
 
-async function streamNdjson(
+async function runJobAndPoll(
   path: string,
   body: object,
-  onEvent: (e: StreamEvent) => void,
-): Promise<void> {
-  const res = await fetch(path, {
+  onProgress: (p: { current: number; total: number; message: string }) => void,
+  onLog: (line: string) => void,
+): Promise<JobOut> {
+  const started = await apiJson<{ job_id: number }>(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => '')
-    throw new ApiError(res.status, text)
-  }
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    let nl = buffer.indexOf('\n')
-    while (nl !== -1) {
-      const line = buffer.slice(0, nl).trim()
-      buffer = buffer.slice(nl + 1)
-      if (line) {
-        try {
-          onEvent(JSON.parse(line) as StreamEvent)
-        } catch {
-          /* ignore malformed line */
-        }
-      }
-      nl = buffer.indexOf('\n')
+  onLog(`Задача #${started.job_id} поставлена в очередь`)
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1000))
+    const job = await apiJson<JobOut>(`/api/jobs/${started.job_id}`)
+    const prog = job.progress || {}
+    onProgress({
+      current: Number(prog.current || 0),
+      total: Number(prog.total || 0),
+      message: String(prog.message || job.status),
+    })
+    if (prog.message) {
+      onLog(`[${prog.current ?? 0}/${prog.total ?? 0}] ${prog.message}`)
     }
-  }
-  if (buffer.trim()) {
-    try {
-      onEvent(JSON.parse(buffer.trim()) as StreamEvent)
-    } catch {
-      /* ignore */
+    if (job.status === 'done' || job.status === 'failed') {
+      return job
     }
   }
 }
@@ -156,27 +145,22 @@ export function AutoSchedulerPage() {
     setLog([])
   }
 
-  function handleEvent(e: StreamEvent) {
-    if (e.type === 'progress') {
-      setProgress({
-        current: e.current,
-        total: e.total,
-        message: e.message ?? '',
-      })
-      if (e.message) appendLog(`[${e.current}/${e.total}] ${e.message}`)
-    } else if (e.type === 'done') {
-      appendLog(`Готово. Размещено уроков: ${e.count}.`)
-      const placed = e.solver_placed_count as number | undefined
-      if (placed != null) {
-        const unplaced = (e.unplaced as unknown[] | undefined)?.length ?? 0
-        appendLog(`Solver-pass: добавлено ${placed}, остаток назначений ${unplaced}.`)
-      }
-      const status = e.cp_sat_status as string | undefined
-      if (status) appendLog(`CP-SAT status: ${status}`)
-    } else if (e.type === 'error') {
-      setError(e.message)
-      appendLog(`Ошибка: ${e.message}`)
+  function handleJobResult(job: JobOut) {
+    if (job.status === 'failed') {
+      const msg = job.error || 'Задача завершилась с ошибкой'
+      setError(msg)
+      appendLog(`Ошибка: ${msg}`)
+      return
     }
+    const e = job.result || {}
+    appendLog(`Готово. Размещено уроков: ${e.count ?? '—'}.`)
+    const placed = e.solver_placed_count as number | undefined
+    if (placed != null) {
+      const unplaced = (e.unplaced as unknown[] | undefined)?.length ?? 0
+      appendLog(`Solver-pass: добавлено ${placed}, остаток назначений ${unplaced}.`)
+    }
+    const status = e.cp_sat_status as string | undefined
+    if (status) appendLog(`CP-SAT status: ${status}`)
   }
 
   async function runAll() {
@@ -187,14 +171,21 @@ export function AutoSchedulerPage() {
     resetState()
     setRunning(true)
     try {
-      await streamNdjson('/api/schedule/auto/all/stream', {
-        school_level: level,
-        solver,
-        shift_id: solver === 'cp_sat_mvp' ? Number(shiftId) : null,
-        time_limit_sec: timeLimit,
-        random_seed: seed,
-        diagnose,
-      }, handleEvent)
+      const job = await runJobAndPoll(
+        '/api/schedule/auto',
+        {
+          school_level: level,
+          solver,
+          shift_id: solver === 'cp_sat_mvp' ? Number(shiftId) : null,
+          time_limit_sec: timeLimit,
+          random_seed: seed,
+          diagnose,
+        },
+        (p) => setProgress(p),
+        appendLog,
+      )
+      handleJobResult(job)
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -210,11 +201,18 @@ export function AutoSchedulerPage() {
     resetState()
     setRunning(true)
     try {
-      await streamNdjson('/api/schedule/auto/by-teacher/stream', {
-        teacher_id: Number(teacherId),
-        school_level: level,
-        diagnose,
-      }, handleEvent)
+      const job = await runJobAndPoll(
+        '/api/schedule/auto/by-teacher',
+        {
+          teacher_id: Number(teacherId),
+          school_level: level,
+          diagnose,
+        },
+        (p) => setProgress(p),
+        appendLog,
+      )
+      handleJobResult(job)
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {

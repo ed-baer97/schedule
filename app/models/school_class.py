@@ -9,6 +9,7 @@ class SchoolClass(Base):
     __tablename__ = "school_classes"
 
     id = Column(Integer, primary_key=True)
+    school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     name = Column(String(10), nullable=False)
     grade = Column(Integer, nullable=False)
     school_level = Column(String(20), nullable=False)
@@ -16,6 +17,7 @@ class SchoolClass(Base):
     students_count = Column(Integer)
     home_classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
 
+    school = relationship("School")
     shift = relationship("Shift", back_populates="classes")
     home_classroom = relationship("Classroom", foreign_keys=[home_classroom_id])
     assignments = relationship("TeachingAssignment", back_populates="school_class", lazy="dynamic")

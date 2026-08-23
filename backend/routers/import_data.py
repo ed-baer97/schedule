@@ -7,14 +7,15 @@ from pathlib import Path
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.config import Config
+from app.models import School
 from app.services.excel_import import ExcelImporter
-from backend.deps import get_db
+from backend.deps import get_current_school, get_db
 
 router = APIRouter()
 
@@ -75,16 +76,33 @@ class ImportCurriculumResult(BaseModel):
     message: str
 
 
+class SubjectHoursFileResult(BaseModel):
+    subject: str
+    subject_created: bool
+    teachers_created: int
+    classes_created: int
+    assignments_created: int
+    assignments_updated: int
+    subgroup_classes: int
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ImportSubjectHoursResult(BaseModel):
+    files: list[SubjectHoursFileResult]
+    message: str
+
+
 @router.post(
     "/teachers",
     response_model=ImportTeachersResult,
 )
 def import_teachers(
-    file: UploadFile = File(...), db: Session = Depends(get_db)
+    file: UploadFile = File(...), db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> ImportTeachersResult:
     path = _save_upload(file)
     try:
-        count = ExcelImporter(db).import_teachers(path)
+        count = ExcelImporter(db, school_id=school.id).import_teachers(path)
     except Exception as exc:  # noqa: BLE001 — surface to API caller
         raise HTTPException(status_code=400, detail=f"Ошибка импорта: {exc}") from exc
     finally:
@@ -100,11 +118,12 @@ def import_teachers(
     response_model=ImportClassroomsResult,
 )
 def import_classrooms(
-    file: UploadFile = File(...), db: Session = Depends(get_db)
+    file: UploadFile = File(...), db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> ImportClassroomsResult:
     path = _save_upload(file)
     try:
-        count = ExcelImporter(db).import_classrooms(path)
+        count = ExcelImporter(db, school_id=school.id).import_classrooms(path)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Ошибка импорта: {exc}") from exc
     finally:
@@ -123,14 +142,15 @@ def import_curriculum(
     school_level: str,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> ImportCurriculumResult:
     if school_level not in ("elementary", "secondary"):
         raise HTTPException(status_code=400, detail="Неверный уровень школы")
     path = _save_upload(file)
     try:
-        subjects_count, assignments_count = ExcelImporter(db).import_curriculum(
-            path, school_level
-        )
+        subjects_count, assignments_count = ExcelImporter(
+            db, school_id=school.id
+        ).import_curriculum(path, school_level)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Ошибка импорта: {exc}") from exc
     finally:
@@ -144,6 +164,62 @@ def import_curriculum(
         message=(
             f"Импортировано предметов: {subjects_count}, "
             f"записей нагрузки: {assignments_count}"
+        ),
+    )
+
+
+@router.post("/subject-hours", response_model=ImportSubjectHoursResult)
+def import_subject_hours(
+    files: list[UploadFile] = File(...),
+    subject: str | None = Form(None),
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> ImportSubjectHoursResult:
+    if not files:
+        raise HTTPException(status_code=400, detail="Файлы не выбраны")
+    subject_name = (subject or "").strip() or None
+    if len(files) > 1 and subject_name:
+        raise HTTPException(
+            status_code=400,
+            detail="Название предмета задаётся только при загрузке одного файла; "
+            "для нескольких файлов имя берётся из имени файла",
+        )
+
+    importer = ExcelImporter(db, school_id=school.id)
+    results: list[SubjectHoursFileResult] = []
+    saved_paths: list[str] = []
+    try:
+        for upload in files:
+            path = _save_upload(upload)
+            saved_paths.append(path)
+            stem = Path(upload.filename or path).stem
+            name = subject_name if len(files) == 1 else None
+            try:
+                payload = importer.import_subject_hours(path, subject_name=name or stem)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:  # noqa: BLE001
+                raise HTTPException(
+                    status_code=400, detail=f"Ошибка импорта «{stem}»: {exc}"
+                ) from exc
+            results.append(SubjectHoursFileResult(**payload))
+    finally:
+        for path in saved_paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    subjects = ", ".join(item.subject for item in results)
+    created = sum(item.assignments_created for item in results)
+    updated = sum(item.assignments_updated for item in results)
+    subgroups = sum(item.subgroup_classes for item in results)
+    return ImportSubjectHoursResult(
+        files=results,
+        message=(
+            f"Предметы: {subjects}. "
+            f"Назначений создано: {created}, обновлено: {updated}"
+            + (f", классов с подгруппами: {subgroups}" if subgroups else "")
         ),
     )
 

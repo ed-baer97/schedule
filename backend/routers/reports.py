@@ -10,9 +10,9 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import ScheduleCell, SchoolClass, Teacher, TeachingAssignment
+from app.models import School, ScheduleCell, SchoolClass, Subject, Teacher, TeachingAssignment
 
-from backend.deps import get_db
+from backend.deps import get_current_school, get_db, school_owned
 from backend.schemas.reports import ClassReportOut, ReportCellOut, TeacherReportOut
 
 router = APIRouter()
@@ -45,7 +45,7 @@ def _cell_to_report(cell: ScheduleCell) -> ReportCellOut:
         day_of_week=cell.day_of_week,
         lesson_number=cell.lesson_number,
         subject_name=subj.display_name if subj else "?",
-        subject_color=(subj.display_color if subj else "#3498db"),
+        subject_color=(subj.display_color if subj else Subject.DEFAULT_COLOR),
         teacher_name=teacher.display_name if teacher else None,
         class_name=cell.school_class.name if cell.school_class else "?",
         classroom_name=cell.classroom.display_name if cell.classroom else None,
@@ -61,10 +61,9 @@ def _load_cells(db: Session, *where) -> list[ScheduleCell]:
 
 
 @router.get("/class/{class_id}", response_model=ClassReportOut)
-def class_report(class_id: int, db: Session = Depends(get_db)) -> ClassReportOut:
-    school_class = db.get(SchoolClass, class_id)
-    if school_class is None:
-        raise HTTPException(status_code=404, detail="Class not found")
+def class_report(class_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> ClassReportOut:
+    school_class = school_owned(db, SchoolClass, class_id, school.id)
 
     shift = school_class.shift if school_class.shift_id else None
     working_days = shift.working_days if shift else 5
@@ -87,7 +86,11 @@ def class_report(class_id: int, db: Session = Depends(get_db)) -> ClassReportOut
                 f"{_fmt_time(shift.class_hour_start)}–{_fmt_time(shift.class_hour_end)}"
             )
 
-    cells = _load_cells(db, ScheduleCell.class_id == class_id)
+    cells = _load_cells(
+        db,
+        ScheduleCell.class_id == class_id,
+        ScheduleCell.school_id == school.id,
+    )
     return ClassReportOut(
         class_id=school_class.id,
         class_name=school_class.name,
@@ -104,17 +107,19 @@ def class_report(class_id: int, db: Session = Depends(get_db)) -> ClassReportOut
 
 
 @router.get("/teacher/{teacher_id}", response_model=TeacherReportOut)
-def teacher_report(teacher_id: int, db: Session = Depends(get_db)) -> TeacherReportOut:
-    teacher = db.get(Teacher, teacher_id)
-    if teacher is None:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+def teacher_report(teacher_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> TeacherReportOut:
+    teacher = school_owned(db, Teacher, teacher_id, school.id)
 
     cells = list(
         db.execute(
             select(ScheduleCell)
             .join(TeachingAssignment)
             .options(*_CELL_LOAD)
-            .where(TeachingAssignment.teacher_id == teacher_id)
+            .where(
+            TeachingAssignment.teacher_id == teacher_id,
+            ScheduleCell.school_id == school.id,
+        )
         )
         .scalars()
         .unique()
@@ -151,15 +156,18 @@ def _xlsx_stream(buf: io.BytesIO, filename: str) -> StreamingResponse:
 
 
 @router.get("/export/class/{class_id}")
-def export_class(class_id: int, db: Session = Depends(get_db)) -> StreamingResponse:
-    school_class = db.get(SchoolClass, class_id)
-    if school_class is None:
-        raise HTTPException(status_code=404, detail="Class not found")
+def export_class(class_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> StreamingResponse:
+    school_class = school_owned(db, SchoolClass, class_id, school.id)
     shift = school_class.shift if school_class.shift_id else None
     working_days = shift.working_days if shift else 5
     max_lessons = shift.max_lessons_per_day if shift else 7
 
-    cells = _load_cells(db, ScheduleCell.class_id == class_id)
+    cells = _load_cells(
+        db,
+        ScheduleCell.class_id == class_id,
+        ScheduleCell.school_id == school.id,
+    )
     data = []
     for day in range(1, working_days + 1):
         for lesson in range(1, max_lessons + 1):
@@ -189,16 +197,18 @@ def export_class(class_id: int, db: Session = Depends(get_db)) -> StreamingRespo
 
 
 @router.get("/export/teacher/{teacher_id}")
-def export_teacher(teacher_id: int, db: Session = Depends(get_db)) -> StreamingResponse:
-    teacher = db.get(Teacher, teacher_id)
-    if teacher is None:
-        raise HTTPException(status_code=404, detail="Teacher not found")
+def export_teacher(teacher_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> StreamingResponse:
+    teacher = school_owned(db, Teacher, teacher_id, school.id)
     cells = list(
         db.execute(
             select(ScheduleCell)
             .join(TeachingAssignment)
             .options(*_CELL_LOAD)
-            .where(TeachingAssignment.teacher_id == teacher_id)
+            .where(
+            TeachingAssignment.teacher_id == teacher_id,
+            ScheduleCell.school_id == school.id,
+        )
         )
         .scalars()
         .unique()
@@ -240,13 +250,17 @@ def export_teacher(teacher_id: int, db: Session = Depends(get_db)) -> StreamingR
 
 
 @router.get("/export/all/{school_level}")
-def export_all(school_level: str, db: Session = Depends(get_db)) -> StreamingResponse:
+def export_all(school_level: str, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> StreamingResponse:
     if school_level not in ("elementary", "secondary"):
         raise HTTPException(status_code=400, detail="Invalid school_level")
     classes = list(
         db.scalars(
             select(SchoolClass)
-            .where(SchoolClass.school_level == school_level)
+            .where(
+                SchoolClass.school_level == school_level,
+                SchoolClass.school_id == school.id,
+            )
             .order_by(SchoolClass.grade, SchoolClass.name)
         ).all()
     )
@@ -269,6 +283,7 @@ def export_all(school_level: str, db: Session = Depends(get_db)) -> StreamingRes
                     db,
                     ScheduleCell.class_id == school_class.id,
                     ScheduleCell.day_of_week == day,
+                    ScheduleCell.school_id == school.id,
                 )
                 column = []
                 for lesson in range(1, max_lessons + 1):

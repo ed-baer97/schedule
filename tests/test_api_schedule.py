@@ -16,6 +16,7 @@ from app.models import (
     TeachingAssignment,
 )
 from backend.deps import SessionLocal
+from tests.conftest import TEST_SCHOOL_ID
 from backend.main import app
 
 client = TestClient(app)
@@ -86,9 +87,9 @@ def test_assignments_empty_list() -> None:
 
 def test_assignments_crud_flow() -> None:
     with SessionLocal() as session:
-        subject = Subject(name="Математика")
-        teacher = Teacher(full_name="Иванов И.И.")
-        cls = SchoolClass(name="1А", grade=1, school_level="elementary")
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Иванов И.И.")
+        cls = SchoolClass(school_id=TEST_SCHOOL_ID, name="1А", grade=1, school_level="elementary")
         session.add_all([subject, teacher, cls])
         session.commit()
         subject_id, teacher_id, class_id = subject.id, teacher.id, cls.id
@@ -130,7 +131,7 @@ def test_import_template_not_found() -> None:
 
 def test_shift_lesson_times_roundtrip() -> None:
     with SessionLocal() as session:
-        shift = Shift(
+        shift = Shift(school_id=TEST_SCHOOL_ID, 
             name="Первая",
             school_level="elementary",
             start_lesson=1,
@@ -174,7 +175,7 @@ def test_shift_lesson_times_roundtrip() -> None:
 
 def test_shift_lesson_times_validation_warning() -> None:
     with SessionLocal() as session:
-        shift = Shift(
+        shift = Shift(school_id=TEST_SCHOOL_ID, 
             name="Бракованная",
             school_level="secondary",
             start_lesson=1,
@@ -205,14 +206,14 @@ def test_shift_lesson_times_validation_warning() -> None:
 
 def test_subject_assignments_split_flow() -> None:
     with SessionLocal() as session:
-        subject = Subject(name="Английский")
-        teacher_a = Teacher(full_name="Алексеева А.А.")
-        teacher_b = Teacher(full_name="Борисов Б.Б.")
-        cls = SchoolClass(name="5А", grade=5, school_level="secondary")
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Английский")
+        teacher_a = Teacher(school_id=TEST_SCHOOL_ID, full_name="Алексеева А.А.")
+        teacher_b = Teacher(school_id=TEST_SCHOOL_ID, full_name="Борисов Б.Б.")
+        cls = SchoolClass(school_id=TEST_SCHOOL_ID, name="5А", grade=5, school_level="secondary")
         session.add_all([subject, teacher_a, teacher_b, cls])
         session.commit()
         session.add(
-            TeachingAssignment(
+            TeachingAssignment(school_id=TEST_SCHOOL_ID, 
                 subject_id=subject.id,
                 class_id=cls.id,
                 teacher_id=teacher_a.id,
@@ -257,26 +258,26 @@ def test_subject_assignments_split_flow() -> None:
 
 def test_subject_color_patch() -> None:
     with SessionLocal() as session:
-        subject = Subject(name="ИЗО")
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="ИЗО")
         session.add(subject)
         session.commit()
         subject_id = subject.id
 
     r = client.patch(
         f"/api/subjects/{subject_id}/color",
-        json={"color": "#e74c3c"},
+        json={"color": "#4a7c78"},
     )
     assert r.status_code == 200, r.text
-    assert r.json()["display_color"] == "#e74c3c"
+    assert r.json()["display_color"] == "#4a7c78"
 
     palette = client.get("/api/subjects/meta/color-palette")
     assert palette.status_code == 200
-    assert "#3498db" in palette.json()
+    assert "#147f78" in palette.json()
 
 
 def test_schedule_cell_crud_and_report() -> None:
     with SessionLocal() as session:
-        shift = Shift(
+        shift = Shift(school_id=TEST_SCHOOL_ID, 
             name="1 смена",
             school_level="elementary",
             start_lesson=1,
@@ -284,13 +285,13 @@ def test_schedule_cell_crud_and_report() -> None:
             working_days=5,
             max_lessons_per_day=5,
         )
-        subject = Subject(name="Математика")
-        teacher = Teacher(full_name="Сидоров С.С.")
-        cls = SchoolClass(name="1Б", grade=1, school_level="elementary")
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Сидоров С.С.")
+        cls = SchoolClass(school_id=TEST_SCHOOL_ID, name="1Б", grade=1, school_level="elementary")
         session.add_all([shift, subject, teacher, cls])
         session.flush()
         cls.shift_id = shift.id
-        assignment = TeachingAssignment(
+        assignment = TeachingAssignment(school_id=TEST_SCHOOL_ID, 
             subject_id=subject.id,
             teacher_id=teacher.id,
             class_id=cls.id,
@@ -341,13 +342,13 @@ def test_schedule_cell_crud_and_report() -> None:
 
 def test_subject_assignments_too_many_teachers() -> None:
     with SessionLocal() as session:
-        subject = Subject(name="История")
-        teachers = [Teacher(full_name=f"T{i}") for i in range(3)]
-        cls = SchoolClass(name="7А", grade=7, school_level="secondary")
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="История")
+        teachers = [Teacher(school_id=TEST_SCHOOL_ID, full_name=f"T{i}") for i in range(3)]
+        cls = SchoolClass(school_id=TEST_SCHOOL_ID, name="7А", grade=7, school_level="secondary")
         session.add_all([subject, *teachers, cls])
         session.commit()
         session.add(
-            TeachingAssignment(
+            TeachingAssignment(school_id=TEST_SCHOOL_ID, 
                 subject_id=subject.id,
                 class_id=cls.id,
                 teacher_id=teachers[0].id,
@@ -375,7 +376,7 @@ def test_subject_assignments_too_many_teachers() -> None:
 
 def _seed_two_classes_one_teacher() -> dict[str, int]:
     with SessionLocal() as session:
-        shift = Shift(
+        shift = Shift(school_id=TEST_SCHOOL_ID, 
             name="1 смена",
             school_level="elementary",
             start_lesson=1,
@@ -383,29 +384,29 @@ def _seed_two_classes_one_teacher() -> dict[str, int]:
             working_days=5,
             max_lessons_per_day=5,
         )
-        math = Subject(name="Математика")
-        rus = Subject(name="Русский")
-        teacher = Teacher(full_name="Петров П.П.")
-        other = Teacher(full_name="Сидорова С.С.")
-        c1 = SchoolClass(name="1А", grade=1, school_level="elementary")
-        c2 = SchoolClass(name="1Б", grade=1, school_level="elementary")
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        rus = Subject(school_id=TEST_SCHOOL_ID, name="Русский")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Петров П.П.")
+        other = Teacher(school_id=TEST_SCHOOL_ID, full_name="Сидорова С.С.")
+        c1 = SchoolClass(school_id=TEST_SCHOOL_ID, name="1А", grade=1, school_level="elementary")
+        c2 = SchoolClass(school_id=TEST_SCHOOL_ID, name="1Б", grade=1, school_level="elementary")
         session.add_all([shift, math, rus, teacher, other, c1, c2])
         session.flush()
         c1.shift_id = shift.id
         c2.shift_id = shift.id
-        a1 = TeachingAssignment(
+        a1 = TeachingAssignment(school_id=TEST_SCHOOL_ID, 
             subject_id=math.id,
             teacher_id=teacher.id,
             class_id=c1.id,
             hours_per_week=4,
         )
-        a2 = TeachingAssignment(
+        a2 = TeachingAssignment(school_id=TEST_SCHOOL_ID, 
             subject_id=math.id,
             teacher_id=teacher.id,
             class_id=c2.id,
             hours_per_week=4,
         )
-        a3 = TeachingAssignment(
+        a3 = TeachingAssignment(school_id=TEST_SCHOOL_ID, 
             subject_id=rus.id,
             teacher_id=other.id,
             class_id=c1.id,
@@ -506,7 +507,7 @@ def test_manual_cell_hours_exhausted_returns_reason() -> None:
 def _seed_shift2_math_teacher(n_classes: int = 6, hours: int = 5) -> dict[str, int]:
     """One teacher, N classes × `hours` in a 5×6 second-shift grid (exactly N*hours slots)."""
     with SessionLocal() as session:
-        shift = Shift(
+        shift = Shift(school_id=TEST_SCHOOL_ID, 
             name="2 смена",
             school_level="secondary",
             start_lesson=1,
@@ -514,14 +515,14 @@ def _seed_shift2_math_teacher(n_classes: int = 6, hours: int = 5) -> dict[str, i
             working_days=5,
             max_lessons_per_day=7,
         )
-        math = Subject(name="Математика")
-        teacher = Teacher(full_name="Баер Эдуард Викторович")
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Баер Эдуард Викторович")
         session.add_all([shift, math, teacher])
         session.flush()
         classes = []
         assignments = []
         for i in range(n_classes):
-            cls = SchoolClass(
+            cls = SchoolClass(school_id=TEST_SCHOOL_ID, 
                 name=f"5{chr(ord('А') + i)}",
                 grade=5,
                 school_level="secondary",
@@ -531,7 +532,7 @@ def _seed_shift2_math_teacher(n_classes: int = 6, hours: int = 5) -> dict[str, i
             session.flush()
             classes.append(cls)
             assignments.append(
-                TeachingAssignment(
+                TeachingAssignment(school_id=TEST_SCHOOL_ID, 
                     subject_id=math.id,
                     teacher_id=teacher.id,
                     class_id=cls.id,
@@ -540,7 +541,7 @@ def _seed_shift2_math_teacher(n_classes: int = 6, hours: int = 5) -> dict[str, i
             )
         session.add_all(assignments)
         session.add(
-            ScheduleSettings(
+            ScheduleSettings(school_id=TEST_SCHOOL_ID, 
                 school_level="secondary",
                 max_lessons_per_subject_per_day=2,
                 classroom_mode="class_room",
@@ -588,7 +589,7 @@ def test_teacher_ladder_fits_30_hours_on_empty_grid() -> None:
     with SessionLocal() as session:
         from app.services.auto_scheduler import AutoScheduler
 
-        result = AutoScheduler(session).schedule_by_teacher_ladder_result(
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).schedule_by_teacher_ladder_result(
             ids["teacher_id"], "secondary"
         )
         remaining = sum(
@@ -624,7 +625,7 @@ def test_teacher_ladder_relocates_clustered_leftover_hour() -> None:
         for idx, slots in layout:
             for day, lesson in slots:
                 session.add(
-                    ScheduleCell(
+                    ScheduleCell(school_id=TEST_SCHOOL_ID, 
                         class_id=class_ids[idx],
                         day_of_week=day,
                         lesson_number=lesson,
@@ -636,7 +637,7 @@ def test_teacher_ladder_relocates_clustered_leftover_hour() -> None:
     with SessionLocal() as session:
         from app.services.auto_scheduler import AutoScheduler
 
-        result = AutoScheduler(session).schedule_by_teacher_ladder_result(
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).schedule_by_teacher_ladder_result(
             ids["teacher_id"], "secondary"
         )
         session.expire_all()

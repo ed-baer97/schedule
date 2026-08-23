@@ -1,10 +1,25 @@
-/* Школьное расписание — тема приложения */
+/* Тема приложения — палитра Caspian LogHub */
 :root {
-  --primary-color: #2c3e50;
-  --secondary-color: #3498db;
-  --accent-color: #e74c3c;
-  --success-color: #27ae60;
-  --light-bg: #f0f2f5;
+  --kivi-bg: #eef3ea;
+  --kivi-surface: #ffffff;
+  --kivi-ink: #14201a;
+  --kivi-muted: #3f5248;
+  --kivi-line: #d0dbd4;
+  --kivi-primary: #147f78;
+  --kivi-primary-deep: #0e5c57;
+  --kivi-accent: #c4842e;
+  --kivi-teal: #147f78;
+  --kivi-amber: #c4842e;
+  --kivi-coral: #c45a42;
+  --kivi-btn-fg: #f4fffd;
+  --bs-primary: #147f78;
+  --bs-primary-rgb: 20, 127, 120;
+  --bs-secondary-color: var(--kivi-muted);
+  --primary-color: #14201a;
+  --secondary-color: #147f78;
+  --accent-color: #c45a42;
+  --success-color: #147f78;
+  --light-bg: #eef3ea;
   --sidebar-width: 240px;
   --navbar-height: 56px;
 }
@@ -27,8 +42,12 @@ body {
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
   font-size: 0.9375rem;
   line-height: 1.5;
-  color: #333;
-  background-color: var(--light-bg);
+  color: var(--kivi-ink);
+  background-color: var(--kivi-bg);
+}
+
+html[data-theme='light'] {
+  color-scheme: light;
 }
 
 #root {
@@ -51,11 +70,46 @@ h6 {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  position: relative;
+  isolation: isolate;
+}
+
+.app-atmosphere {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app-atmosphere .landing-tt-bg {
+  opacity: 0.72;
+  filter: blur(10px);
+}
+
+.app-atmosphere .landing-veil {
+  opacity: 0.35;
+}
+
+.app-glass {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: rgba(238, 243, 234, 0.5);
+  backdrop-filter: blur(28px) saturate(1.15);
+  -webkit-backdrop-filter: blur(28px) saturate(1.15);
+}
+
+.app-navbar,
+.app-health-banner {
+  position: relative;
+  z-index: 4;
 }
 
 .app-navbar {
-  background: linear-gradient(135deg, var(--primary-color), #34495e);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.12);
+  background: linear-gradient(135deg, #147f78, #0b4a46);
+  box-shadow: 0 2px 10px rgba(11, 74, 70, 0.28);
   min-height: var(--navbar-height);
 }
 
@@ -69,14 +123,18 @@ h6 {
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  position: relative;
+  z-index: 2;
 }
 
 .app-sidebar {
   width: var(--sidebar-width);
   flex-shrink: 0;
-  background: #fff;
-  border-right: 1px solid #e5e7eb;
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.04);
+  position: relative;
+  z-index: 3;
+  background: rgba(255, 255, 255, 0.92);
+  border-right: 1px solid rgba(20, 32, 26, 0.1);
+  box-shadow: 8px 0 28px rgba(11, 16, 14, 0.08);
   overflow-y: auto;
   padding: 0.75rem 0 1.5rem;
 }
@@ -87,18 +145,26 @@ h6 {
   flex: 1;
   min-width: 0;
   min-height: 0;
-  padding: 1.5rem 1.75rem 2rem;
   overflow: hidden;
+  position: relative;
+  z-index: 2;
+  background: transparent;
 }
 
-.app-main > * {
+.app-main-scroll {
+  position: relative;
   flex: 1 1 0%;
   min-height: 0;
   min-width: 0;
   overflow: auto;
+  padding: 1.5rem 1.75rem 2rem;
+  display: flex;
+  flex-direction: column;
 }
 
-.app-main > .schedule-hub {
+.app-main-scroll > .schedule-hub {
+  flex: 1 1 0%;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -112,7 +178,7 @@ h6 {
     border-bottom: 1px solid #e5e7eb;
     max-height: 40vh;
   }
-  .app-main {
+  .app-main-scroll {
     padding: 1rem;
   }
 }
@@ -138,14 +204,14 @@ h6 {
 }
 
 .sidebar-nav .nav-link:hover {
-  background-color: #f3f4f6;
-  border-left-color: #cbd5e1;
+  background-color: #d7f3ee;
+  border-left-color: #8ad4cc;
   color: var(--primary-color);
 }
 
 .sidebar-nav .nav-link.active {
-  background-color: #e8f4fc;
-  border-left-color: var(--secondary-color);
+  background-color: #c8ebe6;
+  border-left-color: var(--kivi-primary);
   font-weight: 600;
   color: var(--primary-color);
 }
@@ -168,23 +234,32 @@ h6 {
 }
 
 .page-header .page-subtitle {
-  color: #6b7280;
+  color: color-mix(in srgb, var(--kivi-ink) 62%, transparent);
   font-size: 0.9rem;
   margin: 0;
 }
 
 /* ——— Cards & tables ——— */
 .card {
-  border: none;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
-  border-radius: 10px;
+  color: var(--kivi-ink);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(20, 32, 26, 0.08);
+  box-shadow: 0 8px 28px rgba(20, 32, 26, 0.08);
+  border-radius: 1rem;
 }
 
 .card-header {
-  background: #fff;
-  border-bottom: 1px solid #eee;
+  background: transparent;
+  color: inherit;
+  border-bottom: 1px solid rgba(20, 32, 26, 0.08);
   font-weight: 600;
   padding: 0.85rem 1.15rem;
+}
+
+.app-shell .card-header.bg-primary,
+.app-shell .card-header.bg-info {
+  background: transparent !important;
+  color: inherit !important;
 }
 
 .table > thead.table-light th {
@@ -198,10 +273,59 @@ h6 {
 }
 
 .btn-primary {
-  --bs-btn-bg: var(--secondary-color);
-  --bs-btn-border-color: var(--secondary-color);
-  --bs-btn-hover-bg: #2980b9;
-  --bs-btn-hover-border-color: #2980b9;
+  --bs-btn-bg: var(--kivi-primary);
+  --bs-btn-border-color: var(--kivi-primary);
+  --bs-btn-hover-bg: var(--kivi-primary-deep);
+  --bs-btn-hover-border-color: var(--kivi-primary-deep);
+  --bs-btn-color: var(--kivi-btn-fg);
+  --bs-btn-hover-color: var(--kivi-btn-fg);
+}
+
+/* Bootstrap's default tab link is #0d6efd — it washes out on sage glass */
+.app-shell {
+  --bs-nav-link-color: var(--kivi-muted);
+  --bs-nav-link-hover-color: var(--kivi-ink);
+  --bs-nav-tabs-link-active-color: var(--kivi-ink);
+  --bs-nav-tabs-link-active-bg: rgba(255, 255, 255, 0.92);
+  --bs-nav-tabs-link-active-border-color: var(--kivi-line);
+  --bs-nav-tabs-border-color: var(--kivi-line);
+}
+
+.app-shell .nav-tabs .nav-link {
+  color: var(--kivi-muted);
+  background: rgba(255, 255, 255, 0.55);
+  border-color: transparent;
+  font-weight: 500;
+}
+
+.app-shell .nav-tabs .nav-link:hover {
+  color: var(--kivi-ink);
+  background: rgba(255, 255, 255, 0.82);
+  border-color: var(--kivi-line) var(--kivi-line) transparent;
+  isolation: isolate;
+}
+
+.app-shell .nav-tabs .nav-link.active {
+  color: var(--kivi-ink);
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--kivi-line) var(--kivi-line) transparent;
+  font-weight: 600;
+}
+
+.app-shell .nav-pills .nav-link {
+  color: var(--kivi-muted);
+  background: rgba(255, 255, 255, 0.55);
+  font-weight: 500;
+}
+
+.app-shell .nav-pills .nav-link:hover {
+  color: var(--kivi-ink);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.app-shell .nav-pills .nav-link.active {
+  color: var(--kivi-btn-fg);
+  background: var(--kivi-primary);
 }
 
 /* ——— Schedule hub tabs ——— */
@@ -255,7 +379,7 @@ body.schedule-grid-expanded .schedule-hub-tabs {
   display: none !important;
 }
 
-body.schedule-grid-expanded .app-main {
+body.schedule-grid-expanded .app-main-scroll {
   padding: 0.4rem 0.6rem 0.5rem;
 }
 
@@ -289,6 +413,32 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
 
 .schedule-expand-btn {
   flex-shrink: 0;
+}
+
+.btn.schedule-expand-btn:not(.btn-dark) {
+  --bs-btn-color: #fff;
+  --bs-btn-border-color: #fff;
+  --bs-btn-hover-color: #14201a;
+  --bs-btn-hover-bg: #fff;
+  --bs-btn-hover-border-color: #fff;
+  --bs-btn-active-color: #14201a;
+  --bs-btn-active-bg: #fff;
+  --bs-btn-active-border-color: #fff;
+  color: #fff;
+  border-color: #fff;
+}
+
+html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
+  --bs-btn-color: var(--kivi-ink);
+  --bs-btn-border-color: var(--kivi-ink);
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: var(--kivi-ink);
+  --bs-btn-hover-border-color: var(--kivi-ink);
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: var(--kivi-ink);
+  --bs-btn-active-border-color: var(--kivi-ink);
+  color: var(--kivi-ink);
+  border-color: var(--kivi-ink);
 }
 
 .schedule-expand-btn .bi {
@@ -406,15 +556,65 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
   vertical-align: top;
 }
 
+.schedule-grid-table .schedule-slot-index {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: 6.25rem;
+  min-width: 6.25rem;
+  max-width: 6.5rem;
+  padding: 0.45rem 0.4rem;
+  background: var(--kivi-surface);
+  box-shadow: 1px 0 0 var(--kivi-line);
+  color: var(--kivi-ink);
+}
+
+.schedule-grid-scroll thead.table-light th.schedule-slot-index,
+.overlay-scroll-viewport thead.table-light th.schedule-slot-index {
+  z-index: 4;
+  top: 0;
+}
+
+.schedule-slot-num {
+  font-weight: 700;
+  font-size: 1.05rem;
+  line-height: 1.1;
+  color: var(--kivi-ink);
+}
+
+.schedule-bell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 0.25rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.03em;
+  line-height: 1.15;
+  color: var(--kivi-ink);
+}
+
+.schedule-bell-dash {
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
+  color: color-mix(in srgb, var(--kivi-ink) 55%, transparent);
+}
+
+.schedule-bell-end {
+  color: var(--kivi-ink);
+}
+
 .schedule-grid-table [id^='day-'] > td,
 .schedule-grid-table [id^='slot-'] {
   scroll-margin-top: 42px;
-  scroll-margin-left: 110px;
+  scroll-margin-left: 6.25rem;
 }
 
 .schedule-slot {
   min-height: 64px;
-  border: 2px dashed #ddd;
+  border: 2px dashed var(--kivi-line);
   border-radius: 6px;
   padding: 4px;
   transition: border-color 0.15s, background 0.15s;
@@ -423,17 +623,18 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
 
 .schedule-slot:hover,
 .schedule-slot.drag-over {
-  border-color: var(--secondary-color);
-  background-color: #f0f8ff;
+  border-color: var(--kivi-primary);
+  background-color: color-mix(in srgb, var(--kivi-primary) 10%, transparent);
 }
 
 .lesson-card {
   padding: 6px 8px;
-  border-radius: 4px;
+  border-radius: 6px;
   margin-bottom: 4px;
   font-size: 0.8rem;
-  border: 2px solid;
-  background: #fff;
+  background: var(--kivi-surface);
+  border: 1px solid var(--kivi-line);
+  border-left: 3px solid var(--lesson-color, var(--kivi-primary));
   cursor: grab;
   transition: box-shadow 0.12s ease, opacity 0.12s ease, background 0.12s ease;
 }
@@ -442,52 +643,118 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
   cursor: grabbing;
 }
 
-.lesson-card .subject-name {
+.lesson-card .lesson-subject,
+.lesson-card .lesson-subject {
   font-weight: 600;
-  display: block;
+  color: var(--kivi-ink);
 }
 
 .lesson-card .teacher-name {
   font-size: 0.72rem;
-  color: #555;
+  color: var(--kivi-muted);
+}
+
+.schedule-group-badge {
+  background: color-mix(in srgb, var(--kivi-accent) 22%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.schedule-meta-badge {
+  background: color-mix(in srgb, var(--kivi-surface) 82%, var(--kivi-bg));
+  color: var(--kivi-ink);
+  border: 1px solid var(--kivi-line);
+  font-weight: 500;
+}
+
+.schedule-warn-badge {
+  background: color-mix(in srgb, var(--kivi-accent) 28%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  font-weight: 600;
+}
+
+.schedule-grid-table > thead > tr > th {
+  background: color-mix(in srgb, var(--kivi-bg) 70%, var(--kivi-surface));
+  color: var(--kivi-muted);
+  border-color: var(--kivi-line);
+}
+
+.schedule-grid-table td {
+  border-color: var(--kivi-line);
+}
+
+.schedule-grid-table .bg-light {
+  background: color-mix(in srgb, var(--kivi-bg) 80%, var(--kivi-surface)) !important;
+  color: var(--kivi-ink);
 }
 
 .schedule-grid-table.is-teacher-hover .lesson-card {
-  opacity: 0.3;
+  opacity: 0.32;
 }
 
 .schedule-grid-table.is-teacher-hover .lesson-card.teacher-highlight,
 .lesson-card.teacher-highlight {
   opacity: 1;
-  background: #d4edfc !important;
-  box-shadow: inset 0 0 0 3px var(--secondary-color);
+  background: color-mix(in srgb, var(--kivi-primary) 18%, var(--kivi-surface)) !important;
+  box-shadow: inset 0 0 0 2px var(--kivi-primary);
   z-index: 2;
   position: relative;
 }
 
 .schedule-grid-table.is-teacher-hover td:has(.teacher-highlight) {
-  background-color: #e8f4fc;
+  background-color: color-mix(in srgb, var(--kivi-primary) 10%, transparent);
 }
 
 .schedule-grid-table.is-teacher-hover .lesson-card.teacher-highlight .teacher-name {
-  color: #1a5276;
+  color: var(--kivi-primary-deep);
   font-weight: 700;
 }
 
 /* ——— Dashboard quick links ——— */
 .quick-link-card {
-  transition: transform 0.15s, box-shadow 0.15s;
-  border: 1px solid #eee;
+  transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
 }
 
 .quick-link-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 14px 32px rgba(20, 32, 26, 0.12);
+  border-color: rgba(46, 196, 182, 0.35);
+}
+
+.quick-link-icon {
+  color: var(--kivi-primary);
+  font-size: 1.45rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.quick-link-title {
+  font-weight: 650;
+  color: var(--kivi-ink);
+  line-height: 1.3;
+}
+
+.quick-link-desc {
+  margin-top: 0.15rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--kivi-ink) 68%, transparent);
+}
+
+.schedule-grid-card.card {
+  background: var(--kivi-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* ——— Modals ——— */
 .modal-backdrop-custom {
   background: rgba(15, 23, 42, 0.45);
+}
+
+body > .modal {
+  z-index: 1065;
 }
 
 /* ——— Stat cards on dashboard ——— */
@@ -500,15 +767,263 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
 
 .stat-card .stat-label {
   font-size: 0.8rem;
-  color: #6b7280;
+  color: color-mix(in srgb, var(--kivi-ink) 62%, transparent);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+/* ——— Platform admin ——— */
+.admin-page {
+  max-width: 960px;
+  color: var(--kivi-ink);
+}
+
+.admin-page h1,
+.admin-page h2 {
+  color: var(--kivi-ink);
+}
+
+.admin-page .accordion-item {
+  background: var(--kivi-surface);
+  color: var(--kivi-ink);
+  border-color: var(--kivi-line);
+}
+
+.admin-page .accordion-button {
+  background: var(--kivi-surface);
+  color: var(--kivi-ink);
+  box-shadow: none;
+}
+
+.admin-page .accordion-button:not(.collapsed) {
+  background: color-mix(in srgb, var(--kivi-primary) 14%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  box-shadow: none;
+}
+
+.admin-page .accordion-button:focus {
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--kivi-primary) 28%, transparent);
+}
+
+.admin-page .accordion-body {
+  background: var(--kivi-surface);
+  color: var(--kivi-ink);
+}
+
+.admin-page .accordion-button::after {
+  background-size: 1rem;
+}
+
+html[data-theme='dark'] .admin-page .accordion-button::after {
+  filter: invert(1) brightness(1.2);
+}
+
+html[data-theme='dark'] .admin-page .text-muted {
+  color: var(--kivi-muted) !important;
+}
+
+html[data-theme='dark'] .admin-page code {
+  color: var(--kivi-ink);
+  background: #0e1512;
+}
+
+html[data-theme='dark'] .admin-page .alert-success {
+  background: color-mix(in srgb, var(--kivi-primary) 18%, var(--kivi-surface));
+  border-color: color-mix(in srgb, var(--kivi-primary) 40%, var(--kivi-line));
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .admin-page .badge.text-bg-light {
+  background: color-mix(in srgb, var(--kivi-ink) 10%, var(--kivi-surface)) !important;
+  color: var(--kivi-ink) !important;
+  border-color: var(--kivi-line);
+}
+
+.admin-page .admin-create-box {
+  background: color-mix(in srgb, var(--kivi-primary) 6%, var(--kivi-surface));
+  border-color: var(--kivi-line) !important;
+}
+
+.brand-mark {
+  display: inline-flex;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --kivi-bg: #0b100e;
+  --kivi-surface: #121a16;
+  --kivi-ink: #eef3ea;
+  --kivi-muted: #8b9a90;
+  --kivi-line: #24302a;
+  --kivi-primary: #2ec4b6;
+  --kivi-primary-deep: #147f78;
+  --kivi-accent: #e0a45a;
+  --kivi-teal: #2ec4b6;
+  --kivi-amber: #e0a45a;
+  --kivi-coral: #e07a5f;
+  --kivi-btn-fg: #06221f;
+  --bs-primary: #2ec4b6;
+  --bs-primary-rgb: 46, 196, 182;
+  --bs-secondary-color: var(--kivi-muted);
+  --primary-color: #eef3ea;
+  --secondary-color: #2ec4b6;
+  --accent-color: #e07a5f;
+  --success-color: #2ec4b6;
+  --light-bg: #0b100e;
+}
+
+html[data-theme='dark'] body {
+  color: var(--kivi-ink);
+  background-color: var(--kivi-bg);
+}
+
+html[data-theme='dark'] .app-glass {
+  background: rgba(11, 16, 14, 0.55);
+}
+
+html[data-theme='dark'] .app-sidebar {
+  background: rgba(18, 26, 22, 0.94);
+  border-right-color: rgba(238, 243, 234, 0.08);
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.32);
+}
+
+html[data-theme='dark'] .sidebar-nav .nav-link:hover {
+  background-color: #14332e;
+  border-left-color: #1a6a64;
+}
+
+html[data-theme='dark'] .sidebar-nav .nav-link.active {
+  background-color: #0f3a36;
+  border-left-color: var(--kivi-primary);
+}
+
+html[data-theme='dark'] .page-header .page-subtitle {
+  color: var(--kivi-muted);
+}
+
+html[data-theme='dark'] .app-shell .nav-tabs .nav-link {
+  color: var(--kivi-muted);
+  background: rgba(18, 26, 22, 0.5);
+}
+
+html[data-theme='dark'] .app-shell .nav-tabs .nav-link:hover,
+html[data-theme='dark'] .app-shell .nav-tabs .nav-link.active {
+  color: var(--kivi-ink);
+  background: rgba(18, 26, 22, 0.92);
+  border-color: var(--kivi-line) var(--kivi-line) transparent;
+}
+
+html[data-theme='dark'] .app-shell .nav-pills .nav-link {
+  color: var(--kivi-muted);
+  background: rgba(18, 26, 22, 0.5);
+}
+
+html[data-theme='dark'] .app-shell .nav-pills .nav-link:hover,
+html[data-theme='dark'] .app-shell .nav-pills .nav-link.active {
+  color: var(--kivi-btn-fg);
+  background: var(--kivi-primary);
+}
+
+html[data-theme='dark'] .card {
+  background: rgba(18, 28, 24, 0.86);
+  color: var(--kivi-ink);
+  border: 1px solid rgba(238, 243, 234, 0.12);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme='dark'] .card-header {
+  background: transparent;
+  color: var(--kivi-ink);
+  border-bottom-color: rgba(238, 243, 234, 0.1);
+}
+
+html[data-theme='dark'] .list-group-item {
+  background: transparent;
+  color: var(--kivi-ink);
+  border-color: rgba(238, 243, 234, 0.1);
+}
+
+html[data-theme='dark'] .quick-link-card:hover {
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.38);
+  border-color: rgba(46, 196, 182, 0.4);
+}
+
+html[data-theme='dark'] .schedule-grid-card.card {
+  background: var(--kivi-surface);
+}
+
+html[data-theme='dark'] .table {
+  --bs-table-bg: var(--kivi-surface);
+  --bs-table-color: var(--kivi-ink);
+  --bs-table-border-color: var(--kivi-line);
+  --bs-table-striped-bg: #1c2a24;
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .table > thead.table-light th {
+  background-color: #1c2a24;
+  color: var(--kivi-muted);
+}
+
+html[data-theme='dark'] .app-shell {
+  --bs-body-bg: #0e1512;
+  --bs-body-color: var(--kivi-ink);
+  --bs-border-color: var(--kivi-line);
+  --bs-nav-tabs-link-active-bg: rgba(18, 26, 22, 0.92);
+}
+
+html[data-theme='dark'] .app-shell .form-control,
+html[data-theme='dark'] .app-shell .form-select {
+  background-color: #0e1512;
+  color: var(--kivi-ink);
+  border-color: var(--kivi-line);
+}
+
+html[data-theme='dark'] .app-shell .form-control:focus,
+html[data-theme='dark'] .app-shell .form-select:focus {
+  background-color: #0e1512;
+  color: var(--kivi-ink);
+  border-color: var(--kivi-primary);
+  box-shadow: 0 0 0 0.2rem rgba(46, 196, 182, 0.28);
+}
+
+html[data-theme='dark'] .modal-content {
+  background: var(--kivi-surface);
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .overlay-scroll-bar {
+  background: rgba(231, 240, 229, 0.08);
+}
+
+html[data-theme='dark'] .overlay-scroll-thumb {
+  background: rgba(231, 240, 229, 0.35);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .app-glass {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--kivi-bg);
+  }
+
+  .app-sidebar {
+    background: var(--kivi-surface);
+  }
+
+  .card {
+    background: var(--kivi-surface);
+  }
 }
 
 @media print {
   .app-navbar,
   .app-sidebar,
   .app-health-banner,
+  .app-atmosphere,
+  .app-glass,
   .no-print {
     display: none !important;
   }
@@ -519,7 +1034,7 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
   .app-shell,
   .app-body,
   .app-main,
-  .app-main > *,
+  .app-main-scroll,
   .schedule-hub,
   .schedule-hub-body,
   .schedule-grid-page,

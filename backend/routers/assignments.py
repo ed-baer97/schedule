@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import (
+    School,
     Classroom,
     SchoolClass,
     Subject,
@@ -13,7 +14,7 @@ from app.models import (
     TeachingAssignment,
 )
 
-from backend.deps import get_db
+from backend.deps import get_current_school, get_db, school_owned
 from backend.schemas.assignments import (
     AssignmentCreate,
     AssignmentOut,
@@ -61,11 +62,13 @@ def _options() -> list:
 def list_assignments(
     school_level: str | None = Query(None, pattern="^(elementary|secondary)$"),
     db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> list[AssignmentOut]:
     stmt = (
         select(TeachingAssignment)
         .options(*_options())
         .join(SchoolClass, SchoolClass.id == TeachingAssignment.class_id)
+        .where(TeachingAssignment.school_id == school.id)
         .order_by(SchoolClass.grade, SchoolClass.name)
     )
     if school_level:
@@ -75,11 +78,12 @@ def list_assignments(
 
 
 @router.get("/{assignment_id}", response_model=AssignmentOut)
-def get_assignment(assignment_id: int, db: Session = Depends(get_db)) -> AssignmentOut:
+def get_assignment(assignment_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> AssignmentOut:
     stmt = (
         select(TeachingAssignment)
         .options(*_options())
-        .where(TeachingAssignment.id == assignment_id)
+        .where(TeachingAssignment.id == assignment_id, TeachingAssignment.school_id == school.id)
     )
     a = db.execute(stmt).scalars().unique().one_or_none()
     if a is None:
@@ -87,26 +91,27 @@ def get_assignment(assignment_id: int, db: Session = Depends(get_db)) -> Assignm
     return _serialize(a)
 
 
-def _check_refs(body: AssignmentCreate | AssignmentUpdate, db: Session) -> None:
-    if body.subject_id is not None and db.get(Subject, body.subject_id) is None:
-        raise HTTPException(status_code=400, detail="Subject not found")
-    if body.class_id is not None and db.get(SchoolClass, body.class_id) is None:
-        raise HTTPException(status_code=400, detail="Class not found")
-    if body.teacher_id is not None and db.get(Teacher, body.teacher_id) is None:
-        raise HTTPException(status_code=400, detail="Teacher not found")
-    if (
-        body.preferred_classroom_id is not None
-        and db.get(Classroom, body.preferred_classroom_id) is None
-    ):
-        raise HTTPException(status_code=400, detail="Classroom not found")
+def _check_refs(
+    body: AssignmentCreate | AssignmentUpdate, db: Session, school_id: int
+) -> None:
+    if body.subject_id is not None:
+        school_owned(db, Subject, body.subject_id, school_id)
+    if body.class_id is not None:
+        school_owned(db, SchoolClass, body.class_id, school_id)
+    if body.teacher_id is not None:
+        school_owned(db, Teacher, body.teacher_id, school_id)
+    if body.preferred_classroom_id is not None:
+        school_owned(db, Classroom, body.preferred_classroom_id, school_id)
 
 
 @router.post("/", response_model=AssignmentOut, status_code=201)
 def create_assignment(
-    body: AssignmentCreate, db: Session = Depends(get_db)
+    body: AssignmentCreate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> AssignmentOut:
-    _check_refs(body, db)
+    _check_refs(body, db, school.id)
     a = TeachingAssignment(
+        school_id=school.id,
         subject_id=body.subject_id,
         teacher_id=body.teacher_id,
         class_id=body.class_id,
@@ -117,17 +122,16 @@ def create_assignment(
     db.add(a)
     db.commit()
     db.refresh(a)
-    return get_assignment(a.id, db)
+    return get_assignment(a.id, db, school)
 
 
 @router.put("/{assignment_id}", response_model=AssignmentOut)
 def update_assignment(
-    assignment_id: int, body: AssignmentUpdate, db: Session = Depends(get_db)
+    assignment_id: int, body: AssignmentUpdate, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> AssignmentOut:
-    a = db.get(TeachingAssignment, assignment_id)
-    if a is None:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-    _check_refs(body, db)
+    a = school_owned(db, TeachingAssignment, assignment_id, school.id)
+    _check_refs(body, db, school.id)
     if body.subject_id is not None:
         a.subject_id = body.subject_id
     if body.class_id is not None:
@@ -148,29 +152,27 @@ def update_assignment(
         a.preferred_classroom_id = body.preferred_classroom_id
     db.commit()
     db.refresh(a)
-    return get_assignment(a.id, db)
+    return get_assignment(a.id, db, school)
 
 
 @router.patch("/{assignment_id}/teacher", response_model=AssignmentOut)
 def set_teacher(
-    assignment_id: int, body: AssignTeacherBody, db: Session = Depends(get_db)
+    assignment_id: int, body: AssignTeacherBody, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)
 ) -> AssignmentOut:
-    a = db.get(TeachingAssignment, assignment_id)
-    if a is None:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-    if body.teacher_id is not None and db.get(Teacher, body.teacher_id) is None:
-        raise HTTPException(status_code=400, detail="Teacher not found")
+    a = school_owned(db, TeachingAssignment, assignment_id, school.id)
+    if body.teacher_id is not None:
+        school_owned(db, Teacher, body.teacher_id, school.id)
     a.teacher_id = body.teacher_id
     db.commit()
     db.refresh(a)
-    return get_assignment(a.id, db)
+    return get_assignment(a.id, db, school)
 
 
 @router.delete("/{assignment_id}", status_code=204, response_class=Response)
-def delete_assignment(assignment_id: int, db: Session = Depends(get_db)) -> Response:
-    a = db.get(TeachingAssignment, assignment_id)
-    if a is None:
-        raise HTTPException(status_code=404, detail="Assignment not found")
+def delete_assignment(assignment_id: int, db: Session = Depends(get_db),
+    school: School = Depends(get_current_school)) -> Response:
+    a = school_owned(db, TeachingAssignment, assignment_id, school.id)
     db.delete(a)
     db.commit()
     return Response(status_code=204)

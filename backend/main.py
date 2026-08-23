@@ -8,14 +8,18 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
+from backend.bootstrap import bootstrap_admin, ensure_default_school
 from backend.database import ensure_database
-from backend.deps import engine
+from backend.deps import SessionLocal, engine
 from backend.routers import (
+    admin,
     assignments,
+    auth,
     classrooms,
     dashboard,
     health,
     import_data,
+    jobs,
     reports,
     schedule,
     school_classes,
@@ -31,10 +35,16 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     ensure_database(engine)
+    db = SessionLocal()
+    try:
+        ensure_default_school(db)
+        bootstrap_admin(db)
+    finally:
+        db.close()
     yield
 
 
-app = FastAPI(title="School Schedule API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="School Schedule API", version="0.2.0", lifespan=lifespan)
 
 
 @app.exception_handler(OperationalError)
@@ -77,6 +87,7 @@ def favicon() -> Response:
         return FileResponse(fav)
     return Response(status_code=204)
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -88,6 +99,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(health.router, prefix="/api", tags=["health"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(jobs.router, prefix="/api/jobs", tags=["jobs"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["dashboard"])
 app.include_router(teachers.router, prefix="/api/teachers", tags=["teachers"])
 app.include_router(classrooms.router, prefix="/api/classrooms", tags=["classrooms"])

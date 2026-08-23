@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OverlayScrollArea } from '../components/OverlayScrollArea'
+import { ModalPortal } from '../components/ModalPortal'
 import { extractApiError, apiJson } from '../api/client'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
@@ -117,6 +118,34 @@ function classAnchor(classId: number) {
   return `class-${classId}`
 }
 
+function splitBellLabel(label: string): [string, string] | null {
+  const idx = label.search(/[–—-]/)
+  if (idx <= 0) return null
+  const start = label.slice(0, idx).trim()
+  const end = label.slice(idx + 1).trim()
+  if (!start || !end) return null
+  return [start, end]
+}
+
+function BellLabel({ time }: { time: string }) {
+  const parts = splitBellLabel(time)
+  return (
+    <div className="schedule-bell" title={`Звонок ${time}`}>
+      {parts ? (
+        <>
+          <span className="schedule-bell-start">{parts[0]}</span>
+          <span className="schedule-bell-dash" aria-hidden>
+            –
+          </span>
+          <span className="schedule-bell-end">{parts[1]}</span>
+        </>
+      ) : (
+        <span className="schedule-bell-start">{time}</span>
+      )}
+    </div>
+  )
+}
+
 function teacherHoverKey(cell: Pick<CellOut, 'teacher_id' | 'teacher_name'>) {
   if (cell.teacher_id != null) return `id-${cell.teacher_id}`
   const name = (cell.teacher_name ?? '').trim()
@@ -130,10 +159,10 @@ function buildTeacherHoverCss(keys: string[]) {
       const a = esc(key)
       const table = `.schedule-grid-table:has(.lesson-card[data-teacher-key="${a}"]:hover)`
       const match = `.lesson-card[data-teacher-key="${a}"]`
-      return `${table} ${match}{background:#d4edfc!important;box-shadow:inset 0 0 0 3px var(--secondary-color);opacity:1;position:relative;z-index:2}
-${table} ${match} .teacher-name{color:#1a5276;font-weight:700}
-${table} .lesson-card:not(${match}){opacity:.3}
-${table} td:has(${match}){background:#e8f4fc}`
+      return `${table} ${match}{background:color-mix(in srgb, var(--kivi-primary) 22%, var(--kivi-surface))!important;box-shadow:inset 0 0 0 3px var(--kivi-primary);opacity:1;position:relative;z-index:2}
+${table} ${match} .teacher-name{color:var(--kivi-primary-deep);font-weight:700}
+${table} .lesson-card:not(${match}){opacity:.32}
+${table} td:has(${match}){background:color-mix(in srgb, var(--kivi-primary) 10%, transparent)}`
     })
     .join('\n')
 }
@@ -567,12 +596,6 @@ export function SchedulePage() {
 
   return (
     <div className={`schedule-grid-page${expanded ? ' is-expanded' : ''}`}>
-      {!expanded && (
-        <div className="schedule-grid-actions d-flex justify-content-end align-items-center mb-2 gap-2">
-          <span className="text-muted small">Drag&drop карточек переносит урок.</span>
-        </div>
-      )}
-
       {toast && (
         <div
           className={`alert alert-${toast.kind} alert-dismissible fade show schedule-toast py-2 mb-0`}
@@ -614,7 +637,7 @@ export function SchedulePage() {
 
         <div className="schedule-grid-meta d-flex gap-3 align-items-center mb-3 flex-wrap">
           {grid.settings && (
-            <span className="badge bg-light text-dark border">
+            <span className="badge schedule-meta-badge">
               Режим:{' '}
               {grid.settings.classroom_mode === 'class_room'
                 ? 'учитель приходит к классу'
@@ -623,7 +646,7 @@ export function SchedulePage() {
           )}
           {grid.classroom_warnings.length > 0 && (
             <span
-              className="badge bg-warning text-dark"
+              className="badge schedule-warn-badge"
               title={grid.classroom_warnings.map((w) => w.message).join('; ')}
             >
               {grid.classroom_warnings.length} без кабинета
@@ -698,7 +721,7 @@ export function SchedulePage() {
             >
               <thead className="table-light">
                 <tr>
-                  <th style={{ width: 110 }}>Урок</th>
+                  <th className="schedule-slot-index">Урок</th>
                   {grid.classes.map((c) => (
                     <th key={c.id} id={classAnchor(c.id)} className="text-center">
                       {c.name}
@@ -728,13 +751,11 @@ export function SchedulePage() {
                       : grid.lesson_times_by_day[row.day]?.[lesson]
                   return (
                     <tr key={`r-${idx}`}>
-                      <td className="text-center align-middle">
-                        <div className="fw-bold">
+                      <td className="schedule-slot-index text-center align-middle">
+                        <div className="schedule-slot-num">
                           {row.kind === 'class_hour' ? 'Классный час' : lesson}
                         </div>
-                        {time && (
-                          <div className="small text-muted text-nowrap">{time}</div>
-                        )}
+                        {time ? <BellLabel time={time} /> : null}
                       </td>
                       {grid.classes.map((c) => {
                         const key = `${c.id}:${row.day}:${lesson}`
@@ -779,19 +800,16 @@ export function SchedulePage() {
                                     )
                                     onDragStartCell(e, cell)
                                   }}
-                                  className="lesson-card border rounded p-1 mb-1 position-relative"
+                                  className="lesson-card rounded p-1 mb-1 position-relative"
                                   style={{
-                                    background: 'white',
-                                    borderColor: cell.subject_color,
-                                    borderWidth: 2,
-                                    borderStyle: 'solid',
+                                    ['--lesson-color' as string]: cell.subject_color,
                                   }}
                                 >
                                   {i > 0 && <hr className="my-1" />}
-                                  <div className="fw-semibold" style={{ color: cell.subject_color }}>
+                                  <div className="fw-semibold lesson-subject">
                                     {cell.subject_name}
                                     {cell.group_number != null && (
-                                      <span className="badge bg-warning text-dark ms-1">
+                                      <span className="badge schedule-group-badge ms-1">
                                         гр.{cell.group_number}
                                       </span>
                                     )}
@@ -905,6 +923,7 @@ function AddLessonModal(props: {
   const title = `${slot.class_name}, ${dayNames[slot.day - 1]}, ${slotLabel}`
 
   return (
+    <ModalPortal>
     <div className="modal show d-block" tabIndex={-1} style={{ background: 'rgba(0,0,0,.35)' }}>
       <div className="modal-dialog">
         <div className="modal-content">
@@ -1010,5 +1029,6 @@ function AddLessonModal(props: {
         </div>
       </div>
     </div>
+    </ModalPortal>
   )
 }
