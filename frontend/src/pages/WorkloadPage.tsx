@@ -1,25 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { apiJson } from '../api/client'
-
-type ClassBrief = { id: number; name: string; grade: number }
-type SubjectBrief = { id: number; name: string }
-type Cell = { class_id: number; subject_id: number; hours: number }
-type WorkloadData = {
-  school_level: string
-  classes: ClassBrief[]
-  subjects: SubjectBrief[]
-  cells: Cell[]
-}
+import { fetchWorkload, updateWorkloadCell } from '../api/workload'
+import type { SchoolLevel } from '../api/teachers'
 
 export function WorkloadPage() {
   const qc = useQueryClient()
-  const [level, setLevel] = useState<'elementary' | 'secondary'>('elementary')
+  const [level, setLevel] = useState<SchoolLevel>('elementary')
   const [msg, setMsg] = useState<string | null>(null)
 
   const q = useQuery({
     queryKey: ['workload', level],
-    queryFn: () => apiJson<WorkloadData>(`/api/workload/?school_level=${level}`),
+    queryFn: () => fetchWorkload(level),
   })
 
   const cellMap = useMemo(() => {
@@ -32,10 +23,7 @@ export function WorkloadPage() {
 
   const saveM = useMutation({
     mutationFn: async (p: { class_id: number; subject_id: number; hours: number }) => {
-      await apiJson('/api/workload/cell', {
-        method: 'PUT',
-        body: JSON.stringify(p),
-      })
+      await updateWorkloadCell(p)
     },
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ['workload', level] })

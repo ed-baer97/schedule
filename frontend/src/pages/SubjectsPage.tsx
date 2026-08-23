@@ -3,7 +3,16 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { ModalPortal } from '../components/ModalPortal'
-import { apiJson } from '../api/client'
+import {
+  createSubject,
+  deleteSubject,
+  getColorPalette,
+  listSubjects,
+  updateSubject,
+  updateSubjectColor,
+  type Subject,
+} from '../api/subjects'
+import { listClassrooms } from '../api/classrooms'
 
 const DEFAULT_PALETTE = [
   '#147f78',
@@ -17,17 +26,6 @@ const DEFAULT_PALETTE = [
   '#2a403a',
   '#b86b2e',
 ]
-
-type Classroom = { id: number; display_name: string }
-type Subject = {
-  id: number
-  name: string
-  color: string | null
-  display_color: string
-  requires_fixed_classroom: boolean
-  default_classroom_id: number | null
-  default_classroom: { display_name: string } | null
-}
 
 export function SubjectsPage() {
   const qc = useQueryClient()
@@ -44,27 +42,20 @@ export function SubjectsPage() {
 
   const subjectsQ = useQuery({
     queryKey: ['subjects', filter],
-    queryFn: () =>
-      apiJson<Subject[]>(
-        filter === 'all' ? '/api/subjects/' : `/api/subjects/?school_level=${filter}`,
-      ),
+    queryFn: () => listSubjects(filter),
   })
   const roomsQ = useQuery({
     queryKey: ['classrooms'],
-    queryFn: () => apiJson<Classroom[]>('/api/classrooms/'),
+    queryFn: listClassrooms,
   })
   const paletteQ = useQuery({
     queryKey: ['subjects', 'color-palette'],
-    queryFn: () => apiJson<string[]>('/api/subjects/meta/color-palette'),
+    queryFn: getColorPalette,
   })
   const palette = paletteQ.data?.length ? paletteQ.data : DEFAULT_PALETTE
 
   const colorM = useMutation({
-    mutationFn: ({ id, color }: { id: number; color: string }) =>
-      apiJson<{ display_color: string }>(`/api/subjects/${id}/color`, {
-        method: 'PATCH',
-        body: JSON.stringify({ color }),
-      }),
+    mutationFn: ({ id, color }: { id: number; color: string }) => updateSubjectColor(id, color),
     onSuccess: async () => {
       setColorPick(null)
       setMsg('Цвет сохранён')
@@ -83,9 +74,9 @@ export function SubjectsPage() {
       }
       if (!payload.name) throw new Error('Укажите название')
       if (editingId === 'new') {
-        await apiJson('/api/subjects/', { method: 'POST', body: JSON.stringify(payload) })
+        await createSubject(payload)
       } else if (typeof editingId === 'number') {
-        await apiJson(`/api/subjects/${editingId}`, { method: 'PUT', body: JSON.stringify(payload) })
+        await updateSubject(editingId, payload)
       }
     },
     onSuccess: async () => {
@@ -97,7 +88,7 @@ export function SubjectsPage() {
   })
 
   const delM = useMutation({
-    mutationFn: (id: number) => apiJson<void>(`/api/subjects/${id}`, { method: 'DELETE' }),
+    mutationFn: deleteSubject,
     onSuccess: async () => {
       setMsg('Удалено')
       await qc.invalidateQueries({ queryKey: ['subjects'] })

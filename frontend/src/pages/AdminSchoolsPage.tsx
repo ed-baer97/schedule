@@ -2,47 +2,21 @@ import { useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { apiJson, extractApiError } from '../api/client'
+import { extractApiError } from '../api/client'
+import {
+  createAdminSchool,
+  createSchoolAdmin,
+  fetchPlatformDashboard,
+  listAdminSchools,
+  listSchoolAdmins,
+  updateAdminSchool,
+  updateAdminUser,
+  type AdminSchool,
+} from '../api/admin'
 import { useAuth } from '../auth/AuthContext'
 import { AtmosphereBg } from '../components/AtmosphereBg'
 import { BrandMark } from '../components/BrandMark'
 import { ThemeToggle } from '../components/ThemeToggle'
-
-type School = {
-  id: number
-  name: string
-  slug: string
-  is_active: boolean
-  admins_count: number
-}
-
-type PlatformDashboard = {
-  schools_total: number
-  schools_active: number
-  schools_inactive: number
-  schools_without_admin: number
-  school_admins_total: number
-  school_admins_active: number
-  jobs_active: number
-  teachers_total: number
-  classes_total: number
-}
-
-type SchoolAdmin = {
-  id: number
-  email: string
-  role: string
-  is_active: boolean
-  created_at?: string | null
-  password?: string | null
-}
-
-type AdminResult = {
-  id: number
-  email: string
-  password: string
-  message: string
-}
 
 function AdminFrame({ children }: { children: ReactNode }) {
   const { user, logout } = useAuth()
@@ -119,15 +93,11 @@ function SchoolPanel({ schoolId }: { schoolId: number }) {
 
   const adminsQuery = useQuery({
     queryKey: ['admin-school-admins', schoolId],
-    queryFn: () => apiJson<SchoolAdmin[]>(`/api/admin/schools/${schoolId}/admins`),
+    queryFn: () => listSchoolAdmins(schoolId),
   })
 
   const createAdmin = useMutation({
-    mutationFn: () =>
-      apiJson<AdminResult>(`/api/admin/schools/${schoolId}/admins`, {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      }),
+    mutationFn: () => createSchoolAdmin(schoolId, { email, password }),
     onSuccess: (data) => {
       setError(null)
       setLastCreated({ email: data.email, password: data.password })
@@ -146,12 +116,9 @@ function SchoolPanel({ schoolId }: { schoolId: number }) {
 
   const updateAdmin = useMutation({
     mutationFn: (payload: { id: number; password?: string; is_active?: boolean }) =>
-      apiJson<SchoolAdmin>(`/api/admin/users/${payload.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          ...(payload.password !== undefined ? { password: payload.password } : {}),
-          ...(payload.is_active !== undefined ? { is_active: payload.is_active } : {}),
-        }),
+      updateAdminUser(payload.id, {
+        ...(payload.password !== undefined ? { password: payload.password } : {}),
+        ...(payload.is_active !== undefined ? { is_active: payload.is_active } : {}),
       }),
     onSuccess: (data, vars) => {
       setError(null)
@@ -340,20 +307,16 @@ export function AdminSchoolsPage() {
 
   const dashboard = useQuery({
     queryKey: ['admin-dashboard'],
-    queryFn: () => apiJson<PlatformDashboard>('/api/admin/dashboard'),
+    queryFn: fetchPlatformDashboard,
   })
 
   const schools = useQuery({
     queryKey: ['admin-schools'],
-    queryFn: () => apiJson<School[]>('/api/admin/schools'),
+    queryFn: listAdminSchools,
   })
 
   const createSchool = useMutation({
-    mutationFn: () =>
-      apiJson<School>('/api/admin/schools', {
-        method: 'POST',
-        body: JSON.stringify({ name, slug: slug || null }),
-      }),
+    mutationFn: () => createAdminSchool({ name, slug: slug || null }),
     onSuccess: (school) => {
       setName('')
       setSlug('')
@@ -366,11 +329,8 @@ export function AdminSchoolsPage() {
   })
 
   const toggleSchool = useMutation({
-    mutationFn: (s: School) =>
-      apiJson<School>(`/api/admin/schools/${s.id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ is_active: !s.is_active }),
-      }),
+    mutationFn: (s: AdminSchool) =>
+      updateAdminSchool(s.id, { is_active: !s.is_active }),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['admin-schools'] })
       void qc.invalidateQueries({ queryKey: ['admin-dashboard'] })

@@ -1,6 +1,8 @@
 """School class API schemas."""
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.schemas.common import ClassroomBrief
+
 
 class ShiftBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -8,15 +10,6 @@ class ShiftBrief(BaseModel):
     id: int
     name: str
     school_level: str
-
-
-class ClassroomBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    number: str
-    name: str | None = None
-    display_name: str
 
 
 class SchoolClassOut(BaseModel):

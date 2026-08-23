@@ -2,21 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { ModalPortal } from '../components/ModalPortal'
-import { apiJson } from '../api/client'
-
-type Classroom = {
-  id: number
-  display_name: string
-}
-
-type Teacher = {
-  id: number
-  full_name: string
-  email: string | null
-  phone: string | null
-  home_classroom_id: number | null
-  home_classroom: { id: number; display_name: string } | null
-}
+import { createTeacher, deleteTeacher, listTeachers, updateTeacher, type Teacher } from '../api/teachers'
+import { listClassrooms } from '../api/classrooms'
 
 export function TeachersPage() {
   const qc = useQueryClient()
@@ -31,11 +18,11 @@ export function TeachersPage() {
 
   const teachersQ = useQuery({
     queryKey: ['teachers'],
-    queryFn: () => apiJson<Teacher[]>('/api/teachers/'),
+    queryFn: listTeachers,
   })
   const roomsQ = useQuery({
     queryKey: ['classrooms'],
-    queryFn: () => apiJson<Classroom[]>('/api/classrooms/'),
+    queryFn: listClassrooms,
   })
 
   const saveM = useMutation({
@@ -48,15 +35,9 @@ export function TeachersPage() {
       }
       if (!payload.full_name) throw new Error('Укажите ФИО')
       if (editingId === 'new') {
-        await apiJson<Teacher>('/api/teachers/', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        })
+        await createTeacher(payload)
       } else if (typeof editingId === 'number') {
-        await apiJson<Teacher>(`/api/teachers/${editingId}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload),
-        })
+        await updateTeacher(editingId, payload)
       }
     },
     onSuccess: async () => {
@@ -68,8 +49,7 @@ export function TeachersPage() {
   })
 
   const delM = useMutation({
-    mutationFn: (id: number) =>
-      apiJson<void>(`/api/teachers/${id}`, { method: 'DELETE' }),
+    mutationFn: deleteTeacher,
     onSuccess: async () => {
       setMsg('Удалено')
       await qc.invalidateQueries({ queryKey: ['teachers'] })

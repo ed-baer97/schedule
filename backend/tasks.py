@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from app.config import Config
 from app.models.job import JOB_DONE, JOB_FAILED, JOB_RUNNING
 from app.services.auto_scheduler import AutoScheduler
+from app.services.job_dispatch import set_dispatcher
 from backend.celery_app import celery_app
 from backend.deps import SessionLocal
 
@@ -25,6 +26,24 @@ def _update_job(db, job_id: int, **fields) -> None:
         setattr(job, k, v)
     job.updated_at = _utc_now()
     db.commit()
+
+
+def _dispatch_auto_job(job_id: int) -> None:
+    """Celery delay with sync fallback when broker is unavailable."""
+    try:
+        async_result = run_auto_schedule.delay(job_id)
+        db = SessionLocal()
+        try:
+            from app.models import Job
+
+            job = db.get(Job, job_id)
+            if job is not None:
+                job.celery_task_id = async_result.id
+                db.commit()
+        finally:
+            db.close()
+    except Exception:
+        run_auto_schedule(job_id)
 
 
 @celery_app.task(bind=True, name="schedule.run_auto")
@@ -116,3 +135,6 @@ def run_auto_schedule(self, job_id: int) -> dict:
         raise
     finally:
         db.close()
+
+
+set_dispatcher(_dispatch_auto_job)

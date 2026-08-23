@@ -1,15 +1,8 @@
-"""Shift API schemas."""
-from datetime import time
+"""Shift API schemas.
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
-
-
-def _fmt_time(v: time | str | None) -> str | None:
-    if v is None:
-        return None
-    if isinstance(v, time):
-        return v.strftime("%H:%M")
-    return str(v) if v else None
+Times are pre-formatted as HH:MM strings by ShiftService.serialize_shift.
+"""
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ShiftLessonTimeOut(BaseModel):
@@ -18,16 +11,8 @@ class ShiftLessonTimeOut(BaseModel):
     id: int
     day_of_week: int
     lesson_number: int
-    time_start: time | str
-    time_end: time | str
-
-    @field_serializer("time_start")
-    def ser_ts(self, v: time | str) -> str:
-        return _fmt_time(v) or ""
-
-    @field_serializer("time_end")
-    def ser_te(self, v: time | str) -> str:
-        return _fmt_time(v) or ""
+    time_start: str
+    time_end: str
 
 
 class ShiftOut(BaseModel):
@@ -42,17 +27,9 @@ class ShiftOut(BaseModel):
     working_days: int
     max_lessons_per_day: int
     class_hour_day: int | None = None
-    class_hour_start: time | str | None = None
-    class_hour_end: time | str | None = None
+    class_hour_start: str | None = None
+    class_hour_end: str | None = None
     lesson_times: list[ShiftLessonTimeOut] = []
-
-    @field_serializer("class_hour_start")
-    def ser_chs(self, v: time | str | None) -> str | None:
-        return _fmt_time(v)
-
-    @field_serializer("class_hour_end")
-    def ser_che(self, v: time | str | None) -> str | None:
-        return _fmt_time(v)
 
 
 class ShiftCreate(BaseModel):

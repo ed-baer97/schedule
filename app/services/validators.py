@@ -3,9 +3,15 @@ Schedule validation service
 """
 from sqlalchemy.orm import Session
 
-from app.models import ScheduleCell, TeachingAssignment, ScheduleSettings, Classroom, SchoolClass, Shift
+from app.domain.assignment import hours_exhausted
+from app.domain.schedule_rules import (
+    subject_day_limit_reached,
+    teacher_class_day_limit_reached,
+)
+from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass, Shift
+from app.services.assignment_hours import placed_count
 from app.services.bell_schedule import schedules_conflict
-from app.services.session_util import resolve_session
+from app.services.classroom_resolver import load_settings
 
 
 def _lesson_word(lesson: int) -> str:
@@ -28,15 +34,12 @@ def _cell_brief(cell: ScheduleCell) -> str:
 class ScheduleValidator:
     """Validates schedule for conflicts"""
 
-    def __init__(self, session: Session | None = None, school_id: int | None = None):
-        self.session = resolve_session(session)
+    def __init__(self, session: Session, school_id: int):
+        self.session = session
         self.school_id = school_id
 
     def _settings_for(self, school_level: str):
-        q = self.session.query(ScheduleSettings).filter_by(school_level=school_level)
-        if self.school_id is not None:
-            q = q.filter_by(school_id=self.school_id)
-        return q.first()
+        return load_settings(self.session, self.school_id, school_level)
 
     def validate_cell(self, assignment, day, lesson, classroom_id=None, exclude_cell_id=None):
         """
@@ -70,7 +73,9 @@ class ScheduleValidator:
             if lesson < sh.start_lesson or lesson >= sh.start_lesson + sh.lessons_count:
                 errors.append('Номер урока вне интервала смены')
 
-        if exclude_cell_id is None and assignment.remaining_hours <= 0:
+        if exclude_cell_id is None and hours_exhausted(
+            assignment.hours_per_week, placed_count(self.session, assignment.id)
+        ):
             subject_name = assignment.subject.display_name if assignment.subject else "предмет"
             errors.append(
                 f'Все часы по предмету «{subject_name}» уже расставлены '
@@ -154,7 +159,7 @@ class ScheduleValidator:
         if exclude_cell_id:
             query = query.filter(ScheduleCell.id != exclude_cell_id)
         count = query.count()
-        return count >= max_per_day
+        return subject_day_limit_reached(count, max_per_day)
 
     def check_teacher_class_per_day_limit(self, assignment, day, exclude_cell_id=None):
         """
@@ -173,7 +178,7 @@ class ScheduleValidator:
         if exclude_cell_id:
             query = query.filter(ScheduleCell.id != exclude_cell_id)
         count = query.count()
-        return count >= 2
+        return teacher_class_day_limit_reached(count, 2)
 
     def check_teacher_conflict(self, teacher_id, day, lesson, exclude_cell_id=None, class_id=None):
         """Return the conflicting cell if the teacher is busy, otherwise None."""

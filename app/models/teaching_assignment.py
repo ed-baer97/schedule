@@ -32,14 +32,6 @@ class TeachingAssignment(Base):
         return self.group_number is not None
 
     @property
-    def scheduled_hours(self):
-        return self.schedule_cells.count()
-
-    @property
-    def remaining_hours(self):
-        return self.hours_per_week - self.scheduled_hours
-
-    @property
     def display_name(self):
         name = self.subject.display_name
         if self.group_number:

@@ -1,19 +1,7 @@
 import { useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 
-type HoursResult = {
-  message?: string
-  detail?: string
-  files?: Array<{
-    subject: string
-    teachers_created: number
-    classes_created: number
-    assignments_created: number
-    assignments_updated: number
-    subgroup_classes: number
-    warnings: string[]
-  }>
-}
+import { uploadSubjectHours as importSubjectHours } from '../api/import'
 
 type Flash = { kind: 'success' | 'danger'; text: string }
 
@@ -30,10 +18,6 @@ export function ImportPage() {
     setHoursFlash(null)
     setHoursWarnings([])
     try {
-      const fd = new FormData()
-      for (const file of files) {
-        fd.append('files', file)
-      }
       const override = subjectOverride.trim()
       if (override) {
         if (files.length > 1) {
@@ -43,25 +27,8 @@ export function ImportPage() {
           })
           return
         }
-        fd.append('subject', override)
       }
-      const res = await fetch('/api/import/subject-hours', {
-        method: 'POST',
-        body: fd,
-        credentials: 'include',
-      })
-      const text = await res.text()
-      let parsed: HoursResult = {}
-      try {
-        parsed = text ? JSON.parse(text) : {}
-      } catch {
-        /* leave */
-      }
-      if (!res.ok) {
-        const detail = parsed.detail ?? text ?? `HTTP ${res.status}`
-        setHoursFlash({ kind: 'danger', text: String(detail) })
-        return
-      }
+      const parsed = await importSubjectHours(files, override || undefined)
       const warnings = (parsed.files ?? []).flatMap((f) => f.warnings)
       setHoursWarnings(warnings)
       setHoursFlash({

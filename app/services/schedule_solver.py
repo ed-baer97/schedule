@@ -6,9 +6,11 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from app.models import Classroom, SchoolClass, ScheduleCell, ScheduleSettings, TeachingAssignment
+from app.models import Classroom, SchoolClass, ScheduleCell, TeachingAssignment
 from app.services.bell_schedule import schedules_conflict
-from app.services.session_util import resolve_session
+from app.services.assignment_hours import placed_counts, remaining_for
+from app.services.classroom_resolver import load_settings
+from app.services.schedule_service import ScheduleService
 from app.services.validators import ScheduleValidator
 
 try:
@@ -59,16 +61,39 @@ class ResidualGraphSolver:
     - right: class/day/lesson slots
     """
 
-    def __init__(self, classroom_resolver, session=None):
-        self.session = resolve_session(session)
-        self.validator = ScheduleValidator(self.session)
+    def __init__(self, classroom_resolver, session, school_id: int):
+        self.session = session
+        self.school_id = school_id
+        self.validator = ScheduleValidator(self.session, school_id=school_id)
         self._classroom_resolver = classroom_resolver
+        self._schedule = ScheduleService(session, school_id)
+
+    def _place_cell(
+        self,
+        *,
+        class_id: int,
+        day_of_week: int,
+        lesson_number: int,
+        assignment_id: int,
+        classroom_id=None,
+    ):
+        return self._schedule.insert_cell(
+            class_id=class_id,
+            day_of_week=day_of_week,
+            lesson_number=lesson_number,
+            assignment_id=assignment_id,
+            classroom_id=classroom_id,
+            validate=False,
+            commit=False,
+        )
 
     def _build_units(self, assignments):
         units = []
         by_assignment = defaultdict(list)
+        counts = placed_counts(self.session, [a.id for a in assignments])
         for assignment in assignments:
-            for i in range(assignment.remaining_hours):
+            rem = remaining_for(assignment, placed=counts.get(assignment.id, 0))
+            for i in range(rem):
                 unit = AssignmentUnit(
                     unit_id=f"a{assignment.id}#{i+1}",
                     assignment_id=assignment.id,
@@ -150,19 +175,34 @@ class ResidualGraphSolver:
         assignment_query = self.session.query(TeachingAssignment).join(SchoolClass).filter(
             SchoolClass.school_level == school_level,
             TeachingAssignment.teacher_id.isnot(None),
+            TeachingAssignment.school_id == self.school_id,
+            SchoolClass.school_id == self.school_id,
         )
         if teacher_id:
             assignment_query = assignment_query.filter(TeachingAssignment.teacher_id == teacher_id)
         if class_id:
             assignment_query = assignment_query.filter(TeachingAssignment.class_id == class_id)
 
-        assignments = [a for a in assignment_query.all() if a.remaining_hours > 0]
+        raw = list(assignment_query.all())
+        counts = placed_counts(self.session, [a.id for a in raw])
+        assignments = [
+            a for a in raw if remaining_for(a, placed=counts.get(a.id, 0)) > 0
+        ]
         assignment_map = {a.id: a for a in assignments}
         if not assignments:
             return SolveResult(0, [], [], [])
 
         class_ids = sorted({a.class_id for a in assignments})
-        classes = self.session.query(SchoolClass).filter(SchoolClass.id.in_(class_ids)).all() if class_ids else []
+        classes = (
+            self.session.query(SchoolClass)
+            .filter(
+                SchoolClass.id.in_(class_ids),
+                SchoolClass.school_id == self.school_id,
+            )
+            .all()
+            if class_ids
+            else []
+        )
 
         units, _ = self._build_units(assignments)
         slots_by_class = self._build_slots(classes)
@@ -197,16 +237,13 @@ class ResidualGraphSolver:
                     diagnostics_raw[assignment.id][err] += 1
                 continue
 
-            cell = ScheduleCell(
-                school_id=getattr(assignment, "school_id", None),
+            self._place_cell(
                 class_id=assignment.class_id,
                 day_of_week=slot.day,
                 lesson_number=slot.lesson,
                 assignment_id=assignment.id,
                 classroom_id=classroom_id,
             )
-            self.session.add(cell)
-            self.session.flush()
             placements.append({
                 "assignment_id": assignment.id,
                 "class_id": assignment.class_id,
@@ -221,9 +258,16 @@ class ResidualGraphSolver:
         # Refresh remaining and build diagnostics
         unplaced = []
         diagnostics = []
+        rem_counts = placed_counts(
+            self.session, [a.id for a in assignments]
+        )
         for assignment in assignments:
             assignment = self.session.get(TeachingAssignment, assignment.id)
-            rem = assignment.remaining_hours if assignment else 0
+            rem = (
+                remaining_for(assignment, placed=rem_counts.get(assignment.id, 0))
+                if assignment
+                else 0
+            )
             if rem <= 0:
                 continue
             unplaced.append({"assignment_id": assignment.id, "remaining_hours": rem})
@@ -253,7 +297,7 @@ class ResidualGraphSolver:
 
 
 def _external_teacher_busy_slots(
-    teacher_ids: set[int], class_ids_scope: list[int], session=None
+    teacher_ids: set[int], class_ids_scope: list[int], session
 ) -> dict[int, list[tuple]]:
     """
     Учителя заняты вне области пересборки: (shift_id, day, lesson) по существующим ячейкам.
@@ -261,7 +305,7 @@ def _external_teacher_busy_slots(
     busy: dict[int, list[tuple]] = defaultdict(list)
     if not teacher_ids:
         return busy
-    s = resolve_session(session)
+    s = session
     rows = (
         s.query(ScheduleCell).join(TeachingAssignment)
         .filter(
@@ -334,10 +378,36 @@ class CpSatScheduleSolver:
     (clear + re-place) with hard constraints aligned to ScheduleValidator rules.
     """
 
-    def __init__(self, classroom_resolver: Callable[[TeachingAssignment, str], int | None], session=None):
-        self.session = resolve_session(session)
-        self.validator = ScheduleValidator(self.session)
+    def __init__(
+        self,
+        classroom_resolver: Callable[[TeachingAssignment, str], int | None],
+        session,
+        school_id: int,
+    ):
+        self.session = session
+        self.school_id = school_id
+        self.validator = ScheduleValidator(self.session, school_id=school_id)
         self._classroom_resolver = classroom_resolver
+        self._schedule = ScheduleService(session, school_id)
+
+    def _place_cell(
+        self,
+        *,
+        class_id: int,
+        day_of_week: int,
+        lesson_number: int,
+        assignment_id: int,
+        classroom_id=None,
+    ):
+        return self._schedule.insert_cell(
+            class_id=class_id,
+            day_of_week=day_of_week,
+            lesson_number=lesson_number,
+            assignment_id=assignment_id,
+            classroom_id=classroom_id,
+            validate=False,
+            commit=False,
+        )
 
     def _build_units(self, assignments: list[TeachingAssignment]) -> list[AssignmentUnit]:
         units: list[AssignmentUnit] = []
@@ -444,7 +514,12 @@ class CpSatScheduleSolver:
             )
 
         shift_classes = (
-            self.session.query(SchoolClass).filter_by(shift_id=shift_id, school_level=school_level)
+            self.session.query(SchoolClass)
+            .filter_by(
+                shift_id=shift_id,
+                school_level=school_level,
+                school_id=self.school_id,
+            )
             .order_by(SchoolClass.grade, SchoolClass.name)
             .all()
         )
@@ -455,7 +530,7 @@ class CpSatScheduleSolver:
             )
 
         class_ids = [c.id for c in shift_classes]
-        settings = self.session.query(ScheduleSettings).filter_by(school_level=school_level).first()
+        settings = load_settings(self.session, self.school_id, school_level)
         max_per_subject_day = settings.max_lessons_per_subject_per_day if settings else 2
 
         assignments = (
@@ -463,6 +538,7 @@ class CpSatScheduleSolver:
                 TeachingAssignment.class_id.in_(class_ids),
                 TeachingAssignment.teacher_id.isnot(None),
                 TeachingAssignment.hours_per_week > 0,
+                TeachingAssignment.school_id == self.school_id,
             )
             .all()
         )
@@ -888,9 +964,7 @@ class CpSatScheduleSolver:
 
         # Apply: transaction — remove old cells for scope, insert new
         try:
-            self.session.query(ScheduleCell).filter(ScheduleCell.class_id.in_(class_ids)).delete(
-                synchronize_session=False
-            )
+            self._schedule.delete_cells(class_ids=class_ids, commit=False)
 
             placements = []
             for ui, unit in unit_list:
@@ -912,15 +986,13 @@ class CpSatScheduleSolver:
                         metrics_before=metrics_before,
                     )
 
-                cell = ScheduleCell(
-                    school_id=getattr(a, "school_id", None),
+                self._place_cell(
                     class_id=a.class_id,
                     day_of_week=chosen.day,
                     lesson_number=chosen.lesson,
                     assignment_id=a.id,
                     classroom_id=classroom_id,
                 )
-                self.session.add(cell)
                 placements.append(
                     {
                         "assignment_id": a.id,

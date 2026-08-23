@@ -1,21 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { apiJson } from '../api/client'
+import {
+  batchAssignShift,
+  createSchoolClass,
+  deleteSchoolClass,
+  listSchoolClasses,
+  updateSchoolClass,
+  type SchoolClass,
+} from '../api/schoolClasses'
+import { listClassrooms } from '../api/classrooms'
+import { listShifts } from '../api/shifts'
 import { ModalPortal } from '../components/ModalPortal'
-
-type Shift = { id: number; name: string; school_level: string }
-type Classroom = { id: number; display_name: string }
-type SchoolClass = {
-  id: number
-  name: string
-  grade: number
-  school_level: string
-  school_level_display: string
-  shift_id: number | null
-  home_classroom_id: number | null
-  shift: { id: number; name: string } | null
-  home_classroom: { display_name: string } | null
-}
 
 export function SchoolClassesPage() {
   const qc = useQueryClient()
@@ -32,15 +27,15 @@ export function SchoolClassesPage() {
 
   const classesQ = useQuery({
     queryKey: ['school-classes'],
-    queryFn: () => apiJson<SchoolClass[]>('/api/school-classes/'),
+    queryFn: listSchoolClasses,
   })
   const shiftsQ = useQuery({
     queryKey: ['shifts'],
-    queryFn: () => apiJson<Shift[]>('/api/shifts/'),
+    queryFn: listShifts,
   })
   const roomsQ = useQuery({
     queryKey: ['classrooms'],
-    queryFn: () => apiJson<Classroom[]>('/api/classrooms/'),
+    queryFn: listClassrooms,
   })
 
   const saveM = useMutation({
@@ -53,12 +48,9 @@ export function SchoolClassesPage() {
       }
       if (!payload.name) throw new Error('Укажите название класса')
       if (editingId === 'new') {
-        await apiJson('/api/school-classes/', { method: 'POST', body: JSON.stringify(payload) })
+        await createSchoolClass(payload)
       } else if (typeof editingId === 'number') {
-        await apiJson(`/api/school-classes/${editingId}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload),
-        })
+        await updateSchoolClass(editingId, payload)
       }
     },
     onSuccess: async () => {
@@ -70,7 +62,7 @@ export function SchoolClassesPage() {
   })
 
   const delM = useMutation({
-    mutationFn: (id: number) => apiJson<void>(`/api/school-classes/${id}`, { method: 'DELETE' }),
+    mutationFn: deleteSchoolClass,
     onSuccess: async () => {
       setMsg('Удалено')
       await qc.invalidateQueries({ queryKey: ['school-classes'] })
@@ -84,13 +76,7 @@ export function SchoolClassesPage() {
         .filter(([, v]) => v)
         .map(([k]) => Number(k))
       if (!ids.length) throw new Error('Отметьте классы')
-      await apiJson('/api/school-classes/batch-shift', {
-        method: 'POST',
-        body: JSON.stringify({
-          class_ids: ids,
-          shift_id: batchShiftId === '' ? null : Number(batchShiftId),
-        }),
-      })
+      await batchAssignShift(ids, batchShiftId === '' ? null : Number(batchShiftId))
     },
     onSuccess: async () => {
       setMsg('Смена обновлена')

@@ -1,14 +1,7 @@
 """Teacher API schemas."""
 from pydantic import BaseModel, ConfigDict
 
-
-class ClassroomBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    number: str
-    name: str | None = None
-    display_name: str
+from backend.schemas.common import ClassroomBrief
 
 
 class TeacherOut(BaseModel):

@@ -1,20 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
-import { apiJson } from '../api/client'
-
-type Stats = {
-  teachers_count: number
-  classes_count: number
-  subjects_count: number
-  classrooms_count: number
-  elementary_classes: number
-  secondary_classes: number
-  elementary_assignments: number
-  secondary_assignments: number
-  elementary_scheduled: number
-  secondary_scheduled: number
-}
+import { fetchDashboardStats } from '../api/dashboard'
 
 const QUICK_LINKS = [
   { to: '/import', icon: 'bi-file-earmark-excel', label: 'Импорт Excel', desc: 'Нагрузка по предметам и кабинеты' },
@@ -27,7 +14,7 @@ const QUICK_LINKS = [
 export function DashboardPage() {
   const q = useQuery({
     queryKey: ['dashboard', 'stats'],
-    queryFn: () => apiJson<Stats>('/api/dashboard/stats'),
+    queryFn: fetchDashboardStats,
   })
 
   if (q.isLoading) return <p className="text-muted">Загрузка…</p>

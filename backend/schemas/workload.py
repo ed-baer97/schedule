@@ -1,20 +1,15 @@
 """Workload API schemas."""
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
+from backend.schemas.common import SchoolClassBrief, SubjectBrief
 
-class SchoolClassBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    name: str
-    grade: int
-
-
-class SubjectBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    name: str
+__all__ = [
+    "SchoolClassBrief",
+    "SubjectBrief",
+    "WorkloadCellOut",
+    "WorkloadOut",
+    "WorkloadCellUpdate",
+]
 
 
 class WorkloadCellOut(BaseModel):

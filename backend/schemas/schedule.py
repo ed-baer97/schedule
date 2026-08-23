@@ -1,6 +1,8 @@
 """Schedule grid API schemas."""
 from pydantic import BaseModel, ConfigDict, Field
 
+from backend.schemas.common import TeacherBrief
+
 
 class ShiftBrief(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -114,13 +116,6 @@ class ScheduleCellMove(BaseModel):
     class_id: int | None = None
     classroom_id: int | None = None
     set_classroom: bool = False
-
-
-class TeacherBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    full_name: str
 
 
 class AutoPageData(BaseModel):

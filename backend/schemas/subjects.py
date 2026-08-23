@@ -4,17 +4,9 @@ import re
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import Subject
+from backend.schemas.common import ClassroomBrief
 
 _HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
-
-
-class ClassroomBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    number: str
-    name: str | None = None
-    display_name: str
 
 
 class SubjectOut(BaseModel):

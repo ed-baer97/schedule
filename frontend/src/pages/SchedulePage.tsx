@@ -3,96 +3,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OverlayScrollArea } from '../components/OverlayScrollArea'
 import { ModalPortal } from '../components/ModalPortal'
-import { extractApiError, apiJson } from '../api/client'
+import { extractApiError } from '../api/client'
+import {
+  createScheduleCell,
+  deleteScheduleCell,
+  fetchAssignmentsForClass,
+  fetchGrid,
+  updateScheduleCell,
+  type ScheduleCell as CellOut,
+} from '../api/schedule'
+import type { SchoolLevel } from '../api/teachers'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
-
-type SchoolLevel = 'elementary' | 'secondary'
-
-type ShiftBrief = {
-  id: number
-  name: string
-  school_level: string
-  working_days: number
-  max_lessons_per_day: number
-  start_lesson: number
-  lessons_count: number
-  class_hour_day: number | null
-  class_hour_time_label: string | null
-}
-
-type SchoolClassRow = {
-  id: number
-  name: string
-  grade: number
-  school_level: string
-  shift_id: number | null
-}
-
-type ScheduleSettings = {
-  school_level: string
-  max_lessons_per_subject_per_day: number
-  classroom_mode: 'class_room' | 'teacher_room'
-  elementary_group_subjects_leave: boolean
-}
-
-type ClassroomWarning = { type: string; message: string }
-
-type CellOut = {
-  id: number
-  class_id: number
-  day_of_week: number
-  lesson_number: number
-  assignment_id: number
-  classroom_id: number | null
-  subject_id: number
-  subject_name: string
-  subject_color: string
-  teacher_id: number | null
-  teacher_name: string | null
-  group_number: number | null
-  classroom_name: string | null
-}
-
-type GridData = {
-  school_level: SchoolLevel
-  current_shift_id: number | null
-  current_shift: ShiftBrief | null
-  shifts: ShiftBrief[]
-  classes: SchoolClassRow[]
-  day_names: string[]
-  working_days: number
-  max_lessons: number
-  lessons_range: number[]
-  lesson_times_by_day: Record<number, Record<number, string>>
-  class_hour_time_label: string
-  cells: CellOut[]
-  classroom_warnings: ClassroomWarning[]
-  settings: ScheduleSettings | null
-}
-
-type AssignmentChoice = {
-  id: number
-  subject_id: number
-  subject_name: string
-  subject_color: string
-  teacher_id: number | null
-  teacher_name: string | null
-  group_number: number | null
-  remaining_hours: number
-  preferred_classroom_id: number | null
-}
-
-type ClassroomChoice = {
-  id: number
-  number: string
-  name: string | null
-  display_name: string
-}
-
-type AssignmentsData = {
-  assignments: AssignmentChoice[]
-  classrooms: ClassroomChoice[]
-}
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
 
@@ -451,10 +372,7 @@ export function SchedulePage() {
 
   const gridQ = useQuery({
     queryKey: ['schedule', 'grid', level, shiftId],
-    queryFn: () =>
-      apiJson<GridData>(
-        `/api/schedule/grid?school_level=${level}${shiftId ? `&shift_id=${shiftId}` : ''}`,
-      ),
+    queryFn: () => fetchGrid(level, shiftId),
   })
 
   const teacherHoverCss = useMemo(() => {
@@ -470,7 +388,7 @@ export function SchedulePage() {
       lesson_number: number
       assignment_id: number
       classroom_id: number | null
-    }) => apiJson<CellOut>('/api/schedule/cells', { method: 'POST', body: JSON.stringify(p) }),
+    }) => createScheduleCell(p),
     onSuccess: async (_cell, p) => {
       setSlot(null)
       setToast({ kind: 'success', text: 'Урок добавлен' })
@@ -487,13 +405,10 @@ export function SchedulePage() {
       day_of_week: number
       lesson_number: number
     }) =>
-      apiJson<CellOut>(`/api/schedule/cells/${p.cell_id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          day_of_week: p.day_of_week,
-          lesson_number: p.lesson_number,
-          class_id: p.class_id,
-        }),
+      updateScheduleCell(p.cell_id, {
+        day_of_week: p.day_of_week,
+        lesson_number: p.lesson_number,
+        class_id: p.class_id,
       }),
     onSuccess: async (_cell, p) => {
       setToast({ kind: 'success', text: 'Урок перемещён' })
@@ -506,7 +421,7 @@ export function SchedulePage() {
 
   const delM = useMutation({
     mutationFn: (p: { cell_id: number; class_id: number; day: number; lesson: number }) =>
-      apiJson<void>(`/api/schedule/cells/${p.cell_id}`, { method: 'DELETE' }),
+      deleteScheduleCell(p.cell_id),
     onSuccess: async (_ok, p) => {
       setToast({ kind: 'success', text: 'Урок удалён' })
       replaceHash(slotAnchor(p.class_id, p.day, p.lesson))
@@ -891,8 +806,7 @@ function AddLessonModal(props: {
 
   const q = useQuery({
     queryKey: ['schedule', 'assignments-for-class', slot.class_id],
-    queryFn: () =>
-      apiJson<AssignmentsData>(`/api/schedule/assignments-for-class/${slot.class_id}`),
+    queryFn: () => fetchAssignmentsForClass(slot.class_id),
   })
 
   const subjects = useMemo(() => {

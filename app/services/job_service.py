@@ -1,0 +1,97 @@
+"""Background job status and enqueue for school-scoped auto-schedule tasks."""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import Config
+from app.models import Job
+from app.models.job import JOB_PENDING, JOB_RUNNING
+from app.services.errors import ConflictError
+from app.services.job_dispatch import dispatch_auto_job
+from app.services.tenancy import require_owned
+
+
+@dataclass
+class JobStatusData:
+    id: int
+    kind: str
+    status: str
+    progress: dict | None
+    result: dict | None
+    error: str | None
+
+
+def _parse_json(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {"value": data}
+    except json.JSONDecodeError:
+        return {"raw": raw}
+
+
+class JobService:
+    def __init__(self, db: Session, school_id: int):
+        self.db = db
+        self.school_id = school_id
+
+    def get(self, job_id: int) -> JobStatusData:
+        job = require_owned(self.db, Job, job_id, self.school_id)
+        return JobStatusData(
+            id=job.id,
+            kind=job.kind,
+            status=job.status,
+            progress=_parse_json(job.progress),
+            result=_parse_json(job.result),
+            error=job.error,
+        )
+
+    def enqueue_auto(
+        self,
+        *,
+        kind: str,
+        payload: dict,
+        created_by_id: int,
+        dispatch: bool = True,
+    ) -> dict:
+        """Create a Job row and optionally dispatch via job_dispatch port."""
+        active = self.db.scalars(
+            select(Job).where(
+                Job.school_id == self.school_id,
+                Job.status.in_([JOB_PENDING, JOB_RUNNING]),
+            )
+        ).first()
+        if active is not None:
+            raise ConflictError(
+                f"Уже выполняется задача #{active.id}. Дождитесь завершения."
+            )
+
+        body = dict(payload)
+        if "time_limit_sec" not in body:
+            body["time_limit_sec"] = Config.SOLVER_TIME_LIMIT_SEC
+        else:
+            body["time_limit_sec"] = min(
+                float(body["time_limit_sec"]), float(Config.SOLVER_TIME_LIMIT_SEC)
+            )
+
+        job = Job(
+            school_id=self.school_id,
+            kind=kind,
+            status=JOB_PENDING,
+            progress=json.dumps(body, ensure_ascii=False),
+            created_by_id=created_by_id,
+        )
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+
+        if dispatch:
+            dispatch_auto_job(job.id)
+            self.db.refresh(job)
+
+        return {"job_id": job.id, "status": JOB_PENDING}

@@ -2,24 +2,16 @@
 from __future__ import annotations
 
 import logging
-import re
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.config import Config
 from app.models import ScheduleSettings, School, User
 from app.models.user import ROLE_PLATFORM_ADMIN
+from app.services.admin_service import slugify
 from backend.security import hash_password
 
 logger = logging.getLogger(__name__)
-
-
-def slugify(name: str) -> str:
-    s = name.strip().lower()
-    s = re.sub(r"[^a-z0-9а-яё]+", "-", s, flags=re.IGNORECASE)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return s or "school"
 
 
 def ensure_default_school(db: Session) -> School:

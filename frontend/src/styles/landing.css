@@ -485,7 +485,7 @@ html[data-theme='light'] .landing-title em {
 html[data-theme='light'] .landing-card {
   color-scheme: light;
   border: 1px solid rgba(255, 255, 255, 0.48);
-  box-shadow: 0 28px 60px rgba(20, 32, 26), 0.12);
+  box-shadow: 0 28px 60px rgba(20, 32, 26, 0.12);
 }
 
 .landing-card h2 {

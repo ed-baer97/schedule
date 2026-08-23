@@ -1,27 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { apiJson } from '../api/client'
-
-type ReportCell = {
-  id: number
-  day_of_week: number
-  lesson_number: number
-  subject_name: string
-  subject_color: string
-  teacher_name: string | null
-  class_name: string
-  classroom_name: string | null
-  group_number: number | null
-}
-
-type TeacherReport = {
-  teacher_id: number
-  teacher_name: string
-  day_names: string[]
-  working_days: number
-  max_lessons: number
-  cells: ReportCell[]
-}
+import { exportTeacherUrl, fetchTeacherReport, type ReportCell } from '../api/reports'
 
 export function ReportsTeacherPage() {
   const params = useParams()
@@ -29,7 +8,7 @@ export function ReportsTeacherPage() {
 
   const q = useQuery({
     queryKey: ['reports', 'teacher', id],
-    queryFn: () => apiJson<TeacherReport>(`/api/reports/teacher/${id}`),
+    queryFn: () => fetchTeacherReport(id),
     enabled: !!id,
   })
 
@@ -52,7 +31,7 @@ export function ReportsTeacherPage() {
         <h1 className="h3 mb-0">Расписание: {r.teacher_name}</h1>
         <div className="d-flex gap-2">
           <a
-            href={`/api/reports/export/teacher/${r.teacher_id}`}
+            href={exportTeacherUrl(r.teacher_id)}
             className="btn btn-success btn-sm"
           >
             Скачать Excel

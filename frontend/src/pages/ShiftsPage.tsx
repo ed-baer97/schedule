@@ -1,42 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { apiJson, extractApiError } from '../api/client'
+import { extractApiError } from '../api/client'
+import {
+  applyShiftLessonTimes,
+  createShift,
+  deleteShift,
+  listShifts,
+  updateShift,
+  type BellRow,
+  type BellState,
+  type Shift,
+} from '../api/shifts'
 import { ModalPortal } from '../components/ModalPortal'
-
-type LessonTime = {
-  id: number
-  day_of_week: number
-  lesson_number: number
-  time_start: string
-  time_end: string
-}
-
-type Shift = {
-  id: number
-  name: string
-  school_level: string
-  school_level_display: string
-  start_lesson: number
-  lessons_count: number
-  working_days: number
-  max_lessons_per_day: number
-  class_hour_day: number | null
-  class_hour_start: string | null
-  class_hour_end: string | null
-  lesson_times: LessonTime[]
-}
-
-type BellRow = { time_start: string; time_end: string }
-type BellState = { common: Record<string, BellRow>; class_day: Record<string, BellRow> }
-
-const DAY_NAMES: Record<number, string> = {
-  1: 'Понедельник',
-  2: 'Вторник',
-  3: 'Среда',
-  4: 'Четверг',
-  5: 'Пятница',
-  6: 'Суббота',
-}
+import { DAY_NAMES } from '../domain/days'
 
 const DEFAULT_LESSON_DURATION = 45
 const DEFAULT_BREAK = 10
@@ -282,7 +258,7 @@ export function ShiftsPage() {
 
   const q = useQuery({
     queryKey: ['shifts'],
-    queryFn: () => apiJson<Shift[]>('/api/shifts/'),
+    queryFn: listShifts,
   })
 
   const saveM = useMutation({
@@ -332,23 +308,17 @@ export function ShiftsPage() {
 
       let shiftId: number
       if (editingId === 'new') {
-        const created = await apiJson<{ id: number }>('/api/shifts/', {
-          method: 'POST',
-          body: JSON.stringify(base),
-        })
+        const created = await createShift(base)
         shiftId = created.id
       } else if (typeof editingId === 'number') {
-        await apiJson(`/api/shifts/${editingId}`, { method: 'PUT', body: JSON.stringify(base) })
+        await updateShift(editingId, base)
         shiftId = editingId
       } else {
         throw new Error('Не выбрана смена')
       }
 
       const bell: BellState = { common: computed.common, class_day: computed.class_day }
-      const applied = await apiJson<{ inserted: number; warnings: string[] }>(
-        `/api/shifts/${shiftId}/lesson-times`,
-        { method: 'PUT', body: JSON.stringify(bell) },
-      )
+      const applied = await applyShiftLessonTimes(shiftId, bell)
       return applied
     },
     onSuccess: async (res) => {
@@ -360,7 +330,7 @@ export function ShiftsPage() {
   })
 
   const delM = useMutation({
-    mutationFn: (id: number) => apiJson<void>(`/api/shifts/${id}`, { method: 'DELETE' }),
+    mutationFn: deleteShift,
     onSuccess: async () => {
       setMsg('Удалено')
       await qc.invalidateQueries({ queryKey: ['shifts'] })

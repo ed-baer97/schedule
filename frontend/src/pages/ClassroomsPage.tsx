@@ -1,17 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { apiJson } from '../api/client'
+import {
+  createClassroom,
+  deleteClassroom,
+  listClassrooms,
+  updateClassroom,
+  type Classroom,
+} from '../api/classrooms'
 import { ModalPortal } from '../components/ModalPortal'
-
-type Classroom = {
-  id: number
-  number: string
-  name: string | null
-  floor: number | null
-  building: string | null
-  classes_capacity: number | null
-  display_name: string
-}
 
 export function ClassroomsPage() {
   const qc = useQueryClient()
@@ -27,7 +23,7 @@ export function ClassroomsPage() {
 
   const q = useQuery({
     queryKey: ['classrooms'],
-    queryFn: () => apiJson<Classroom[]>('/api/classrooms/'),
+    queryFn: listClassrooms,
   })
 
   const saveM = useMutation({
@@ -41,15 +37,9 @@ export function ClassroomsPage() {
       }
       if (!payload.number) throw new Error('Укажите номер кабинета')
       if (editingId === 'new') {
-        await apiJson('/api/classrooms/', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        })
+        await createClassroom(payload)
       } else if (typeof editingId === 'number') {
-        await apiJson(`/api/classrooms/${editingId}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload),
-        })
+        await updateClassroom(editingId, payload)
       }
     },
     onSuccess: async () => {
@@ -61,7 +51,7 @@ export function ClassroomsPage() {
   })
 
   const delM = useMutation({
-    mutationFn: (id: number) => apiJson<void>(`/api/classrooms/${id}`, { method: 'DELETE' }),
+    mutationFn: deleteClassroom,
     onSuccess: async () => {
       setMsg('Удалено')
       await qc.invalidateQueries({ queryKey: ['classrooms'] })

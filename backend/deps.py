@@ -88,11 +88,3 @@ def require_platform_admin(user: User = Depends(get_current_user)) -> User:
             detail="Только администратор платформы",
         )
     return user
-
-
-def school_owned(db: Session, model, obj_id: int, school_id: int):
-    """Load entity by id and ensure it belongs to school; 404 otherwise."""
-    obj = db.get(model, obj_id)
-    if obj is None or getattr(obj, "school_id", None) != school_id:
-        raise HTTPException(status_code=404, detail="Not found")
-    return obj

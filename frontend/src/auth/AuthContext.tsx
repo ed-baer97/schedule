@@ -1,14 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { apiJson, setUnauthorizedHandler } from '../api/client'
+import { setUnauthorizedHandler } from '../api/client'
+import { fetchMe, logout as authLogout, type AuthUser } from '../api/auth'
 
-export type AuthUser = {
-  id: number
-  email: string
-  role: string
-  school_id: number | null
-  school_name: string | null
-}
+export type { AuthUser }
 
 type AuthContextValue = {
   user: AuthUser | null
@@ -26,7 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refresh = useCallback(async () => {
     try {
-      const me = await apiJson<AuthUser>('/api/auth/me')
+      const me = await fetchMe()
       setUser(me)
     } catch {
       setUser(null)
@@ -37,7 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
-      await apiJson('/api/auth/logout', { method: 'POST' })
+      await authLogout()
     } catch {
       /* ignore */
     }

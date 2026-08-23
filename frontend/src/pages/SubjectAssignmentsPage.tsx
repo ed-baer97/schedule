@@ -1,37 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import { apiJson } from '../api/client'
-
-type ClassRow = {
-  id: number
-  name: string
-  grade: number
-  hours_per_week: number
-  teacher_ids: number[]
-  is_split: boolean
-}
-
-type TeacherRow = { id: number; full_name: string }
-
-type AssignmentsView = {
-  subject: {
-    id: number
-    name: string
-    display_color: string
-  }
-  school_level: string
-  classes: ClassRow[]
-  attached_teachers: TeacherRow[]
-  all_teachers: TeacherRow[]
-}
+import {
+  getSubjectAssignments,
+  saveSubjectAssignments,
+  type SubjectAssignmentsView,
+} from '../api/subjects'
 
 type LocalState = {
   teacherIds: number[]
   selections: Record<number, Set<number>>
 }
 
-function buildLocal(view: AssignmentsView): LocalState {
+function buildLocal(view: SubjectAssignmentsView): LocalState {
   const selections: Record<number, Set<number>> = {}
   for (const t of view.attached_teachers) {
     selections[t.id] = new Set()
@@ -60,10 +41,7 @@ export function SubjectAssignmentsPage() {
 
   const q = useQuery({
     queryKey: ['subject-assignments', subjectId, schoolLevel],
-    queryFn: () =>
-      apiJson<AssignmentsView>(
-        `/api/subjects/${subjectId}/assignments?school_level=${schoolLevel}`,
-      ),
+    queryFn: () => getSubjectAssignments(subjectId, schoolLevel),
     enabled: Number.isFinite(subjectId),
   })
 
@@ -93,10 +71,7 @@ export function SubjectAssignmentsPage() {
         teacher_ids: local.teacherIds,
         selections,
       }
-      const res = await apiJson<{ ok: boolean; errors: string[] }>(
-        `/api/subjects/${subjectId}/assignments`,
-        { method: 'POST', body: JSON.stringify(body) },
-      )
+      const res = await saveSubjectAssignments(subjectId, body)
       if (!res.ok) throw new Error(res.errors.join('; ') || 'Ошибка сохранения')
       return res
     },

@@ -587,13 +587,14 @@ def _same_day_pair_stats(teacher_id: int) -> tuple[int, int]:
 def test_teacher_ladder_fits_30_hours_on_empty_grid() -> None:
     ids = _seed_shift2_math_teacher()
     with SessionLocal() as session:
+        from app.services.assignment_hours import remaining_for
         from app.services.auto_scheduler import AutoScheduler
 
         result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).schedule_by_teacher_ladder_result(
             ids["teacher_id"], "secondary"
         )
         remaining = sum(
-            a.remaining_hours
+            remaining_for(a)
             for a in session.query(TeachingAssignment).filter(
                 TeachingAssignment.teacher_id == ids["teacher_id"]
             )
@@ -635,6 +636,7 @@ def test_teacher_ladder_relocates_clustered_leftover_hour() -> None:
         session.commit()
 
     with SessionLocal() as session:
+        from app.services.assignment_hours import remaining_for
         from app.services.auto_scheduler import AutoScheduler
 
         result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).schedule_by_teacher_ladder_result(
@@ -643,12 +645,12 @@ def test_teacher_ladder_relocates_clustered_leftover_hour() -> None:
         session.expire_all()
         last = session.get(TeachingAssignment, assignment_ids[5])
         remaining = sum(
-            a.remaining_hours
+            remaining_for(a)
             for a in session.query(TeachingAssignment).filter(
                 TeachingAssignment.teacher_id == ids["teacher_id"]
             )
         )
         assert last is not None
-        assert last.remaining_hours == 0, result
+        assert remaining_for(last) == 0, result
         assert remaining == 0, result
 

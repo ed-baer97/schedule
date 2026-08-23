@@ -11,6 +11,8 @@ from sqlalchemy.exc import OperationalError
 from backend.bootstrap import bootstrap_admin, ensure_default_school
 from backend.database import ensure_database
 from backend.deps import SessionLocal, engine
+# Register Celery → job_dispatch port (side effect on import).
+import backend.tasks  # noqa: F401
 from backend.routers import (
     admin,
     assignments,

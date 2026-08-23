@@ -1,10 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiJson } from '../api/client'
-
-type ClassBrief = { id: number; name: string; school_level: string }
-type TeacherBrief = { id: number; full_name: string }
+import { listSchoolClasses } from '../api/schoolClasses'
+import { listTeachers } from '../api/teachers'
+import {
+  exportAllUrl,
+  exportClassUrl,
+  exportTeacherUrl,
+} from '../api/reports'
 
 export function ReportsPage() {
   const [classId, setClassId] = useState<number | ''>('')
@@ -12,11 +15,11 @@ export function ReportsPage() {
 
   const classesQ = useQuery({
     queryKey: ['school-classes'],
-    queryFn: () => apiJson<ClassBrief[]>('/api/school-classes/'),
+    queryFn: listSchoolClasses,
   })
   const teachersQ = useQuery({
     queryKey: ['teachers'],
-    queryFn: () => apiJson<TeacherBrief[]>('/api/teachers/'),
+    queryFn: listTeachers,
   })
 
   const classes = useMemo(() => classesQ.data ?? [], [classesQ.data])
@@ -32,14 +35,14 @@ export function ReportsPage() {
             <div className="card-body d-grid gap-2">
               <a
                 className="btn btn-success"
-                href="/api/reports/export/all/elementary"
+                href={exportAllUrl('elementary')}
               >
                 Начальная школа (Excel)
               </a>
               <a
                 className="btn"
                 style={{ background: '#9b59b6', color: 'white' }}
-                href="/api/reports/export/all/secondary"
+                href={exportAllUrl('secondary')}
               >
                 Основная школа (Excel)
               </a>
@@ -73,7 +76,7 @@ export function ReportsPage() {
                   Просмотр
                 </Link>
                 <a
-                  href={classId === '' ? '#' : `/api/reports/export/class/${classId}`}
+                  href={classId === '' ? '#' : exportClassUrl(classId)}
                   className={`btn btn-outline-success flex-fill ${classId === '' ? 'disabled' : ''}`}
                 >
                   Excel
@@ -109,7 +112,7 @@ export function ReportsPage() {
                   Просмотр
                 </Link>
                 <a
-                  href={teacherId === '' ? '#' : `/api/reports/export/teacher/${teacherId}`}
+                  href={teacherId === '' ? '#' : exportTeacherUrl(teacherId)}
                   className={`btn btn-outline-success flex-fill ${teacherId === '' ? 'disabled' : ''}`}
                 >
                   Excel

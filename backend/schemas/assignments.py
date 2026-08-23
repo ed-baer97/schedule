@@ -1,39 +1,23 @@
 """Teaching assignment API schemas."""
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
+from backend.schemas.common import (
+    ClassroomBrief,
+    SchoolClassBrief,
+    SubjectBrief,
+    TeacherBrief,
+)
 
-class SubjectBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    name: str
-    color: str | None = None
-    display_color: str
-
-
-class TeacherBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    full_name: str
-
-
-class SchoolClassBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    name: str
-    school_level: str
-    grade: int
-
-
-class ClassroomBrief(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    number: str
-    name: str | None = None
-    display_name: str
+__all__ = [
+    "SubjectBrief",
+    "TeacherBrief",
+    "SchoolClassBrief",
+    "ClassroomBrief",
+    "AssignmentOut",
+    "AssignmentCreate",
+    "AssignmentUpdate",
+    "AssignTeacherBody",
+]
 
 
 class AssignmentOut(BaseModel):

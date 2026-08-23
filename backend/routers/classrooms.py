@@ -1,10 +1,12 @@
 """Classrooms CRUD API."""
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.models import Classroom, School
-from backend.deps import get_current_school, get_db, school_owned
+from app.services.classroom_service import ClassroomService
+from app.services.errors import ServiceError
+from backend.deps import get_current_school, get_db
+from backend.http_errors import raise_http
 from backend.schemas.classrooms import ClassroomCreate, ClassroomOut, ClassroomUpdate
 
 router = APIRouter()
@@ -15,12 +17,10 @@ def list_classrooms(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> list[Classroom]:
-    stmt = (
-        select(Classroom)
-        .where(Classroom.school_id == school.id)
-        .order_by(func.coalesce(Classroom.floor, 999), Classroom.number)
-    )
-    return list(db.scalars(stmt).all())
+    try:
+        return ClassroomService(db, school.id).list()
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.get("/{classroom_id}", response_model=ClassroomOut)
@@ -29,7 +29,10 @@ def get_classroom(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> Classroom:
-    return school_owned(db, Classroom, classroom_id, school.id)
+    try:
+        return ClassroomService(db, school.id).get(classroom_id)
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.post("/", response_model=ClassroomOut)
@@ -38,19 +41,17 @@ def create_classroom(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> Classroom:
-    c = Classroom(
-        school_id=school.id,
-        number=body.number.strip(),
-        name=(body.name or "").strip() or None,
-        capacity=body.capacity,
-        classes_capacity=body.classes_capacity or 1,
-        floor=body.floor,
-        building=(body.building or "").strip() or None,
-    )
-    db.add(c)
-    db.commit()
-    db.refresh(c)
-    return c
+    try:
+        return ClassroomService(db, school.id).create(
+            number=body.number,
+            name=body.name,
+            capacity=body.capacity,
+            classes_capacity=body.classes_capacity,
+            floor=body.floor,
+            building=body.building,
+        )
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.put("/{classroom_id}", response_model=ClassroomOut)
@@ -60,23 +61,20 @@ def update_classroom(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> Classroom:
-    c = school_owned(db, Classroom, classroom_id, school.id)
     data = body.model_dump(exclude_unset=True)
-    if "number" in data and data["number"] is not None:
-        c.number = str(data["number"]).strip()
-    if "name" in data:
-        c.name = (data["name"] or "").strip() or None
-    if "capacity" in data:
-        c.capacity = data["capacity"]
-    if "classes_capacity" in data and data["classes_capacity"] is not None:
-        c.classes_capacity = int(data["classes_capacity"])
-    if "floor" in data:
-        c.floor = data["floor"]
-    if "building" in data:
-        c.building = (data["building"] or "").strip() or None
-    db.commit()
-    db.refresh(c)
-    return c
+    try:
+        return ClassroomService(db, school.id).update(
+            classroom_id,
+            number=data.get("number"),
+            name=data.get("name"),
+            capacity=data.get("capacity"),
+            classes_capacity=data.get("classes_capacity"),
+            floor=data.get("floor"),
+            building=data.get("building"),
+            fields_set=frozenset(data.keys()),
+        )
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.delete("/{classroom_id}", status_code=204)
@@ -85,6 +83,7 @@ def delete_classroom(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> None:
-    c = school_owned(db, Classroom, classroom_id, school.id)
-    db.delete(c)
-    db.commit()
+    try:
+        ClassroomService(db, school.id).delete(classroom_id)
+    except ServiceError as exc:
+        raise_http(exc)

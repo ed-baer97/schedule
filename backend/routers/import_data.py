@@ -1,63 +1,20 @@
 """Excel import & template downloads."""
 from __future__ import annotations
 
-import os
-import tempfile
-from pathlib import Path
-
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.config import Config
 from app.models import School
-from app.services.excel_import import ExcelImporter
+from app.services.errors import ServiceError
+from app.services.import_service import ImportService
 from backend.deps import get_current_school, get_db
+from backend.http_errors import raise_http
 
 router = APIRouter()
-
-_ALLOWED_EXTENSIONS = {"xlsx", "xls"}
-_TEMPLATES_DIR = (
-    Path(__file__).resolve().parents[2] / "app" / "excel_templates"
-)
-_TEMPLATE_NAMES = {
-    "teachers": ("teachers_template.xlsx", "шаблон_учителя.xlsx"),
-    "classrooms": ("classrooms_template.xlsx", "шаблон_кабинеты.xlsx"),
-    "curriculum_elementary": (
-        "curriculum_elementary_template.xlsx",
-        "шаблон_учебный_план_начальная.xlsx",
-    ),
-    "curriculum_secondary": (
-        "curriculum_secondary_template.xlsx",
-        "шаблон_учебный_план_основная.xlsx",
-    ),
-}
-
-
-def _allowed(filename: str | None) -> bool:
-    if not filename or "." not in filename:
-        return False
-    return filename.rsplit(".", 1)[1].lower() in _ALLOWED_EXTENSIONS
-
-
-def _save_upload(file: UploadFile) -> str:
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Файл не выбран")
-    if not _allowed(file.filename):
-        raise HTTPException(
-            status_code=400, detail="Неверный формат. Используйте .xlsx или .xls"
-        )
-    upload_folder = Path(Config.UPLOAD_FOLDER)
-    upload_folder.mkdir(parents=True, exist_ok=True)
-    suffix = "." + file.filename.rsplit(".", 1)[1].lower()
-    fd, path = tempfile.mkstemp(suffix=suffix, dir=str(upload_folder))
-    os.close(fd)
-    with open(path, "wb") as fh:
-        fh.write(file.file.read())
-    return path
 
 
 class ImportTeachersResult(BaseModel):
@@ -97,20 +54,20 @@ class ImportSubjectHoursResult(BaseModel):
     response_model=ImportTeachersResult,
 )
 def import_teachers(
-    file: UploadFile = File(...), db: Session = Depends(get_db),
-    school: School = Depends(get_current_school)
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> ImportTeachersResult:
-    path = _save_upload(file)
+    svc = ImportService(db, school.id)
     try:
-        count = ExcelImporter(db, school_id=school.id).import_teachers(path)
-    except Exception as exc:  # noqa: BLE001 — surface to API caller
-        raise HTTPException(status_code=400, detail=f"Ошибка импорта: {exc}") from exc
-    finally:
+        path = svc.save_upload(filename=file.filename, content=file.file.read())
         try:
-            os.remove(path)
-        except OSError:
-            pass
-    return ImportTeachersResult(count=count, message=f"Импортировано учителей: {count}")
+            result = svc.import_teachers(path)
+        finally:
+            svc.cleanup(path)
+    except ServiceError as exc:
+        raise_http(exc)
+    return ImportTeachersResult(count=result.count, message=result.message)
 
 
 @router.post(
@@ -118,20 +75,20 @@ def import_teachers(
     response_model=ImportClassroomsResult,
 )
 def import_classrooms(
-    file: UploadFile = File(...), db: Session = Depends(get_db),
-    school: School = Depends(get_current_school)
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
 ) -> ImportClassroomsResult:
-    path = _save_upload(file)
+    svc = ImportService(db, school.id)
     try:
-        count = ExcelImporter(db, school_id=school.id).import_classrooms(path)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Ошибка импорта: {exc}") from exc
-    finally:
+        path = svc.save_upload(filename=file.filename, content=file.file.read())
         try:
-            os.remove(path)
-        except OSError:
-            pass
-    return ImportClassroomsResult(count=count, message=f"Импортировано кабинетов: {count}")
+            result = svc.import_classrooms(path)
+        finally:
+            svc.cleanup(path)
+    except ServiceError as exc:
+        raise_http(exc)
+    return ImportClassroomsResult(count=result.count, message=result.message)
 
 
 @router.post(
@@ -144,27 +101,19 @@ def import_curriculum(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> ImportCurriculumResult:
-    if school_level not in ("elementary", "secondary"):
-        raise HTTPException(status_code=400, detail="Неверный уровень школы")
-    path = _save_upload(file)
+    svc = ImportService(db, school.id)
     try:
-        subjects_count, assignments_count = ExcelImporter(
-            db, school_id=school.id
-        ).import_curriculum(path, school_level)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=f"Ошибка импорта: {exc}") from exc
-    finally:
+        path = svc.save_upload(filename=file.filename, content=file.file.read())
         try:
-            os.remove(path)
-        except OSError:
-            pass
+            result = svc.import_curriculum(path, school_level)
+        finally:
+            svc.cleanup(path)
+    except ServiceError as exc:
+        raise_http(exc)
     return ImportCurriculumResult(
-        subjects_count=subjects_count,
-        assignments_count=assignments_count,
-        message=(
-            f"Импортировано предметов: {subjects_count}, "
-            f"записей нагрузки: {assignments_count}"
-        ),
+        subjects_count=result.subjects_count,
+        assignments_count=result.assignments_count,
+        message=result.message,
     )
 
 
@@ -175,67 +124,40 @@ def import_subject_hours(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> ImportSubjectHoursResult:
-    if not files:
-        raise HTTPException(status_code=400, detail="Файлы не выбраны")
-    subject_name = (subject or "").strip() or None
-    if len(files) > 1 and subject_name:
-        raise HTTPException(
-            status_code=400,
-            detail="Название предмета задаётся только при загрузке одного файла; "
-            "для нескольких файлов имя берётся из имени файла",
-        )
-
-    importer = ExcelImporter(db, school_id=school.id)
-    results: list[SubjectHoursFileResult] = []
-    saved_paths: list[str] = []
+    svc = ImportService(db, school.id)
+    payloads = [(f.filename, f.file.read()) for f in files]
     try:
-        for upload in files:
-            path = _save_upload(upload)
-            saved_paths.append(path)
-            stem = Path(upload.filename or path).stem
-            name = subject_name if len(files) == 1 else None
-            try:
-                payload = importer.import_subject_hours(path, subject_name=name or stem)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(
-                    status_code=400, detail=f"Ошибка импорта «{stem}»: {exc}"
-                ) from exc
-            results.append(SubjectHoursFileResult(**payload))
-    finally:
-        for path in saved_paths:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-
-    subjects = ", ".join(item.subject for item in results)
-    created = sum(item.assignments_created for item in results)
-    updated = sum(item.assignments_updated for item in results)
-    subgroups = sum(item.subgroup_classes for item in results)
+        result = svc.import_subject_hours(files=payloads, subject=subject)
+    except ServiceError as exc:
+        raise_http(exc)
     return ImportSubjectHoursResult(
-        files=results,
-        message=(
-            f"Предметы: {subjects}. "
-            f"Назначений создано: {created}, обновлено: {updated}"
-            + (f", классов с подгруппами: {subgroups}" if subgroups else "")
-        ),
+        files=[
+            SubjectHoursFileResult(
+                subject=item.subject,
+                subject_created=item.subject_created,
+                teachers_created=item.teachers_created,
+                classes_created=item.classes_created,
+                assignments_created=item.assignments_created,
+                assignments_updated=item.assignments_updated,
+                subgroup_classes=item.subgroup_classes,
+                warnings=item.warnings,
+            )
+            for item in result.files
+        ],
+        message=result.message,
     )
 
 
 @router.get("/template/{template_type}")
 def download_template(template_type: str) -> FileResponse:
-    if template_type not in _TEMPLATE_NAMES:
-        raise HTTPException(status_code=404, detail="Неверный тип шаблона")
-    fname, download_name = _TEMPLATE_NAMES[template_type]
-    path = _TEMPLATES_DIR / fname
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Шаблон не найден")
-    safe = quote(download_name)
+    try:
+        tpl = ImportService.resolve_template(template_type)
+    except ServiceError as exc:
+        raise_http(exc)
+    safe = quote(tpl.download_name)
     return FileResponse(
-        str(path),
-        filename=download_name,
+        str(tpl.path),
+        filename=tpl.download_name,
         media_type=(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ),

@@ -1,10 +1,12 @@
 """Workload (hours per class x subject) API."""
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.models import School, SchoolClass, Subject, TeachingAssignment
-from backend.deps import get_current_school, get_db, school_owned
+from app.models import School
+from app.services.assignment_service import AssignmentService
+from app.services.errors import ServiceError
+from backend.deps import get_current_school, get_db
+from backend.http_errors import raise_http
 from backend.schemas.workload import (
     SchoolClassBrief,
     SubjectBrief,
@@ -22,46 +24,15 @@ def get_workload(
     school: School = Depends(get_current_school),
     school_level: str = Query("elementary", pattern="^(elementary|secondary)$"),
 ) -> WorkloadOut:
-    classes = list(
-        db.scalars(
-            select(SchoolClass)
-            .where(
-                SchoolClass.school_id == school.id,
-                SchoolClass.school_level == school_level,
-            )
-            .order_by(SchoolClass.grade, SchoolClass.name)
-        ).all()
-    )
-    subjects = list(
-        db.scalars(
-            select(Subject)
-            .where(Subject.school_id == school.id)
-            .order_by(Subject.name)
-        ).all()
-    )
-    assignments = list(
-        db.scalars(
-            select(TeachingAssignment)
-            .join(SchoolClass, SchoolClass.id == TeachingAssignment.class_id)
-            .where(
-                TeachingAssignment.school_id == school.id,
-                SchoolClass.school_level == school_level,
-            )
-        ).all()
-    )
-    totals: dict[tuple[int, int], int] = {}
-    for a in assignments:
-        key = (a.class_id, a.subject_id)
-        totals[key] = totals.get(key, 0) + int(a.hours_per_week or 0)
-    cells = [
-        WorkloadCellOut(class_id=k[0], subject_id=k[1], hours=h)
-        for k, h in sorted(totals.items())
-    ]
+    data = AssignmentService(db, school.id).get_workload(school_level)
     return WorkloadOut(
-        school_level=school_level,
-        classes=[SchoolClassBrief.model_validate(c) for c in classes],
-        subjects=[SubjectBrief.model_validate(s) for s in subjects],
-        cells=cells,
+        school_level=data.school_level,
+        classes=[SchoolClassBrief.model_validate(c) for c in data.classes],
+        subjects=[SubjectBrief.model_validate(s) for s in data.subjects],
+        cells=[
+            WorkloadCellOut(class_id=c, subject_id=s, hours=h)
+            for c, s, h in data.cells
+        ],
     )
 
 
@@ -71,37 +42,10 @@ def update_workload_cell(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> dict:
-    if body.hours < 0:
-        raise HTTPException(status_code=400, detail="hours must be >= 0")
-    school_owned(db, SchoolClass, body.class_id, school.id)
-    school_owned(db, Subject, body.subject_id, school.id)
-
-    assignment = db.scalars(
-        select(TeachingAssignment).where(
-            TeachingAssignment.school_id == school.id,
-            TeachingAssignment.class_id == body.class_id,
-            TeachingAssignment.subject_id == body.subject_id,
-            TeachingAssignment.teacher_id.is_(None),
+    try:
+        AssignmentService(db, school.id).update_workload_cell(
+            body.class_id, body.subject_id, body.hours
         )
-    ).first()
-
-    if body.hours == 0:
-        if assignment:
-            db.delete(assignment)
-            db.commit()
-        return {"status": "ok"}
-
-    if assignment:
-        assignment.hours_per_week = body.hours
-    else:
-        db.add(
-            TeachingAssignment(
-                school_id=school.id,
-                class_id=body.class_id,
-                subject_id=body.subject_id,
-                hours_per_week=body.hours,
-                teacher_id=None,
-            )
-        )
-    db.commit()
+    except ServiceError as exc:
+        raise_http(exc)
     return {"status": "ok"}

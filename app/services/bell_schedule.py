@@ -3,18 +3,18 @@ Bell schedule: resolve lesson time intervals per shift and day for conflict dete
 """
 from sqlalchemy.orm import Session
 
+from app.domain.schedule_rules import slots_conflict
 from app.models import Shift, ShiftLessonTime
-from app.services.session_util import resolve_session
 
 
-def get_interval_for_slot(shift_id, lesson_number, day_of_week, session: Session | None = None):
+def get_interval_for_slot(shift_id, lesson_number, day_of_week, session: Session):
     """
     Return (time_start, time_end) for a slot, else None.
     lesson_number 0 = классный час (время из Shift, только в class_hour_day).
     """
     if not shift_id or not day_of_week:
         return None
-    s = resolve_session(session)
+    s = session
     shift = s.get(Shift, shift_id)
     if not shift:
         return None
@@ -41,7 +41,7 @@ def get_interval_for_slot(shift_id, lesson_number, day_of_week, session: Session
 
 
 def schedules_conflict(
-    shift_id_a, lesson_a, day_a, shift_id_b, lesson_b, day_b, session: Session | None = None
+    shift_id_a, lesson_a, day_a, shift_id_b, lesson_b, day_b, session: Session
 ):
     """
     True if two slots cannot occur at the same time.
@@ -49,8 +49,11 @@ def schedules_conflict(
     """
     ia = get_interval_for_slot(shift_id_a, lesson_a, day_a, session=session)
     ib = get_interval_for_slot(shift_id_b, lesson_b, day_b, session=session)
-    if ia is not None and ib is not None:
-        start_a, end_a = ia
-        start_b, end_b = ib
-        return start_a < end_b and start_b < end_a
-    return day_a == day_b and lesson_a == lesson_b
+    return slots_conflict(
+        day_a=day_a,
+        lesson_a=lesson_a,
+        interval_a=ia,
+        day_b=day_b,
+        lesson_b=lesson_b,
+        interval_b=ib,
+    )

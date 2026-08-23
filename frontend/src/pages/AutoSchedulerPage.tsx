@@ -1,29 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiJson } from '../api/client'
-
-type SchoolLevel = 'elementary' | 'secondary'
-
-type ShiftBrief = {
-  id: number
-  name: string
-  school_level: string
-  working_days: number
-  max_lessons_per_day: number
-  start_lesson: number
-  lessons_count: number
-}
-
-type TeacherBrief = { id: number; full_name: string }
-type ClassroomMode = 'class_room' | 'teacher_room'
-type ScheduleSettings = {
-  school_level: string
-  max_lessons_per_subject_per_day: number
-  classroom_mode: ClassroomMode
-  elementary_group_subjects_leave: boolean
-}
-type Warning = { type: string; message: string }
+import {
+  clearSchedule,
+  enqueueAutoAll,
+  enqueueAutoByTeacher,
+  fetchAutoPageData,
+  runJobAndPoll,
+  updateScheduleSettings,
+  type JobOut,
+  type ScheduleSettings,
+  type ClassroomMode,
+} from '../api/schedule'
+import type { SchoolLevel } from '../api/teachers'
 
 function defaultSettings(level: SchoolLevel): ScheduleSettings {
   return {
@@ -31,55 +20,6 @@ function defaultSettings(level: SchoolLevel): ScheduleSettings {
     max_lessons_per_subject_per_day: 2,
     classroom_mode: 'class_room',
     elementary_group_subjects_leave: true,
-  }
-}
-
-type PageData = {
-  teachers: TeacherBrief[]
-  classes: { id: number; name: string; school_level: string }[]
-  elementary_warnings: Warning[]
-  secondary_warnings: Warning[]
-  elementary_settings: ScheduleSettings | null
-  secondary_settings: ScheduleSettings | null
-  shifts_elementary: ShiftBrief[]
-  shifts_secondary: ShiftBrief[]
-}
-
-type JobOut = {
-  id: number
-  kind: string
-  status: string
-  progress: { current?: number; total?: number; message?: string } | null
-  result: { type?: string; count?: number; message?: string; [k: string]: unknown } | null
-  error: string | null
-}
-
-async function runJobAndPoll(
-  path: string,
-  body: object,
-  onProgress: (p: { current: number; total: number; message: string }) => void,
-  onLog: (line: string) => void,
-): Promise<JobOut> {
-  const started = await apiJson<{ job_id: number }>(path, {
-    method: 'POST',
-    body: JSON.stringify(body),
-  })
-  onLog(`Задача #${started.job_id} поставлена в очередь`)
-  for (;;) {
-    await new Promise((r) => setTimeout(r, 1000))
-    const job = await apiJson<JobOut>(`/api/jobs/${started.job_id}`)
-    const prog = job.progress || {}
-    onProgress({
-      current: Number(prog.current || 0),
-      total: Number(prog.total || 0),
-      message: String(prog.message || job.status),
-    })
-    if (prog.message) {
-      onLog(`[${prog.current ?? 0}/${prog.total ?? 0}] ${prog.message}`)
-    }
-    if (job.status === 'done' || job.status === 'failed') {
-      return job
-    }
   }
 }
 
@@ -102,7 +42,7 @@ export function AutoSchedulerPage() {
 
   const q = useQuery({
     queryKey: ['schedule', 'auto', 'page-data'],
-    queryFn: () => apiJson<PageData>('/api/schedule/auto/page-data'),
+    queryFn: fetchAutoPageData,
   })
 
   const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
@@ -115,10 +55,7 @@ export function AutoSchedulerPage() {
 
   const saveRules = useMutation({
     mutationFn: (p: { level: SchoolLevel; payload: Partial<ScheduleSettings> }) =>
-      apiJson<ScheduleSettings>(`/api/schedule/settings/${p.level}`, {
-        method: 'PUT',
-        body: JSON.stringify(p.payload),
-      }),
+      updateScheduleSettings(p.level, p.payload),
     onSuccess: async () => {
       setRulesMsg({ kind: 'success', text: 'Правила сохранены' })
       await qc.invalidateQueries({ queryKey: ['schedule'] })
@@ -172,15 +109,15 @@ export function AutoSchedulerPage() {
     setRunning(true)
     try {
       const job = await runJobAndPoll(
-        '/api/schedule/auto',
-        {
-          school_level: level,
-          solver,
-          shift_id: solver === 'cp_sat_mvp' ? Number(shiftId) : null,
-          time_limit_sec: timeLimit,
-          random_seed: seed,
-          diagnose,
-        },
+        () =>
+          enqueueAutoAll({
+            school_level: level,
+            solver,
+            shift_id: solver === 'cp_sat_mvp' ? Number(shiftId) : null,
+            time_limit_sec: timeLimit,
+            random_seed: seed,
+            diagnose,
+          }),
         (p) => setProgress(p),
         appendLog,
       )
@@ -202,12 +139,12 @@ export function AutoSchedulerPage() {
     setRunning(true)
     try {
       const job = await runJobAndPoll(
-        '/api/schedule/auto/by-teacher',
-        {
-          teacher_id: Number(teacherId),
-          school_level: level,
-          diagnose,
-        },
+        () =>
+          enqueueAutoByTeacher({
+            teacher_id: Number(teacherId),
+            school_level: level,
+            diagnose,
+          }),
         (p) => setProgress(p),
         appendLog,
       )
@@ -225,10 +162,7 @@ export function AutoSchedulerPage() {
     resetState()
     setRunning(true)
     try {
-      const res = await apiJson<{ count: number }>('/api/schedule/clear', {
-        method: 'POST',
-        body: JSON.stringify(filter),
-      })
+      const res = await clearSchedule(filter)
       appendLog(`Удалено уроков: ${res.count}`)
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))

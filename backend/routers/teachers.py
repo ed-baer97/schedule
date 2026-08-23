@@ -1,10 +1,12 @@
 """Teachers CRUD API."""
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
-from app.models import Classroom, School, Teacher
-from backend.deps import get_current_school, get_db, school_owned
+from app.models import School, Teacher
+from app.services.errors import ServiceError
+from app.services.teacher_service import TeacherService
+from backend.deps import get_current_school, get_db
+from backend.http_errors import raise_http
 from backend.schemas.teachers import TeacherCreate, TeacherOut, TeacherUpdate
 
 router = APIRouter()
@@ -15,14 +17,10 @@ def list_teachers(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> list[Teacher]:
-    stmt = (
-        select(Teacher)
-        .options(joinedload(Teacher.home_classroom))
-        .where(Teacher.school_id == school.id)
-        .order_by(Teacher.full_name)
-    )
-    result = db.execute(stmt)
-    return list(result.scalars().unique().all())
+    try:
+        return TeacherService(db, school.id).list()
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.get("/{teacher_id}", response_model=TeacherOut)
@@ -31,16 +29,10 @@ def get_teacher(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> Teacher:
-    stmt = (
-        select(Teacher)
-        .options(joinedload(Teacher.home_classroom))
-        .where(Teacher.id == teacher_id, Teacher.school_id == school.id)
-    )
-    result = db.execute(stmt)
-    teacher = result.scalars().unique().one_or_none()
-    if teacher is None:
-        raise HTTPException(status_code=404, detail="Teacher not found")
-    return teacher
+    try:
+        return TeacherService(db, school.id).get(teacher_id)
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.post("/", response_model=TeacherOut)
@@ -49,19 +41,15 @@ def create_teacher(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> Teacher:
-    if body.home_classroom_id is not None:
-        school_owned(db, Classroom, body.home_classroom_id, school.id)
-    t = Teacher(
-        school_id=school.id,
-        full_name=body.full_name.strip(),
-        email=(body.email or "").strip() or None,
-        phone=(body.phone or "").strip() or None,
-        home_classroom_id=body.home_classroom_id,
-    )
-    db.add(t)
-    db.commit()
-    db.refresh(t)
-    return get_teacher(t.id, db, school)
+    try:
+        return TeacherService(db, school.id).create(
+            full_name=body.full_name,
+            email=body.email,
+            phone=body.phone,
+            home_classroom_id=body.home_classroom_id,
+        )
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.put("/{teacher_id}", response_model=TeacherOut)
@@ -71,23 +59,18 @@ def update_teacher(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> Teacher:
-    t = school_owned(db, Teacher, teacher_id, school.id)
     data = body.model_dump(exclude_unset=True)
-    if "home_classroom_id" in data and data["home_classroom_id"] is not None:
-        school_owned(db, Classroom, data["home_classroom_id"], school.id)
-    if "full_name" in data and data["full_name"] is not None:
-        t.full_name = str(data["full_name"]).strip()
-    if "email" in data:
-        raw = data["email"]
-        t.email = None if raw in (None, "") else str(raw).strip() or None
-    if "phone" in data:
-        raw = data["phone"]
-        t.phone = None if raw in (None, "") else str(raw).strip() or None
-    if "home_classroom_id" in data:
-        t.home_classroom_id = data["home_classroom_id"]
-    db.commit()
-    db.refresh(t)
-    return get_teacher(t.id, db, school)
+    try:
+        return TeacherService(db, school.id).update(
+            teacher_id,
+            full_name=data.get("full_name"),
+            email=data.get("email"),
+            phone=data.get("phone"),
+            home_classroom_id=data.get("home_classroom_id"),
+            fields_set=frozenset(data.keys()),
+        )
+    except ServiceError as exc:
+        raise_http(exc)
 
 
 @router.delete("/{teacher_id}", status_code=204)
@@ -96,6 +79,7 @@ def delete_teacher(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> None:
-    t = school_owned(db, Teacher, teacher_id, school.id)
-    db.delete(t)
-    db.commit()
+    try:
+        TeacherService(db, school.id).delete(teacher_id)
+    except ServiceError as exc:
+        raise_http(exc)

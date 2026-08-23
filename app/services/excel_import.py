@@ -1,4 +1,4 @@
-"""Excel import service."""
+"""Excel import service — writes only via catalog/assignment services."""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -6,8 +6,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.models import Classroom, SchoolClass, Subject, Teacher, TeachingAssignment
-from app.services.session_util import resolve_session
+from app.domain import grade_from_name
+from app.models import SchoolClass, Subject, Teacher, TeachingAssignment
+from app.services.assignment_service import AssignmentService
+from app.services.classroom_service import ClassroomService
+from app.services.school_class_service import SchoolClassService
+from app.services.subject_service import SubjectService
+from app.services.teacher_service import TeacherService
 
 _MAX_GROUPS = 4
 
@@ -34,18 +39,22 @@ def _parse_hours(value) -> int:
 
 
 def _grade_and_level(class_name: str) -> tuple[int, str]:
-    grade_str = "".join(ch for ch in class_name if ch.isdigit())
-    grade = int(grade_str) if grade_str else 1
+    grade = grade_from_name(class_name)
     level = "elementary" if grade <= 4 else "secondary"
     return grade, level
 
 
 class ExcelImporter:
-    """Service for importing data from Excel files"""
+    """Service for importing data from Excel files."""
 
-    def __init__(self, session: Session | None = None, school_id: int | None = None):
-        self.session = resolve_session(session)
+    def __init__(self, session: Session, school_id: int):
+        self.session = session
         self.school_id = school_id
+        self._teachers = TeacherService(session, school_id)
+        self._classrooms = ClassroomService(session, school_id)
+        self._subjects = SubjectService(session, school_id)
+        self._classes = SchoolClassService(session, school_id)
+        self._assignments = AssignmentService(session, school_id)
         self._teachers_by_name: dict[str, Teacher] = {}
         self._classes_by_name: dict[str, SchoolClass] = {}
 
@@ -56,34 +65,31 @@ class ExcelImporter:
         Returns count of imported teachers.
         """
         import pandas as pd
-        df = pd.read_excel(file_path)
 
-        # Normalize column names
+        df = pd.read_excel(file_path)
         df.columns = df.columns.str.strip()
 
         count = 0
         for _, row in df.iterrows():
-            full_name = str(row.get('ФИО', '')).strip()
-            if not full_name or full_name == 'nan':
+            full_name = str(row.get("ФИО", "")).strip()
+            if not full_name or full_name == "nan":
                 continue
 
-            q = self.session.query(Teacher).filter_by(full_name=full_name)
-            if self.school_id is not None:
-                q = q.filter_by(school_id=self.school_id)
-            existing = q.first()
-            if existing:
-                continue
-
-            teacher_kwargs = dict(
-                full_name=full_name,
-                email=str(row.get('Email', '')).strip() if pd.notna(row.get('Email')) else '',
-                phone=str(row.get('Телефон', '')).strip() if pd.notna(row.get('Телефон')) else ''
+            email = (
+                str(row.get("Email", "")).strip()
+                if pd.notna(row.get("Email"))
+                else None
             )
-            if self.school_id is not None:
-                teacher_kwargs['school_id'] = self.school_id
-            teacher = Teacher(**teacher_kwargs)
-            self.session.add(teacher)
-            count += 1
+            phone = (
+                str(row.get("Телефон", "")).strip()
+                if pd.notna(row.get("Телефон"))
+                else None
+            )
+            _, created = self._teachers.ensure(
+                full_name, email=email or None, phone=phone or None, commit=False
+            )
+            if created:
+                count += 1
 
         self.session.commit()
         return count
@@ -95,42 +101,42 @@ class ExcelImporter:
         Returns count of imported classrooms.
         """
         import pandas as pd
+
         df = pd.read_excel(file_path)
         df.columns = df.columns.str.strip()
 
         count = 0
         for _, row in df.iterrows():
-            number = str(row.get('Номер', '')).strip()
-            if not number or number == 'nan':
+            number = str(row.get("Номер", "")).strip()
+            if not number or number == "nan":
                 continue
 
-            q = self.session.query(Classroom).filter_by(number=number)
-            if self.school_id is not None:
-                q = q.filter_by(school_id=self.school_id)
-            existing = q.first()
-            if existing:
-                continue
-
-            floor = row.get('Этаж')
-            classes_cap = row.get('Вместимость классов', row.get('Вместимость', 1))
+            floor = row.get("Этаж")
+            classes_cap = row.get("Вместимость классов", row.get("Вместимость", 1))
             try:
                 classes_cap = int(float(classes_cap)) if pd.notna(classes_cap) else 1
             except (ValueError, TypeError):
                 classes_cap = 1
             classes_cap = max(1, classes_cap)
 
-            classroom_kwargs = dict(
+            _, created = self._classrooms.ensure(
                 number=number,
-                name=str(row.get('Название', '')).strip() if pd.notna(row.get('Название')) else '',
+                name=(
+                    str(row.get("Название", "")).strip()
+                    if pd.notna(row.get("Название"))
+                    else None
+                ),
                 floor=int(floor) if pd.notna(floor) else None,
-                building=str(row.get('Корпус', '')).strip() if pd.notna(row.get('Корпус')) else '',
-                classes_capacity=classes_cap
+                building=(
+                    str(row.get("Корпус", "")).strip()
+                    if pd.notna(row.get("Корпус"))
+                    else None
+                ),
+                classes_capacity=classes_cap,
+                commit=False,
             )
-            if self.school_id is not None:
-                classroom_kwargs['school_id'] = self.school_id
-            classroom = Classroom(**classroom_kwargs)
-            self.session.add(classroom)
-            count += 1
+            if created:
+                count += 1
 
         self.session.commit()
         return count
@@ -141,47 +147,38 @@ class ExcelImporter:
         Rows = classes (first column)
         Columns = subjects (header row)
         Cells = hours per week (0 = not taught)
-        
+
         Returns tuple (subjects_count, assignments_count)
         """
         import pandas as pd
-        df = pd.read_excel(file_path, index_col=0)
 
-        # Clean up
+        df = pd.read_excel(file_path, index_col=0)
         df.index = df.index.astype(str).str.strip()
         df.columns = df.columns.str.strip()
 
         created_subjects = 0
         created_assignments = 0
 
-        # Create/get subjects from columns
-        subjects_map = {}
+        subjects_map: dict[str, Subject] = {}
         for subject_name in df.columns:
             subject_name = str(subject_name).strip()
-            if not subject_name or subject_name == 'nan':
+            if not subject_name or subject_name == "nan":
                 continue
-
-            q = self.session.query(Subject).filter_by(name=subject_name)
-            if self.school_id is not None:
-                q = q.filter_by(school_id=self.school_id)
-            subject = q.first()
-            if not subject:
-                subject_kwargs = dict(name=subject_name, color=Subject.DEFAULT_COLOR)
-                if self.school_id is not None:
-                    subject_kwargs['school_id'] = self.school_id
-                subject = Subject(**subject_kwargs)
-                self.session.add(subject)
-                self.session.flush()
+            subject, created = self._subjects.ensure(
+                subject_name, color=Subject.DEFAULT_COLOR, commit=False
+            )
+            if created:
                 created_subjects += 1
             subjects_map[subject_name] = subject
 
-        # Create classes and assignments from rows
         for class_name in df.index:
             class_name = str(class_name).strip()
-            if not class_name or class_name == 'nan':
+            if not class_name or class_name == "nan":
                 continue
 
-            school_class = self._get_or_create_class(class_name, school_level)
+            school_class, _ = self._classes.ensure(
+                class_name, school_level=school_level, commit=False
+            )
 
             for subject_name in df.columns:
                 subject_name = str(subject_name).strip()
@@ -197,33 +194,15 @@ class ExcelImporter:
                     continue
 
                 subject = subjects_map[subject_name]
-
-                aq = (
-                    self.session.query(TeachingAssignment)
-                    .filter_by(
-                        subject_id=subject.id,
-                        class_id=school_class.id,
-                        teacher_id=None,
-                        group_number=None
-                    )
+                _, created = self._assignments.upsert_hours(
+                    subject_id=subject.id,
+                    class_id=school_class.id,
+                    hours_per_week=hours,
+                    teacher_id=None,
+                    match_null_teacher=True,
+                    commit=False,
                 )
-                if self.school_id is not None:
-                    aq = aq.filter_by(school_id=self.school_id)
-                existing = aq.first()
-
-                if existing:
-                    existing.hours_per_week = hours
-                else:
-                    assignment_kwargs = dict(
-                        subject_id=subject.id,
-                        class_id=school_class.id,
-                        hours_per_week=hours,
-                        teacher_id=None  # To be assigned later
-                    )
-                    if self.school_id is not None:
-                        assignment_kwargs['school_id'] = self.school_id
-                    assignment = TeachingAssignment(**assignment_kwargs)
-                    self.session.add(assignment)
+                if created:
                     created_assignments += 1
 
         self.session.commit()
@@ -235,10 +214,6 @@ class ExcelImporter:
 
         Column A — teacher names. Remaining columns — classes.
         Subject name: explicit argument, otherwise the file stem.
-
-        Inferences:
-        - two (or more) teachers with hours in the same class → subgroups
-        - the same teacher in several subject files → several subjects
         """
         import pandas as pd
 
@@ -258,14 +233,15 @@ class ExcelImporter:
         if not resolved_subject:
             raise ValueError("Не удалось определить название предмета")
 
-        subject, subject_created = self._get_or_create_subject(resolved_subject)
+        subject, subject_created = self._subjects.ensure(
+            resolved_subject, commit=False
+        )
 
         created_teachers = 0
         created_classes = 0
         created_assignments = 0
         updated_assignments = 0
         warnings: list[str] = []
-        # class_id -> [(teacher, hours), ...] in file order
         by_class: dict[int, list[tuple[Teacher, int]]] = defaultdict(list)
 
         for _, row in df.iterrows():
@@ -303,11 +279,12 @@ class ExcelImporter:
                         f"повторяется в одном классе — часы сложены"
                     )
                     continue
-                assignment, created = self._upsert_assignment(
-                    subject=subject,
-                    school_class_id=class_id,
-                    teacher=teacher,
-                    hours=hours,
+                assignment, created = self._assignments.upsert_hours(
+                    subject_id=subject.id,
+                    class_id=class_id,
+                    hours_per_week=hours,
+                    teacher_id=teacher.id,
+                    commit=False,
                 )
                 seen[teacher.id] = assignment
                 ordered.append(assignment)
@@ -341,123 +318,22 @@ class ExcelImporter:
             "warnings": warnings,
         }
 
-    def _school_filter(self, query, model):
-        if self.school_id is not None:
-            return query.filter(model.school_id == self.school_id)
-        return query
-
-    def _get_or_create_subject(self, name: str) -> tuple[Subject, bool]:
-        q = self._school_filter(self.session.query(Subject).filter_by(name=name), Subject)
-        subject = q.first()
-        if subject:
-            return subject, False
-        color = self._next_subject_color()
-        kwargs = dict(name=name, color=color)
-        if self.school_id is not None:
-            kwargs["school_id"] = self.school_id
-        subject = Subject(**kwargs)
-        self.session.add(subject)
-        self.session.flush()
-        return subject, True
-
-    def _next_subject_color(self) -> str:
-        q = self.session.query(Subject)
-        if self.school_id is not None:
-            q = q.filter_by(school_id=self.school_id)
-        count = q.count()
-        palette = Subject.COLOR_PALETTE
-        return palette[count % len(palette)]
-
     def _get_or_create_teacher(self, full_name: str) -> tuple[Teacher, bool]:
         key = _norm_name(full_name)
         cached = self._teachers_by_name.get(key)
         if cached is not None:
             return cached, False
-        q = self._school_filter(self.session.query(Teacher), Teacher)
-        for teacher in q.all():
-            nkey = _norm_name(teacher.full_name)
-            self._teachers_by_name[nkey] = teacher
-            if nkey == key:
-                return teacher, False
-        kwargs = dict(full_name=full_name)
-        if self.school_id is not None:
-            kwargs["school_id"] = self.school_id
-        teacher = Teacher(**kwargs)
-        self.session.add(teacher)
-        self.session.flush()
+        teacher, created = self._teachers.ensure(full_name, commit=False)
         self._teachers_by_name[key] = teacher
-        return teacher, True
+        return teacher, created
 
     def _get_or_create_class_inferred(self, name: str) -> tuple[SchoolClass, bool]:
         cached = self._classes_by_name.get(name)
         if cached is not None:
             return cached, False
-        q = self._school_filter(self.session.query(SchoolClass).filter_by(name=name), SchoolClass)
-        school_class = q.first()
-        if school_class:
-            self._classes_by_name[name] = school_class
-            return school_class, False
-        grade, level = _grade_and_level(name)
-        kwargs = dict(name=name, grade=grade, school_level=level)
-        if self.school_id is not None:
-            kwargs["school_id"] = self.school_id
-        school_class = SchoolClass(**kwargs)
-        self.session.add(school_class)
-        self.session.flush()
+        _grade, level = _grade_and_level(name)
+        school_class, created = self._classes.ensure(
+            name, school_level=level, commit=False
+        )
         self._classes_by_name[name] = school_class
-        return school_class, True
-
-    def _upsert_assignment(
-        self,
-        *,
-        subject: Subject,
-        school_class_id: int,
-        teacher: Teacher,
-        hours: int,
-    ) -> tuple[TeachingAssignment, bool]:
-        q = self.session.query(TeachingAssignment).filter_by(
-            subject_id=subject.id,
-            class_id=school_class_id,
-            teacher_id=teacher.id,
-        )
-        if self.school_id is not None:
-            q = q.filter_by(school_id=self.school_id)
-        existing = q.first()
-        if existing:
-            existing.hours_per_week = hours
-            return existing, False
-        kwargs = dict(
-            subject_id=subject.id,
-            class_id=school_class_id,
-            teacher_id=teacher.id,
-            hours_per_week=hours,
-        )
-        if self.school_id is not None:
-            kwargs["school_id"] = self.school_id
-        assignment = TeachingAssignment(**kwargs)
-        self.session.add(assignment)
-        self.session.flush()
-        return assignment, True
-
-    def _get_or_create_class(self, name, school_level):
-        """Get or create school class by name"""
-        q = self.session.query(SchoolClass).filter_by(name=name)
-        if self.school_id is not None:
-            q = q.filter_by(school_id=self.school_id)
-        school_class = q.first()
-        if not school_class:
-            # Extract grade from name (e.g., "1А" -> 1, "10Б" -> 10)
-            grade_str = ''.join(filter(str.isdigit, name))
-            grade = int(grade_str) if grade_str else 1
-
-            class_kwargs = dict(
-                name=name,
-                grade=grade,
-                school_level=school_level
-            )
-            if self.school_id is not None:
-                class_kwargs['school_id'] = self.school_id
-            school_class = SchoolClass(**class_kwargs)
-            self.session.add(school_class)
-            self.session.flush()
-        return school_class
+        return school_class, created

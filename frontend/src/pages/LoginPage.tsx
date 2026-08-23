@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
-import { apiJson, extractApiError } from '../api/client'
-import { useAuth, type AuthUser } from '../auth/AuthContext'
+import { extractApiError } from '../api/client'
+import { login } from '../api/auth'
+import { useAuth } from '../auth/AuthContext'
 import { PublicLayout } from '../components/PublicLayout'
 
 const FEATURES = [
@@ -62,10 +63,7 @@ export function LoginPage() {
     setBusy(true)
     setError(null)
     try {
-      const me = await apiJson<AuthUser>('/api/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      })
+      const me = await login(email, password)
       setUser(me)
       navigate(me.role === 'platform_admin' && !me.school_id ? '/admin' : '/')
     } catch (err) {

@@ -1,31 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { apiJson } from '../api/client'
-
-type ReportCell = {
-  id: number
-  day_of_week: number
-  lesson_number: number
-  subject_name: string
-  subject_color: string
-  teacher_name: string | null
-  classroom_name: string | null
-  group_number: number | null
-}
-
-type ClassReport = {
-  class_id: number
-  class_name: string
-  school_level: string
-  day_names: string[]
-  working_days: number
-  max_lessons: number
-  lessons_range: number[]
-  class_hour_day: number | null
-  class_hour_time_label: string | null
-  lesson_times_by_day: Record<number, Record<number, string>>
-  cells: ReportCell[]
-}
+import { exportClassUrl, fetchClassReport, type ReportCell } from '../api/reports'
 
 export function ReportsClassPage() {
   const params = useParams()
@@ -33,7 +8,7 @@ export function ReportsClassPage() {
 
   const q = useQuery({
     queryKey: ['reports', 'class', id],
-    queryFn: () => apiJson<ClassReport>(`/api/reports/class/${id}`),
+    queryFn: () => fetchClassReport(id),
     enabled: !!id,
   })
 
@@ -55,7 +30,7 @@ export function ReportsClassPage() {
       <div className="d-flex justify-content-between align-items-center mb-3 no-print">
         <h1 className="h3 mb-0">Расписание класса {r.class_name}</h1>
         <div className="d-flex gap-2">
-          <a href={`/api/reports/export/class/${r.class_id}`} className="btn btn-success btn-sm">
+          <a href={exportClassUrl(r.class_id)} className="btn btn-success btn-sm">
             Скачать Excel
           </a>
           <button
