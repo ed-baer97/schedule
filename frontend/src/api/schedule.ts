@@ -1,6 +1,6 @@
 import { apiJson } from './client'
 import type { ShiftBrief } from './shifts'
-import type { SchoolLevel } from './teachers'
+import type { SchoolLevel } from '../domain/schoolLevel'
 
 export type ClassroomMode = 'class_room' | 'teacher_room'
 

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.models import Job, ScheduleSettings, School, SchoolClass, Teacher, User
 from app.models.job import JOB_PENDING, JOB_RUNNING
 from app.models.user import ROLE_SCHOOL_ADMIN
+from app.passwords import hash_password
 from app.services.errors import BadRequestError, NotFoundError
 
 
@@ -231,8 +232,7 @@ class AdminService:
         school_id: int,
         *,
         email: str,
-        password_hash: str,
-        plain_password: str,
+        password: str,
     ) -> AdminCreateResultData:
         school = self.db.get(School, school_id)
         if school is None:
@@ -246,7 +246,7 @@ class AdminService:
 
         user = User(
             email=normalized,
-            password_hash=password_hash,
+            password_hash=hash_password(password),
             role=ROLE_SCHOOL_ADMIN,
             school_id=school.id,
             is_active=True,
@@ -257,7 +257,7 @@ class AdminService:
         return AdminCreateResultData(
             id=user.id,
             email=normalized,
-            password=plain_password,
+            password=password,
             message="Администратор школы создан",
         )
 
@@ -266,8 +266,7 @@ class AdminService:
         user_id: int,
         *,
         email: str | None = None,
-        password_hash: str | None = None,
-        plain_password: str | None = None,
+        password: str | None = None,
         is_active: bool | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> SchoolAdminData:
@@ -287,8 +286,8 @@ class AdminService:
             if clash is not None:
                 raise BadRequestError("Email уже занят")
             user.email = new_email
-        if "password" in fields_set and password_hash:
-            user.password_hash = password_hash
+        if "password" in fields_set and password:
+            user.password_hash = hash_password(password)
         if "is_active" in fields_set and is_active is not None:
             user.is_active = is_active
 
@@ -300,5 +299,5 @@ class AdminService:
             role=user.role,
             is_active=user.is_active,
             created_at=user.created_at,
-            password=plain_password if "password" in fields_set else None,
+            password=password if "password" in fields_set else None,
         )

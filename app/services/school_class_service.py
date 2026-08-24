@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.domain import grade_from_name
 from app.models import Classroom, SchoolClass, Shift
+from app.services.dto import SchoolClassData, school_class_data
 from app.services.errors import BadRequestError, NotFoundError
 from app.services.tenancy import require_owned
 
@@ -41,15 +42,15 @@ class SchoolClassService:
             raise NotFoundError("Class not found")
         return row
 
-    def list(self) -> list[SchoolClass]:
-        return self._load_list()
+    def list(self) -> list[SchoolClassData]:
+        return [school_class_data(c) for c in self._load_list()]
 
-    def get(self, class_id: int) -> SchoolClass:
-        return self._load_one(class_id)
+    def get(self, class_id: int) -> SchoolClassData:
+        return school_class_data(self._load_one(class_id))
 
     def batch_update_shift(
         self, class_ids: list[int], shift_id: int | None
-    ) -> list[SchoolClass]:
+    ) -> list[SchoolClassData]:
         if not class_ids:
             raise BadRequestError("class_ids required")
         if shift_id is not None:
@@ -63,7 +64,7 @@ class SchoolClassService:
             .values(shift_id=shift_id)
         )
         self.db.commit()
-        return self._load_list()
+        return self.list()
 
     def create(
         self,
@@ -74,7 +75,7 @@ class SchoolClassService:
         home_classroom_id: int | None = None,
         students_count: int | None = None,
         commit: bool = True,
-    ) -> SchoolClass:
+    ) -> SchoolClassData | SchoolClass:
         name = name.strip()
         if shift_id is not None:
             require_owned(self.db, Shift, shift_id, self.school_id)
@@ -93,7 +94,7 @@ class SchoolClassService:
         if commit:
             self.db.commit()
             self.db.refresh(sc)
-            return self._load_one(sc.id)
+            return school_class_data(self._load_one(sc.id))
         self.db.flush()
         return sc
 
@@ -111,10 +112,11 @@ class SchoolClassService:
         existing = self.find_by_name(name)
         if existing is not None:
             return existing, False
-        return (
-            self.create(name=name, school_level=school_level, commit=commit),
-            True,
-        )
+        created = self.create(name=name, school_level=school_level, commit=False)
+        assert isinstance(created, SchoolClass)
+        if commit:
+            self.db.commit()
+        return created, True
 
     def update(
         self,
@@ -126,7 +128,7 @@ class SchoolClassService:
         home_classroom_id: int | None = None,
         students_count: int | None = None,
         fields_set: frozenset[str] | None = None,
-    ) -> SchoolClass:
+    ) -> SchoolClassData:
         sc = require_owned(self.db, SchoolClass, class_id, self.school_id)
         if fields_set is None:
             fields_set = frozenset()
@@ -147,7 +149,7 @@ class SchoolClassService:
             sc.students_count = students_count
         self.db.commit()
         self.db.refresh(sc)
-        return self._load_one(sc.id)
+        return school_class_data(self._load_one(sc.id))
 
     def delete(self, class_id: int) -> None:
         sc = require_owned(self.db, SchoolClass, class_id, self.school_id)

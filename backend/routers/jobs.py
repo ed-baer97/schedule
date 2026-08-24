@@ -6,10 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.models import School, User
-from app.services.errors import ServiceError
 from app.services.job_service import JobService
 from backend.deps import get_current_school, get_current_user, get_db
-from backend.http_errors import raise_http
 
 router = APIRouter()
 
@@ -32,10 +30,7 @@ def get_job(
     school: School = Depends(get_current_school),
     _: User = Depends(get_current_user),
 ) -> JobOut:
-    try:
-        data = JobService(db, school.id).get(job_id)
-    except ServiceError as exc:
-        raise_http(exc)
+    data = JobService(db, school.id).get(job_id)
     return JobOut(
         id=data.id,
         kind=data.kind,

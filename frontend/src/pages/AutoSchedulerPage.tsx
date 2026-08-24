@@ -12,7 +12,7 @@ import {
   type ScheduleSettings,
   type ClassroomMode,
 } from '../api/schedule'
-import type { SchoolLevel } from '../api/teachers'
+import type { SchoolLevel } from '../domain/schoolLevel'
 
 function defaultSettings(level: SchoolLevel): ScheduleSettings {
   return {

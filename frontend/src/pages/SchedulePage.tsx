@@ -12,7 +12,7 @@ import {
   updateScheduleCell,
   type ScheduleCell as CellOut,
 } from '../api/schedule'
-import type { SchoolLevel } from '../api/teachers'
+import type { SchoolLevel } from '../domain/schoolLevel'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }

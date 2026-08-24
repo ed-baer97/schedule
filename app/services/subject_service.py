@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import Classroom, SchoolClass, Subject, TeachingAssignment
+from app.services.dto import SubjectData, subject_data
 from app.services.errors import NotFoundError
 from app.services.tenancy import require_owned
 
@@ -33,7 +34,7 @@ class SubjectService:
             raise NotFoundError("Subject not found")
         return row
 
-    def list(self, school_level: str | None = None) -> list[Subject]:
+    def list(self, school_level: str | None = None) -> list[SubjectData]:
         if school_level in ("elementary", "secondary"):
             ids = list(
                 self.db.scalars(
@@ -54,17 +55,17 @@ class SubjectService:
                 .options(joinedload(Subject.default_classroom))
                 .order_by(Subject.name)
             )
-            return list(self.db.scalars(stmt).unique().all())
+            return [subject_data(s) for s in self.db.scalars(stmt).unique().all()]
         stmt = (
             select(Subject)
             .where(Subject.school_id == self.school_id)
             .options(joinedload(Subject.default_classroom))
             .order_by(Subject.name)
         )
-        return list(self.db.scalars(stmt).unique().all())
+        return [subject_data(s) for s in self.db.scalars(stmt).unique().all()]
 
-    def get(self, subject_id: int) -> Subject:
-        return self._load_one(subject_id)
+    def get(self, subject_id: int) -> SubjectData:
+        return subject_data(self._load_one(subject_id))
 
     def create(
         self,
@@ -74,7 +75,7 @@ class SubjectService:
         requires_fixed_classroom: bool = False,
         default_classroom_id: int | None = None,
         commit: bool = True,
-    ) -> Subject:
+    ) -> SubjectData | Subject:
         if default_classroom_id is not None:
             require_owned(self.db, Classroom, default_classroom_id, self.school_id)
         s = Subject(
@@ -88,7 +89,7 @@ class SubjectService:
         if commit:
             self.db.commit()
             self.db.refresh(s)
-            return self._load_one(s.id)
+            return subject_data(self._load_one(s.id))
         self.db.flush()
         return s
 
@@ -116,7 +117,11 @@ class SubjectService:
             )
             palette = Subject.COLOR_PALETTE
             color = palette[int(count) % len(palette)]
-        return self.create(name=name, color=color, commit=commit), True
+        created = self.create(name=name, color=color, commit=False)
+        assert isinstance(created, Subject)
+        if commit:
+            self.db.commit()
+        return created, True
 
     def update(
         self,
@@ -127,7 +132,7 @@ class SubjectService:
         requires_fixed_classroom: bool | None = None,
         default_classroom_id: int | None = None,
         fields_set: frozenset[str] | None = None,
-    ) -> Subject:
+    ) -> SubjectData:
         s = require_owned(self.db, Subject, subject_id, self.school_id)
         if fields_set is None:
             fields_set = frozenset()
@@ -143,7 +148,7 @@ class SubjectService:
             s.default_classroom_id = default_classroom_id
         self.db.commit()
         self.db.refresh(s)
-        return self._load_one(s.id)
+        return subject_data(self._load_one(s.id))
 
     def set_color(self, subject_id: int, color: str) -> SubjectColorData:
         s = require_owned(self.db, Subject, subject_id, self.school_id)
@@ -151,6 +156,10 @@ class SubjectService:
         self.db.commit()
         self.db.refresh(s)
         return SubjectColorData(id=s.id, display_color=s.display_color)
+
+    @staticmethod
+    def color_palette() -> list[str]:
+        return list(Subject.COLOR_PALETTE)
 
     def delete(self, subject_id: int) -> None:
         s = require_owned(self.db, Subject, subject_id, self.school_id)

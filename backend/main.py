@@ -8,9 +8,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
+from app.services.errors import ServiceError
 from backend.bootstrap import bootstrap_admin, ensure_default_school
 from backend.database import ensure_database
 from backend.deps import SessionLocal, engine
+from backend.http_errors import service_error_to_http
 # Register Celery → job_dispatch port (side effect on import).
 import backend.tasks  # noqa: F401
 from backend.routers import (
@@ -47,6 +49,14 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="School Schedule API", version="0.2.0", lifespan=lifespan)
+
+
+@app.exception_handler(ServiceError)
+async def service_error_handler(
+    _request: Request, exc: ServiceError
+) -> JSONResponse:
+    http_exc = service_error_to_http(exc)
+    return JSONResponse(status_code=http_exc.status_code, content={"detail": http_exc.detail})
 
 
 @app.exception_handler(OperationalError)

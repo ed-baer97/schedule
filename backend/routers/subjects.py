@@ -1,13 +1,13 @@
 """Subjects CRUD API."""
+from dataclasses import asdict
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.models import School, Subject
+from app.models import School
 from app.services.assignment_service import AssignmentService
-from app.services.errors import ServiceError
 from app.services.subject_service import SubjectService
 from backend.deps import get_current_school, get_db
-from backend.http_errors import raise_http
 from backend.schemas.subjects import (
     SubjectAssignClassRow,
     SubjectAssignmentsSave,
@@ -29,16 +29,16 @@ def list_subjects(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
     school_level: str | None = Query(None, pattern="^(elementary|secondary)$"),
-) -> list[Subject]:
-    try:
-        return SubjectService(db, school.id).list(school_level)
-    except ServiceError as exc:
-        raise_http(exc)
+) -> list[SubjectOut]:
+    return [
+        SubjectOut.model_validate(asdict(s))
+        for s in SubjectService(db, school.id).list(school_level)
+    ]
 
 
 @router.get("/meta/color-palette", response_model=list[str])
 def color_palette() -> list[str]:
-    return list(Subject.COLOR_PALETTE)
+    return SubjectService.color_palette()
 
 
 @router.get("/{subject_id}", response_model=SubjectOut)
@@ -46,11 +46,10 @@ def get_subject(
     subject_id: int,
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
-) -> Subject:
-    try:
-        return SubjectService(db, school.id).get(subject_id)
-    except ServiceError as exc:
-        raise_http(exc)
+) -> SubjectOut:
+    return SubjectOut.model_validate(
+        asdict(SubjectService(db, school.id).get(subject_id))
+    )
 
 
 @router.post("/", response_model=SubjectOut)
@@ -58,16 +57,14 @@ def create_subject(
     body: SubjectCreate,
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
-) -> Subject:
-    try:
-        return SubjectService(db, school.id).create(
-            name=body.name,
-            color=body.color,
-            requires_fixed_classroom=body.requires_fixed_classroom,
-            default_classroom_id=body.default_classroom_id,
-        )
-    except ServiceError as exc:
-        raise_http(exc)
+) -> SubjectOut:
+    s = SubjectService(db, school.id).create(
+        name=body.name,
+        color=body.color,
+        requires_fixed_classroom=body.requires_fixed_classroom,
+        default_classroom_id=body.default_classroom_id,
+    )
+    return SubjectOut.model_validate(asdict(s))
 
 
 @router.put("/{subject_id}", response_model=SubjectOut)
@@ -76,19 +73,17 @@ def update_subject(
     body: SubjectUpdate,
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
-) -> Subject:
+) -> SubjectOut:
     data = body.model_dump(exclude_unset=True)
-    try:
-        return SubjectService(db, school.id).update(
-            subject_id,
-            name=data.get("name"),
-            color=data.get("color"),
-            requires_fixed_classroom=data.get("requires_fixed_classroom"),
-            default_classroom_id=data.get("default_classroom_id"),
-            fields_set=frozenset(data.keys()),
-        )
-    except ServiceError as exc:
-        raise_http(exc)
+    s = SubjectService(db, school.id).update(
+        subject_id,
+        name=data.get("name"),
+        color=data.get("color"),
+        requires_fixed_classroom=data.get("requires_fixed_classroom"),
+        default_classroom_id=data.get("default_classroom_id"),
+        fields_set=frozenset(data.keys()),
+    )
+    return SubjectOut.model_validate(asdict(s))
 
 
 @router.patch("/{subject_id}/color", response_model=SubjectColorOut)
@@ -99,10 +94,7 @@ def set_subject_color(
     school: School = Depends(get_current_school),
 ) -> SubjectColorOut:
     """Quick color change from the subjects list."""
-    try:
-        result = SubjectService(db, school.id).set_color(subject_id, body.color)
-    except ServiceError as exc:
-        raise_http(exc)
+    result = SubjectService(db, school.id).set_color(subject_id, body.color)
     return SubjectColorOut(id=result.id, display_color=result.display_color)
 
 
@@ -112,10 +104,7 @@ def delete_subject(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> None:
-    try:
-        SubjectService(db, school.id).delete(subject_id)
-    except ServiceError as exc:
-        raise_http(exc)
+    SubjectService(db, school.id).delete(subject_id)
 
 
 @router.get("/{subject_id}/assignments", response_model=SubjectAssignmentsView)
@@ -125,14 +114,11 @@ def get_subject_assignments(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> SubjectAssignmentsView:
-    try:
-        data = AssignmentService(db, school.id).get_subject_assignments(
-            subject_id, school_level
-        )
-    except ServiceError as exc:
-        raise_http(exc)
+    data = AssignmentService(db, school.id).get_subject_assignments(
+        subject_id, school_level
+    )
     return SubjectAssignmentsView(
-        subject=SubjectOut.model_validate(data.subject),
+        subject=SubjectOut.model_validate(asdict(data.subject)),
         school_level=data.school_level,
         classes=[
             SubjectAssignClassRow(
@@ -165,13 +151,10 @@ def save_subject_assignments(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> SubjectAssignmentsSaveResult:
-    try:
-        result = AssignmentService(db, school.id).save_subject_assignments(
-            subject_id,
-            school_level=body.school_level,
-            teacher_ids=body.teacher_ids,
-            selections=body.selections,
-        )
-    except ServiceError as exc:
-        raise_http(exc)
+    result = AssignmentService(db, school.id).save_subject_assignments(
+        subject_id,
+        school_level=body.school_level,
+        teacher_ids=body.teacher_ids,
+        selections=body.selections,
+    )
     return SubjectAssignmentsSaveResult(ok=result.ok, errors=result.errors)

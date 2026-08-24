@@ -8,10 +8,8 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.models import School
-from app.services.errors import ServiceError
 from app.services.report_service import ReportService
 from backend.deps import get_current_school, get_db
-from backend.http_errors import raise_http
 from backend.schemas.reports import ClassReportOut, ReportCellOut, TeacherReportOut
 
 router = APIRouter()
@@ -39,12 +37,9 @@ def class_report(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> ClassReportOut:
-    try:
-        data = ReportService(db, school.id).class_report(class_id)
-        cells = [ReportCellOut(**c) for c in data.pop("cells")]
-        return ClassReportOut(**data, cells=cells)
-    except ServiceError as exc:
-        raise_http(exc)
+    data = ReportService(db, school.id).class_report(class_id)
+    cells = [ReportCellOut(**c) for c in data.pop("cells")]
+    return ClassReportOut(**data, cells=cells)
 
 
 @router.get("/teacher/{teacher_id}", response_model=TeacherReportOut)
@@ -53,12 +48,9 @@ def teacher_report(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> TeacherReportOut:
-    try:
-        data = ReportService(db, school.id).teacher_report(teacher_id)
-        cells = [ReportCellOut(**c) for c in data.pop("cells")]
-        return TeacherReportOut(**data, cells=cells)
-    except ServiceError as exc:
-        raise_http(exc)
+    data = ReportService(db, school.id).teacher_report(teacher_id)
+    cells = [ReportCellOut(**c) for c in data.pop("cells")]
+    return TeacherReportOut(**data, cells=cells)
 
 
 @router.get("/export/class/{class_id}")
@@ -67,11 +59,8 @@ def export_class(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> StreamingResponse:
-    try:
-        export = ReportService(db, school.id).export_class(class_id)
-        return _xlsx_stream(export.buffer, export.filename)
-    except ServiceError as exc:
-        raise_http(exc)
+    export = ReportService(db, school.id).export_class(class_id)
+    return _xlsx_stream(export.buffer, export.filename)
 
 
 @router.get("/export/teacher/{teacher_id}")
@@ -80,11 +69,8 @@ def export_teacher(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> StreamingResponse:
-    try:
-        export = ReportService(db, school.id).export_teacher(teacher_id)
-        return _xlsx_stream(export.buffer, export.filename)
-    except ServiceError as exc:
-        raise_http(exc)
+    export = ReportService(db, school.id).export_teacher(teacher_id)
+    return _xlsx_stream(export.buffer, export.filename)
 
 
 @router.get("/export/all/{school_level}")
@@ -93,8 +79,5 @@ def export_all(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> StreamingResponse:
-    try:
-        export = ReportService(db, school.id).export_all(school_level)
-        return _xlsx_stream(export.buffer, export.filename)
-    except ServiceError as exc:
-        raise_http(exc)
+    export = ReportService(db, school.id).export_all(school_level)
+    return _xlsx_stream(export.buffer, export.filename)

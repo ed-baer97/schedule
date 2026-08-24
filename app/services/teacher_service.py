@@ -4,7 +4,9 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
+from app.domain.names import normalize_person_name
 from app.models import Classroom, Teacher
+from app.services.dto import TeacherData, teacher_data
 from app.services.errors import NotFoundError
 from app.services.tenancy import require_owned
 
@@ -25,17 +27,20 @@ class TeacherService:
             raise NotFoundError("Teacher not found")
         return teacher
 
-    def list(self) -> list[Teacher]:
+    def list(self) -> list[TeacherData]:
         stmt = (
             select(Teacher)
             .options(joinedload(Teacher.home_classroom))
             .where(Teacher.school_id == self.school_id)
             .order_by(Teacher.full_name)
         )
-        return list(self.db.execute(stmt).scalars().unique().all())
+        return [
+            teacher_data(t)
+            for t in self.db.execute(stmt).scalars().unique().all()
+        ]
 
-    def get(self, teacher_id: int) -> Teacher:
-        return self._load_one(teacher_id)
+    def get(self, teacher_id: int) -> TeacherData:
+        return teacher_data(self._load_one(teacher_id))
 
     def create(
         self,
@@ -45,7 +50,7 @@ class TeacherService:
         phone: str | None = None,
         home_classroom_id: int | None = None,
         commit: bool = True,
-    ) -> Teacher:
+    ) -> TeacherData | Teacher:
         if home_classroom_id is not None:
             require_owned(self.db, Classroom, home_classroom_id, self.school_id)
         t = Teacher(
@@ -59,14 +64,15 @@ class TeacherService:
         if commit:
             self.db.commit()
             self.db.refresh(t)
-            return self._load_one(t.id)
+            return teacher_data(self._load_one(t.id))
         self.db.flush()
         return t
 
     def find_by_full_name(self, full_name: str) -> Teacher | None:
-        key = " ".join(full_name.split()).casefold()
-        for t in self.list():
-            if " ".join(t.full_name.split()).casefold() == key:
+        key = normalize_person_name(full_name)
+        stmt = select(Teacher).where(Teacher.school_id == self.school_id)
+        for t in self.db.scalars(stmt).all():
+            if normalize_person_name(t.full_name) == key:
                 return t
         return None
 
@@ -81,12 +87,13 @@ class TeacherService:
         existing = self.find_by_full_name(full_name)
         if existing is not None:
             return existing, False
-        return (
-            self.create(
-                full_name=full_name, email=email, phone=phone, commit=commit
-            ),
-            True,
+        created = self.create(
+            full_name=full_name, email=email, phone=phone, commit=False
         )
+        assert isinstance(created, Teacher)
+        if commit:
+            self.db.commit()
+        return created, True
 
     def update(
         self,
@@ -97,7 +104,7 @@ class TeacherService:
         phone: str | None = None,
         home_classroom_id: int | None = None,
         fields_set: frozenset[str] | None = None,
-    ) -> Teacher:
+    ) -> TeacherData:
         t = require_owned(self.db, Teacher, teacher_id, self.school_id)
         if fields_set is None:
             fields_set = frozenset()
@@ -113,7 +120,7 @@ class TeacherService:
             t.home_classroom_id = home_classroom_id
         self.db.commit()
         self.db.refresh(t)
-        return self._load_one(t.id)
+        return teacher_data(self._load_one(t.id))
 
     def delete(self, teacher_id: int) -> None:
         t = require_owned(self.db, Teacher, teacher_id, self.school_id)

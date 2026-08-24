@@ -9,10 +9,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.models import School
-from app.services.errors import ServiceError
 from app.services.import_service import ImportService
 from backend.deps import get_current_school, get_db
-from backend.http_errors import raise_http
 
 router = APIRouter()
 
@@ -59,14 +57,11 @@ def import_teachers(
     school: School = Depends(get_current_school),
 ) -> ImportTeachersResult:
     svc = ImportService(db, school.id)
+    path = svc.save_upload(filename=file.filename, content=file.file.read())
     try:
-        path = svc.save_upload(filename=file.filename, content=file.file.read())
-        try:
-            result = svc.import_teachers(path)
-        finally:
-            svc.cleanup(path)
-    except ServiceError as exc:
-        raise_http(exc)
+        result = svc.import_teachers(path)
+    finally:
+        svc.cleanup(path)
     return ImportTeachersResult(count=result.count, message=result.message)
 
 
@@ -80,14 +75,11 @@ def import_classrooms(
     school: School = Depends(get_current_school),
 ) -> ImportClassroomsResult:
     svc = ImportService(db, school.id)
+    path = svc.save_upload(filename=file.filename, content=file.file.read())
     try:
-        path = svc.save_upload(filename=file.filename, content=file.file.read())
-        try:
-            result = svc.import_classrooms(path)
-        finally:
-            svc.cleanup(path)
-    except ServiceError as exc:
-        raise_http(exc)
+        result = svc.import_classrooms(path)
+    finally:
+        svc.cleanup(path)
     return ImportClassroomsResult(count=result.count, message=result.message)
 
 
@@ -102,14 +94,11 @@ def import_curriculum(
     school: School = Depends(get_current_school),
 ) -> ImportCurriculumResult:
     svc = ImportService(db, school.id)
+    path = svc.save_upload(filename=file.filename, content=file.file.read())
     try:
-        path = svc.save_upload(filename=file.filename, content=file.file.read())
-        try:
-            result = svc.import_curriculum(path, school_level)
-        finally:
-            svc.cleanup(path)
-    except ServiceError as exc:
-        raise_http(exc)
+        result = svc.import_curriculum(path, school_level)
+    finally:
+        svc.cleanup(path)
     return ImportCurriculumResult(
         subjects_count=result.subjects_count,
         assignments_count=result.assignments_count,
@@ -126,10 +115,7 @@ def import_subject_hours(
 ) -> ImportSubjectHoursResult:
     svc = ImportService(db, school.id)
     payloads = [(f.filename, f.file.read()) for f in files]
-    try:
-        result = svc.import_subject_hours(files=payloads, subject=subject)
-    except ServiceError as exc:
-        raise_http(exc)
+    result = svc.import_subject_hours(files=payloads, subject=subject)
     return ImportSubjectHoursResult(
         files=[
             SubjectHoursFileResult(
@@ -150,10 +136,7 @@ def import_subject_hours(
 
 @router.get("/template/{template_type}")
 def download_template(template_type: str) -> FileResponse:
-    try:
-        tpl = ImportService.resolve_template(template_type)
-    except ServiceError as exc:
-        raise_http(exc)
+    tpl = ImportService.resolve_template(template_type)
     safe = quote(tpl.download_name)
     return FileResponse(
         str(tpl.path),

@@ -1,5 +1,5 @@
 import { apiJson } from './client'
-import type { SchoolLevel } from './teachers'
+import type { SchoolLevel } from '../domain/schoolLevel'
 
 export type Subject = {
   id: number

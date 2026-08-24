@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Config
-from app.models import Job
+from app.models import Job, Shift, Teacher
 from app.models.job import JOB_PENDING, JOB_RUNNING
 from app.services.errors import ConflictError
 from app.services.job_dispatch import dispatch_auto_job
@@ -60,6 +60,14 @@ class JobService:
         dispatch: bool = True,
     ) -> dict:
         """Create a Job row and optionally dispatch via job_dispatch port."""
+        body = dict(payload)
+        shift_id = body.get("shift_id")
+        if shift_id is not None:
+            require_owned(self.db, Shift, int(shift_id), self.school_id)
+        teacher_id = body.get("teacher_id")
+        if teacher_id is not None:
+            require_owned(self.db, Teacher, int(teacher_id), self.school_id)
+
         active = self.db.scalars(
             select(Job).where(
                 Job.school_id == self.school_id,
@@ -71,7 +79,6 @@ class JobService:
                 f"Уже выполняется задача #{active.id}. Дождитесь завершения."
             )
 
-        body = dict(payload)
         if "time_limit_sec" not in body:
             body["time_limit_sec"] = Config.SOLVER_TIME_LIMIT_SEC
         else:

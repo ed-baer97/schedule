@@ -2,31 +2,17 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Config
 from app.models import User
+from app.passwords import verify_password
 from backend.deps import get_current_user, get_db
-from backend.security import create_access_token, verify_password
+from backend.schemas.auth import LoginBody, UserOut
+from backend.security import create_access_token
 
 router = APIRouter()
-
-
-class LoginBody(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=1)
-
-
-class UserOut(BaseModel):
-    id: int
-    email: str
-    role: str
-    school_id: int | None
-    school_name: str | None = None
-
-    model_config = {"from_attributes": True}
 
 
 def _set_session_cookie(response: Response, token: str) -> None:

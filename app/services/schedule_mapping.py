@@ -37,7 +37,8 @@ def load_cells(db: Session, *where, with_class: bool = False) -> list[ScheduleCe
     return list(db.execute(stmt).scalars().unique().all())
 
 
-def cell_to_schedule_dict(cell: ScheduleCell) -> dict:
+def _cell_projection(cell: ScheduleCell) -> dict:
+    """Full cell projection; schedule/report views pick needed keys."""
     a = cell.assignment
     subj = a.subject if a else None
     teacher = a.teacher if a else None
@@ -55,21 +56,44 @@ def cell_to_schedule_dict(cell: ScheduleCell) -> dict:
         "teacher_name": teacher.display_name if teacher else None,
         "group_number": a.group_number if a else None,
         "classroom_name": cell.classroom.display_name if cell.classroom else None,
+        "class_name": cell.school_class.name if cell.school_class else "?",
     }
+
+
+_SCHEDULE_KEYS = (
+    "id",
+    "class_id",
+    "day_of_week",
+    "lesson_number",
+    "assignment_id",
+    "classroom_id",
+    "subject_id",
+    "subject_name",
+    "subject_color",
+    "teacher_id",
+    "teacher_name",
+    "group_number",
+    "classroom_name",
+)
+
+_REPORT_KEYS = (
+    "id",
+    "day_of_week",
+    "lesson_number",
+    "subject_name",
+    "subject_color",
+    "teacher_name",
+    "class_name",
+    "classroom_name",
+    "group_number",
+)
+
+
+def cell_to_schedule_dict(cell: ScheduleCell) -> dict:
+    full = _cell_projection(cell)
+    return {k: full[k] for k in _SCHEDULE_KEYS}
 
 
 def cell_to_report_dict(cell: ScheduleCell) -> dict:
-    a = cell.assignment
-    subj = a.subject if a else None
-    teacher = a.teacher if a else None
-    return {
-        "id": cell.id,
-        "day_of_week": cell.day_of_week,
-        "lesson_number": cell.lesson_number,
-        "subject_name": subj.display_name if subj else "?",
-        "subject_color": (subj.display_color if subj else Subject.DEFAULT_COLOR),
-        "teacher_name": teacher.display_name if teacher else None,
-        "class_name": cell.school_class.name if cell.school_class else "?",
-        "classroom_name": cell.classroom.display_name if cell.classroom else None,
-        "group_number": a.group_number if a else None,
-    }
+    full = _cell_projection(cell)
+    return {k: full[k] for k in _REPORT_KEYS}

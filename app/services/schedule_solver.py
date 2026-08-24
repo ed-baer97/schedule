@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from app.models import Classroom, SchoolClass, ScheduleCell, TeachingAssignment
+from app.domain.schedule_rules import groups_can_share_slot
 from app.services.bell_schedule import schedules_conflict
 from app.services.assignment_hours import placed_counts, remaining_for
 from app.services.classroom_resolver import load_settings
@@ -68,24 +69,6 @@ class ResidualGraphSolver:
         self._classroom_resolver = classroom_resolver
         self._schedule = ScheduleService(session, school_id)
 
-    def _place_cell(
-        self,
-        *,
-        class_id: int,
-        day_of_week: int,
-        lesson_number: int,
-        assignment_id: int,
-        classroom_id=None,
-    ):
-        return self._schedule.insert_cell(
-            class_id=class_id,
-            day_of_week=day_of_week,
-            lesson_number=lesson_number,
-            assignment_id=assignment_id,
-            classroom_id=classroom_id,
-            validate=False,
-            commit=False,
-        )
 
     def _build_units(self, assignments):
         units = []
@@ -237,7 +220,7 @@ class ResidualGraphSolver:
                     diagnostics_raw[assignment.id][err] += 1
                 continue
 
-            self._place_cell(
+            self._schedule.insert_cell(
                 class_id=assignment.class_id,
                 day_of_week=slot.day,
                 lesson_number=slot.lesson,
@@ -343,17 +326,9 @@ def _units_cannot_share_same_class_slot(a1: TeachingAssignment, a2: TeachingAssi
         return False
     if a1.id == a2.id:
         return True
-    g1, g2 = a1.group_number, a2.group_number
-    s1, s2 = a1.subject_id, a2.subject_id
-    if g1 is None and g2 is None:
-        return True
-    if g1 is None or g2 is None:
-        return True
-    if s1 != s2:
-        return True
-    if g1 == g2:
-        return True
-    return False
+    return not groups_can_share_slot(
+        a1.group_number, a2.group_number, a1.subject_id, a2.subject_id
+    )
 
 
 @dataclass
@@ -390,24 +365,6 @@ class CpSatScheduleSolver:
         self._classroom_resolver = classroom_resolver
         self._schedule = ScheduleService(session, school_id)
 
-    def _place_cell(
-        self,
-        *,
-        class_id: int,
-        day_of_week: int,
-        lesson_number: int,
-        assignment_id: int,
-        classroom_id=None,
-    ):
-        return self._schedule.insert_cell(
-            class_id=class_id,
-            day_of_week=day_of_week,
-            lesson_number=lesson_number,
-            assignment_id=assignment_id,
-            classroom_id=classroom_id,
-            validate=False,
-            commit=False,
-        )
 
     def _build_units(self, assignments: list[TeachingAssignment]) -> list[AssignmentUnit]:
         units: list[AssignmentUnit] = []
@@ -986,7 +943,7 @@ class CpSatScheduleSolver:
                         metrics_before=metrics_before,
                     )
 
-                self._place_cell(
+                self._schedule.insert_cell(
                     class_id=a.class_id,
                     day_of_week=chosen.day,
                     lesson_number=chosen.lesson,

@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Classroom
+from app.services.dto import ClassroomData, classroom_data
 from app.services.tenancy import require_owned
 
 
@@ -13,16 +14,18 @@ class ClassroomService:
         self.db = db
         self.school_id = school_id
 
-    def list(self) -> list[Classroom]:
+    def list(self) -> list[ClassroomData]:
         stmt = (
             select(Classroom)
             .where(Classroom.school_id == self.school_id)
             .order_by(func.coalesce(Classroom.floor, 999), Classroom.number)
         )
-        return list(self.db.scalars(stmt).all())
+        return [classroom_data(c) for c in self.db.scalars(stmt).all()]
 
-    def get(self, classroom_id: int) -> Classroom:
-        return require_owned(self.db, Classroom, classroom_id, self.school_id)
+    def get(self, classroom_id: int) -> ClassroomData:
+        return classroom_data(
+            require_owned(self.db, Classroom, classroom_id, self.school_id)
+        )
 
     def create(
         self,
@@ -34,7 +37,7 @@ class ClassroomService:
         floor: int | None = None,
         building: str | None = None,
         commit: bool = True,
-    ) -> Classroom:
+    ) -> ClassroomData | Classroom:
         c = Classroom(
             school_id=self.school_id,
             number=number.strip(),
@@ -48,8 +51,8 @@ class ClassroomService:
         if commit:
             self.db.commit()
             self.db.refresh(c)
-        else:
-            self.db.flush()
+            return classroom_data(c)
+        self.db.flush()
         return c
 
     def find_by_number(self, number: str) -> Classroom | None:
@@ -73,17 +76,18 @@ class ClassroomService:
         existing = self.find_by_number(number)
         if existing is not None:
             return existing, False
-        return (
-            self.create(
-                number=number,
-                name=name,
-                classes_capacity=classes_capacity,
-                floor=floor,
-                building=building,
-                commit=commit,
-            ),
-            True,
+        created = self.create(
+            number=number,
+            name=name,
+            classes_capacity=classes_capacity,
+            floor=floor,
+            building=building,
+            commit=False,
         )
+        assert isinstance(created, Classroom)
+        if commit:
+            self.db.commit()
+        return created, True
 
     def update(
         self,
@@ -96,7 +100,7 @@ class ClassroomService:
         floor: int | None = None,
         building: str | None = None,
         fields_set: frozenset[str] | None = None,
-    ) -> Classroom:
+    ) -> ClassroomData:
         c = require_owned(self.db, Classroom, classroom_id, self.school_id)
         if fields_set is None:
             fields_set = frozenset()
@@ -114,7 +118,7 @@ class ClassroomService:
             c.building = (building or "").strip() or None
         self.db.commit()
         self.db.refresh(c)
-        return c
+        return classroom_data(c)
 
     def delete(self, classroom_id: int) -> None:
         c = require_owned(self.db, Classroom, classroom_id, self.school_id)

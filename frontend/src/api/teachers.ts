@@ -1,7 +1,5 @@
 import { apiJson } from './client'
 
-export type SchoolLevel = 'elementary' | 'secondary'
-
 export type Teacher = {
   id: number
   full_name: string

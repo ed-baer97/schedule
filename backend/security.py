@@ -1,26 +1,19 @@
-"""Password hashing and JWT cookie session helpers."""
+"""JWT cookie session helpers; password helpers re-exported from app.passwords."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
 
 from app.config import Config
+from app.passwords import hash_password, verify_password
 
-_ph = PasswordHasher()
-
-
-def hash_password(password: str) -> str:
-    return _ph.hash(password)
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    try:
-        return _ph.verify(password_hash, password)
-    except VerifyMismatchError:
-        return False
+__all__ = [
+    "hash_password",
+    "verify_password",
+    "create_access_token",
+    "decode_access_token",
+]
 
 
 def create_access_token(*, user_id: int, role: str, school_id: int | None) -> str:

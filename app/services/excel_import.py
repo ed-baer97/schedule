@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from app.domain import grade_from_name
+from app.domain import grade_from_name, level_from_grade, normalize_person_name
 from app.models import SchoolClass, Subject, Teacher, TeachingAssignment
 from app.services.assignment_service import AssignmentService
 from app.services.classroom_service import ClassroomService
@@ -15,10 +15,6 @@ from app.services.subject_service import SubjectService
 from app.services.teacher_service import TeacherService
 
 _MAX_GROUPS = 4
-
-
-def _norm_name(value: str) -> str:
-    return " ".join(str(value).split()).casefold()
 
 
 def _parse_hours(value) -> int:
@@ -40,8 +36,7 @@ def _parse_hours(value) -> int:
 
 def _grade_and_level(class_name: str) -> tuple[int, str]:
     grade = grade_from_name(class_name)
-    level = "elementary" if grade <= 4 else "secondary"
-    return grade, level
+    return grade, level_from_grade(grade)
 
 
 class ExcelImporter:
@@ -301,10 +296,15 @@ class ExcelImporter:
                         f"{resolved_subject}: в классе больше {_MAX_GROUPS} учителей "
                         f"— сохранены все, группы пронумерованы по порядку"
                     )
-                for i, assignment in enumerate(ordered, start=1):
-                    assignment.group_number = i
+                self._assignments.set_group_numbers(
+                    [a.id for a in ordered],
+                    list(range(1, n + 1)),
+                    commit=False,
+                )
             elif n == 1:
-                ordered[0].group_number = None
+                self._assignments.set_group_numbers(
+                    [ordered[0].id], [None], commit=False
+                )
 
         self.session.commit()
         return {
@@ -319,7 +319,7 @@ class ExcelImporter:
         }
 
     def _get_or_create_teacher(self, full_name: str) -> tuple[Teacher, bool]:
-        key = _norm_name(full_name)
+        key = normalize_person_name(full_name)
         cached = self._teachers_by_name.get(key)
         if cached is not None:
             return cached, False

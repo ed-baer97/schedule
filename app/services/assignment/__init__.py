@@ -1,6 +1,6 @@
-"""Public re-export (canonical import path)."""
-from app.services.assignment import (
-    AssignmentService,
+"""Assignment use-cases package."""
+from app.services.assignment.service import AssignmentService
+from app.services.assignment.types import (
     SubjectAssignClassData,
     SubjectAssignTeacherData,
     SubjectAssignmentsSaveResultData,
@@ -8,11 +8,9 @@ from app.services.assignment import (
     SubjectOutData,
     WorkloadViewData,
 )
-from app.services.dto import AssignmentData
 
 __all__ = [
     "AssignmentService",
-    "AssignmentData",
     "SubjectAssignClassData",
     "SubjectAssignTeacherData",
     "SubjectAssignmentsSaveResultData",

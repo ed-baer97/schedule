@@ -1,6 +1,11 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
-import { exportClassUrl, fetchClassReport, type ReportCell } from '../api/reports'
+import { exportClassUrl, fetchClassReport } from '../api/reports'
+import {
+  ReportGrid,
+  indexReportCells,
+  renderClassReportCells,
+} from '../components/ReportGrid'
 
 export function ReportsClassPage() {
   const params = useParams()
@@ -16,14 +21,43 @@ export function ReportsClassPage() {
   if (q.isLoading) return <p>Загрузка…</p>
   if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
   const r = q.data!
+  const cellsBy = indexReportCells(r.cells)
 
-  const cellsBy = new Map<string, ReportCell[]>()
-  for (const c of r.cells) {
-    const key = `${c.day_of_week}:${c.lesson_number}`
-    const arr = cellsBy.get(key) ?? []
-    arr.push(c)
-    cellsBy.set(key, arr)
-  }
+  const rows = [
+    ...(r.class_hour_day != null && r.class_hour_time_label
+      ? [
+          {
+            key: 'class-hour',
+            label: (
+              <>
+                <div className="fw-bold">Классный час</div>
+                <div className="small text-muted text-nowrap">{r.class_hour_time_label}</div>
+              </>
+            ),
+            dayCells: r.day_names.slice(0, r.working_days).map((_, dayIdx) => {
+              const day = dayIdx + 1
+              if (day !== r.class_hour_day) return null
+              return renderClassReportCells(cellsBy.get(`${day}:0`) ?? [])
+            }),
+          },
+        ]
+      : []),
+    ...r.lessons_range.map((lesson) => ({
+      key: lesson,
+      label: <div className="fw-bold">{lesson}</div>,
+      dayCells: r.day_names.slice(0, r.working_days).map((_, dayIdx) => {
+        const day = dayIdx + 1
+        const matches = cellsBy.get(`${day}:${lesson}`) ?? []
+        const time = r.lesson_times_by_day[day]?.[lesson]
+        return (
+          <>
+            {time && <div className="small text-muted">{time}</div>}
+            {renderClassReportCells(matches)}
+          </>
+        )
+      }),
+    })),
+  ]
 
   return (
     <div>
@@ -46,77 +80,12 @@ export function ReportsClassPage() {
         </div>
       </div>
 
-      <div className="card">
-        <div className="table-responsive">
-          <table className="table table-bordered mb-0" style={{ fontSize: '0.85rem' }}>
-            <thead className="table-light">
-              <tr>
-                <th style={{ width: 110 }}>Урок</th>
-                {r.day_names.slice(0, r.working_days).map((d, i) => (
-                  <th key={i} className="text-center">{d}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {r.class_hour_day != null && r.class_hour_time_label && (
-                <tr>
-                  <td className="text-center align-middle">
-                    <div className="fw-bold">Классный час</div>
-                    <div className="small text-muted text-nowrap">{r.class_hour_time_label}</div>
-                  </td>
-                  {r.day_names.slice(0, r.working_days).map((_, dayIdx) => {
-                    const day = dayIdx + 1
-                    if (day !== r.class_hour_day) return <td key={dayIdx} />
-                    const matches = cellsBy.get(`${day}:0`) ?? []
-                    return <td key={dayIdx}>{renderCells(matches)}</td>
-                  })}
-                </tr>
-              )}
-              {r.lessons_range.map((lesson) => (
-                <tr key={lesson}>
-                  <td className="text-center align-middle">
-                    <div className="fw-bold">{lesson}</div>
-                  </td>
-                  {r.day_names.slice(0, r.working_days).map((_, dayIdx) => {
-                    const day = dayIdx + 1
-                    const matches = cellsBy.get(`${day}:${lesson}`) ?? []
-                    const time = r.lesson_times_by_day[day]?.[lesson]
-                    return (
-                      <td key={dayIdx}>
-                        {time && <div className="small text-muted">{time}</div>}
-                        {renderCells(matches)}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <ReportGrid
+        dayNames={r.day_names}
+        workingDays={r.working_days}
+        headerWidth={110}
+        rows={rows}
+      />
     </div>
   )
-}
-
-function renderCells(cells: ReportCell[]) {
-  if (cells.length === 0) return null
-  return cells.map((c, i) => (
-    <div
-      key={c.id}
-      className="border rounded p-1 mb-1"
-      style={{ background: 'white', borderColor: c.subject_color, borderWidth: 2 }}
-    >
-      {i > 0 && <hr className="my-1" />}
-      <div className="fw-semibold" style={{ color: c.subject_color }}>
-        {c.subject_name}
-        {c.group_number != null && (
-          <span className="badge bg-warning text-dark ms-1">гр.{c.group_number}</span>
-        )}
-      </div>
-      <div className="small">{c.teacher_name ?? '?'}</div>
-      {c.classroom_name && (
-        <div className="small text-muted">каб. {c.classroom_name}</div>
-      )}
-    </div>
-  ))
 }

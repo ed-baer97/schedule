@@ -1,11 +1,11 @@
-"""Public re-export (canonical import path)."""
-from app.services.schedule import (
+"""Schedule use-cases package."""
+from app.services.schedule.service import ScheduleService
+from app.services.schedule.types import (
     AssignmentChoiceData,
     AssignmentsForClassData,
     AutoPageDataRaw,
     GridData,
     Placement,
-    ScheduleService,
     SettingsPairData,
     ShiftBriefData,
 )

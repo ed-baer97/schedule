@@ -33,26 +33,6 @@ class AutoScheduler:
             self._get_classroom_for_cell, session=self.session, school_id=school_id
         )
 
-    def _place_cell(
-        self,
-        *,
-        class_id: int,
-        day_of_week: int,
-        lesson_number: int,
-        assignment_id: int,
-        classroom_id=None,
-    ):
-        """Delegate ScheduleCell inserts to ScheduleService (sole write-path)."""
-        return self._schedule.insert_cell(
-            class_id=class_id,
-            day_of_week=day_of_week,
-            lesson_number=lesson_number,
-            assignment_id=assignment_id,
-            classroom_id=classroom_id,
-            validate=False,
-            commit=False,
-        )
-
     def _settings_for(self, school_level):
         return load_settings(self.session, self.school_id, school_level)
 
@@ -346,7 +326,7 @@ class AutoScheduler:
         )
         if errors:
             return 0
-        self._place_cell(
+        self._schedule.insert_cell(
             class_id=assignment.class_id,
             day_of_week=day,
             lesson_number=lesson,
@@ -503,7 +483,11 @@ class AutoScheduler:
             if blocker.class_id == assignment.class_id:
                 continue
             class_busy = self.validator.check_class_conflict(
-                assignment.class_id, day, lesson, assignment.group_number
+                assignment.class_id,
+                day,
+                lesson,
+                assignment.group_number,
+                subject_id=assignment.subject_id,
             )
             if class_busy:
                 continue
@@ -699,7 +683,7 @@ class AutoScheduler:
             )
             self._delete_cells(rebuilt)
             for row in snapshot:
-                self._place_cell(
+                self._schedule.insert_cell(
                     class_id=row["class_id"],
                     day_of_week=row["day_of_week"],
                     lesson_number=row["lesson_number"],
@@ -907,7 +891,7 @@ class AutoScheduler:
                     )
 
                     if not errors:
-                        cell = self._place_cell(
+                        cell = self._schedule.insert_cell(
                             class_id=class_id,
                             day_of_week=day,
                             lesson_number=lesson_num,
@@ -1019,7 +1003,7 @@ class AutoScheduler:
                     )
                     if e_i:
                         continue
-                    cell_i = self._place_cell(
+                    cell_i = self._schedule.insert_cell(
                         class_id=class_id,
                         day_of_week=day,
                         lesson_number=lesson_num,
@@ -1034,7 +1018,7 @@ class AutoScheduler:
                             cell_ids=[cell_i.id], commit=False
                         )
                         continue
-                    self._place_cell(
+                    self._schedule.insert_cell(
                         class_id=class_id,
                         day_of_week=day,
                         lesson_number=lesson_num,
@@ -1073,7 +1057,7 @@ class AutoScheduler:
                 classroom_id=classroom_id
             )
             if not errors:
-                self._place_cell(
+                self._schedule.insert_cell(
                     class_id=class_id,
                     day_of_week=day,
                     lesson_number=lesson_num,
@@ -1116,7 +1100,7 @@ class AutoScheduler:
                 classroom_id=classroom_id
             )
             if not errors:
-                self._place_cell(
+                self._schedule.insert_cell(
                     class_id=comp.class_id,
                     day_of_week=day,
                     lesson_number=lesson,

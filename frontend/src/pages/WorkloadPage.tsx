@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { fetchWorkload, updateWorkloadCell } from '../api/workload'
-import type { SchoolLevel } from '../api/teachers'
+import type { SchoolLevel } from '../domain/schoolLevel'
 
 export function WorkloadPage() {
   const qc = useQueryClient()

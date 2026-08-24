@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.assignment import hours_exhausted
 from app.domain.schedule_rules import (
+    groups_can_share_slot,
     subject_day_limit_reached,
     teacher_class_day_limit_reached,
 )
@@ -115,8 +116,12 @@ class ScheduleValidator:
 
         # Check class conflict (except for groups)
         class_busy = self.check_class_conflict(
-            class_id, day, lesson,
-            assignment.group_number, exclude_cell_id
+            class_id,
+            day,
+            lesson,
+            assignment.group_number,
+            exclude_cell_id,
+            subject_id=assignment.subject_id,
         )
         if class_busy:
             errors.append(f'Класс уже занят в это время: {_cell_brief(class_busy)}')
@@ -231,10 +236,19 @@ class ScheduleValidator:
                 occupying.append(cell)
         return occupying if len(occupying) >= cap else []
 
-    def check_class_conflict(self, class_id, day, lesson, group_number=None, exclude_cell_id=None):
+    def check_class_conflict(
+        self,
+        class_id,
+        day,
+        lesson,
+        group_number=None,
+        exclude_cell_id=None,
+        subject_id=None,
+    ):
         """
         Return the occupying cell if the class is busy, otherwise None.
-        Groups can be scheduled simultaneously when times do not overlap.
+        Groups can be scheduled simultaneously when times do not overlap
+        and groups_can_share_slot allows it.
         """
         school_class = self.session.get(SchoolClass, class_id)
         candidate_shift = school_class.shift_id if school_class else None
@@ -255,10 +269,8 @@ class ScheduleValidator:
                 continue
 
             og = cell.assignment.group_number
-            if group_number:
-                if og is None or og == group_number:
-                    return cell
-            else:
+            osid = cell.assignment.subject_id if cell.assignment else None
+            if not groups_can_share_slot(group_number, og, subject_id, osid):
                 return cell
 
         return None

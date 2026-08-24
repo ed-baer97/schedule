@@ -3,6 +3,7 @@ from sqlalchemy import Column, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.db import Base
+from app.domain.school_level import level_label
 
 
 class SchoolClass(Base):
@@ -28,4 +29,4 @@ class SchoolClass(Base):
 
     @property
     def school_level_display(self):
-        return "Начальная школа" if self.school_level == "elementary" else "Основная школа"
+        return level_label(self.school_level)
