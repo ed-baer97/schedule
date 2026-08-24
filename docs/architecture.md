@@ -67,7 +67,7 @@ schedule/
    - `TeachingAssignment` — только `AssignmentService` (`create` / `upsert_hours` / `set_group_numbers`); Excel вызывает его и каталожные `ensure`.
    - `ScheduleCell` — только `ScheduleService` (`insert_cell` / `apply_placements` / `create_cell` / `move_cell` / `reposition_cell` / `delete_cell` / `delete_cells` / `clear_schedule`); авто и солвер делегируют сюда.
 5. **Канон имён (как в git)** — `backend.deps`, `backend.schemas`, `TeachingAssignment`, `ScheduleCell`, `ScheduleSettings`, `AutoScheduler`, `ScheduleValidator`. Пакеты `app.services.assignment` / `app.services.schedule` доступны также через реэкспорт `assignment_service` / `schedule_service`.
-6. **Правила слота** — предикаты в `app/domain/schedule_rules.py` (`slots_conflict`, `groups_can_share_slot`, лимиты дня); валидатор и солвер используют их, а не копируют логику.
+6. **Правила слота** — предикаты в `app/domain/schedule_rules.py` (`slots_conflict` / `slot_facts_conflict`, `groups_can_share_slot`, `units_cannot_share_class_slot`, `occupancy_blocks_unit`, `teacher_busy_at_slot`, `classroom_at_capacity`, лимиты дня); плоские факты в `app/domain/schedule_facts.py`; ORM→факты только в `app/services/schedule_fact_loader.py`. Валидатор, residual и CP-SAT используют одни предикаты (учитель/кабинет по пересечению интервалов, не по «тому же номеру урока»). Residual строит рёбра со снимка фактов; `validate_cell` — предохранитель на записи. CP-SAT capacity — sweep/`slot_facts_conflict`.
 
 Роутеры не содержат солвер: они вызывают сервисы; постановка Job — `JobService.enqueue_auto` (диспатч через порт `app/services/job_dispatch.py`, реализация в `backend/tasks.py`).
 Кабинет для ячейки и warnings — `classroom_resolver.py`; настройки уровня — `load_settings`; диагностика непроставленных часов — `schedule_diagnostics.py`.
@@ -141,13 +141,14 @@ Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker 
 | `teacher_service.py` … `subject_service.py` | CRUD справочников + `ensure` для импорта (DTO наружу) |
 | `schedule_mapping.py` | joinedload и DTO-проекции `ScheduleCell` |
 | `tenancy.py` | `require_owned` по `school_id` |
-| `validators.py` | конфликты ячеек (грузят данные; предикаты из domain) |
+| `schedule_fact_loader.py` | плоские `UnitFact` / `SlotFact` / teacher/classroom busy для валидатора и солверов |
+| `validators.py` | конфликты ячеек (грузят факты; предикаты из domain) |
 | `excel_import.py` | парсинг Excel; запись только через сервисы |
-| `auto_scheduler.py` | «лесенка»; ячейки только через `ScheduleService` |
-| `schedule_solver.py` | OR-Tools CP-SAT; ячейки только через `ScheduleService` |
-| `bell_schedule.py` | интервалы звонков; overlap через domain |
+| `auto_scheduler.py` | «лесенка»; ячейки только через `ScheduleService`; подгруппы через `groups_can_share_slot` |
+| `schedule_solver.py` | residual + OR-Tools CP-SAT на фактах из loader; ячейки через `ScheduleService` |
+| `bell_schedule.py` | интервалы звонков; `slots_conflict` из domain |
 
-Чистые хелперы: `app/domain/` — дни/`fmt_time`, `grade_from_name` / `level_from_grade` / `level_label`, `normalize_person_name`, `remaining_hours`, `slots_conflict` / `groups_can_share_slot` / лимиты дня.
+Чистые хелперы: `app/domain/` — дни/`fmt_time`, `grade_from_name` / `level_from_grade` / `level_label`, `normalize_person_name`, `remaining_hours`, `schedule_facts` (`UnitFact`/`SlotFact`/`BusySlotFact`), `slots_conflict` / `slot_facts_conflict` / `groups_can_share_slot` / `units_cannot_share_class_slot` / `occupancy_blocks_unit` / `teacher_busy_at_slot` / `classroom_at_capacity` / лимиты дня.
 
 Все школьные сервисы принимают обязательный `school_id: int` (`AdminService` — platform-wide).
 

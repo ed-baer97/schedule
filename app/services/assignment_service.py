@@ -2,10 +2,8 @@
 from app.services.assignment import (
     AssignmentService,
     SubjectAssignClassData,
-    SubjectAssignTeacherData,
     SubjectAssignmentsSaveResultData,
     SubjectAssignmentsViewData,
-    SubjectOutData,
     WorkloadViewData,
 )
 from app.services.dto import AssignmentData
@@ -14,9 +12,7 @@ __all__ = [
     "AssignmentService",
     "AssignmentData",
     "SubjectAssignClassData",
-    "SubjectAssignTeacherData",
     "SubjectAssignmentsSaveResultData",
     "SubjectAssignmentsViewData",
-    "SubjectOutData",
     "WorkloadViewData",
 ]

@@ -77,14 +77,12 @@ class AssignmentWorkloadMixin:
         if assignment:
             assignment.hours_per_week = hours
         else:
-            self.db.add(
-                TeachingAssignment(
-                    school_id=self.school_id,
-                    class_id=class_id,
-                    subject_id=subject_id,
-                    hours_per_week=hours,
-                    teacher_id=None,
-                )
+            self.create(
+                subject_id=subject_id,
+                class_id=class_id,
+                hours_per_week=hours,
+                teacher_id=None,
+                commit=False,
             )
         self.db.commit()
 

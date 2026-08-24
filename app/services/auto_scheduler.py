@@ -1,6 +1,7 @@
 """
 Automatic schedule generation service
 """
+from app.domain.schedule_rules import groups_can_share_slot
 from app.models import Teacher, SchoolClass, TeachingAssignment, ScheduleCell
 from app.services.assignment_hours import remaining_for
 from app.services.classroom_resolver import (
@@ -488,6 +489,7 @@ class AutoScheduler:
                 lesson,
                 assignment.group_number,
                 subject_id=assignment.subject_id,
+                assignment=assignment,
             )
             if class_busy:
                 continue
@@ -963,9 +965,12 @@ class AutoScheduler:
         for a, rem in available:
             if rem <= 0 or a.id == assignment.id:
                 continue
-            if a.subject_id != assignment.subject_id or a.group_number is None:
-                continue
-            if a.group_number == assignment.group_number:
+            if not groups_can_share_slot(
+                assignment.group_number,
+                a.group_number,
+                assignment.subject_id,
+                a.subject_id,
+            ):
                 continue
             if a.teacher_id == assignment.teacher_id:
                 return False
@@ -992,7 +997,12 @@ class AutoScheduler:
                 for j in range(i + 1, len(rows)):
                     _idx_i, a_i, rem_i = rows[i]
                     _idx_j, a_j, rem_j = rows[j]
-                    if a_i.group_number == a_j.group_number:
+                    if not groups_can_share_slot(
+                        a_i.group_number,
+                        a_j.group_number,
+                        a_i.subject_id,
+                        a_j.subject_id,
+                    ):
                         continue
                     if a_i.teacher_id and a_i.teacher_id == a_j.teacher_id:
                         continue
@@ -1038,15 +1048,14 @@ class AutoScheduler:
         """
         if placed_assignment.group_number is None:
             return 0
-        placed_group_number = placed_assignment.group_number
-        subject_id = placed_assignment.subject_id
 
         for i, (assignment, remaining) in enumerate(available):
-            if assignment.group_number is None:
-                continue
-            if assignment.subject_id != subject_id:
-                continue
-            if assignment.group_number == placed_group_number:
+            if not groups_can_share_slot(
+                placed_assignment.group_number,
+                assignment.group_number,
+                placed_assignment.subject_id,
+                assignment.subject_id,
+            ):
                 continue
 
             classroom_id = self._get_classroom_for_cell(assignment, school_level)
@@ -1083,11 +1092,20 @@ class AutoScheduler:
             TeachingAssignment.class_id == placed_assignment.class_id,
             TeachingAssignment.subject_id == placed_assignment.subject_id,
             TeachingAssignment.group_number.isnot(None),
-            TeachingAssignment.group_number != placed_assignment.group_number,
             TeachingAssignment.teacher_id.isnot(None),
             TeachingAssignment.school_id == self.school_id,
+            TeachingAssignment.id != placed_assignment.id,
         )
-        complementary_assignments = cq.all()
+        complementary_assignments = [
+            a
+            for a in cq.all()
+            if groups_can_share_slot(
+                placed_assignment.group_number,
+                a.group_number,
+                placed_assignment.subject_id,
+                a.subject_id,
+            )
+        ]
 
         for comp in complementary_assignments:
             if remaining_for(comp) <= 0:

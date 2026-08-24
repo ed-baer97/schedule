@@ -7,11 +7,10 @@ from sqlalchemy.orm import joinedload
 from app.models import SchoolClass, Subject, Teacher, TeachingAssignment
 from app.services.assignment.types import (
     SubjectAssignClassData,
-    SubjectAssignTeacherData,
     SubjectAssignmentsSaveResultData,
     SubjectAssignmentsViewData,
-    _subject_out,
 )
+from app.services.dto import subject_data, teacher_brief
 from app.services.errors import NotFoundError
 from app.services.tenancy import require_owned
 
@@ -126,17 +125,11 @@ class AssignmentSubjectMatrixMixin:
         )
 
         return SubjectAssignmentsViewData(
-            subject=_subject_out(subject),
+            subject=subject_data(subject),
             school_level=school_level,
             classes=class_rows,
-            attached_teachers=[
-                SubjectAssignTeacherData(id=t.id, full_name=t.full_name)
-                for t in attached_teachers
-            ],
-            all_teachers=[
-                SubjectAssignTeacherData(id=t.id, full_name=t.full_name)
-                for t in all_teachers
-            ],
+            attached_teachers=[teacher_brief(t) for t in attached_teachers],
+            all_teachers=[teacher_brief(t) for t in all_teachers],
         )
 
     def save_subject_assignments(
@@ -224,15 +217,13 @@ class AssignmentSubjectMatrixMixin:
                 else:
                     existing[0].teacher_id = checked_teachers[0]
                     existing[0].group_number = 1
-                    self.db.add(
-                        TeachingAssignment(
-                            school_id=self.school_id,
-                            subject_id=subject.id,
-                            class_id=school_class.id,
-                            teacher_id=checked_teachers[1],
-                            hours_per_week=hours,
-                            group_number=2,
-                        )
+                    self.create(
+                        subject_id=subject.id,
+                        class_id=school_class.id,
+                        hours_per_week=hours,
+                        teacher_id=checked_teachers[1],
+                        group_number=2,
+                        commit=False,
                     )
 
         if errors:

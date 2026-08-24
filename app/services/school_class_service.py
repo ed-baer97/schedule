@@ -1,13 +1,14 @@
 """School class catalog CRUD and batch shift update."""
 from __future__ import annotations
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain import grade_from_name
-from app.models import Classroom, SchoolClass, Shift
+from app.models import Classroom, SchoolClass, Shift, TeachingAssignment
 from app.services.dto import SchoolClassData, school_class_data
 from app.services.errors import BadRequestError, NotFoundError
+from app.services.schedule_service import ScheduleService
 from app.services.tenancy import require_owned
 
 
@@ -153,5 +154,16 @@ class SchoolClassService:
 
     def delete(self, class_id: int) -> None:
         sc = require_owned(self.db, SchoolClass, class_id, self.school_id)
+        # Cells first (FK to assignment + class), then assignments, then class.
+        # Without this, SQLAlchemy nullifies TeachingAssignment.class_id → NOT NULL.
+        ScheduleService(self.db, self.school_id).delete_cells(
+            class_id=class_id, commit=False
+        )
+        self.db.execute(
+            delete(TeachingAssignment).where(
+                TeachingAssignment.class_id == class_id,
+                TeachingAssignment.school_id == self.school_id,
+            )
+        )
         self.db.delete(sc)
         self.db.commit()

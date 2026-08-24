@@ -4,15 +4,24 @@ Schedule validation service
 from sqlalchemy.orm import Session
 
 from app.domain.assignment import hours_exhausted
+from app.domain.schedule_facts import UnitFact
 from app.domain.schedule_rules import (
-    groups_can_share_slot,
+    occupancy_blocks_unit,
+    overlapping_classroom_busy,
+    slot_facts_conflict,
     subject_day_limit_reached,
     teacher_class_day_limit_reached,
 )
 from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass, Shift
 from app.services.assignment_hours import placed_count
-from app.services.bell_schedule import schedules_conflict
 from app.services.classroom_resolver import load_settings
+from app.services.schedule_fact_loader import (
+    candidate_slot_fact,
+    candidate_unit_fact,
+    load_class_occupancy,
+    load_classroom_busy,
+    load_teacher_busy,
+)
 
 
 def _lesson_word(lesson: int) -> str:
@@ -41,6 +50,22 @@ class ScheduleValidator:
 
     def _settings_for(self, school_level: str):
         return load_settings(self.session, self.school_id, school_level)
+
+    def _candidate_slot(self, class_id, day, lesson):
+        sc = self.session.get(SchoolClass, class_id) if class_id else None
+        shift_id = sc.shift_id if sc else None
+        return candidate_slot_fact(
+            self.session,
+            class_id=class_id or 0,
+            day=day,
+            lesson=lesson,
+            shift_id=shift_id,
+        )
+
+    def _cell_by_id(self, cell_id: int | None) -> ScheduleCell | None:
+        if cell_id is None:
+            return None
+        return self.session.get(ScheduleCell, cell_id)
 
     def validate_cell(self, assignment, day, lesson, classroom_id=None, exclude_cell_id=None):
         """
@@ -122,6 +147,7 @@ class ScheduleValidator:
             assignment.group_number,
             exclude_cell_id,
             subject_id=assignment.subject_id,
+            assignment=assignment,
         )
         if class_busy:
             errors.append(f'Класс уже занят в это время: {_cell_brief(class_busy)}')
@@ -187,23 +213,17 @@ class ScheduleValidator:
 
     def check_teacher_conflict(self, teacher_id, day, lesson, exclude_cell_id=None, class_id=None):
         """Return the conflicting cell if the teacher is busy, otherwise None."""
-        sc = self.session.get(SchoolClass, class_id) if class_id else None
-        candidate_shift = sc.shift_id if sc else None
-
-        query = self.session.query(ScheduleCell).join(TeachingAssignment).filter(
-            TeachingAssignment.teacher_id == teacher_id,
-            ScheduleCell.day_of_week == day,
+        candidate_slot = self._candidate_slot(class_id, day, lesson)
+        busy_map = load_teacher_busy(
+            self.session,
+            {teacher_id},
+            exclude_cell_id=exclude_cell_id,
         )
-        if exclude_cell_id:
-            query = query.filter(ScheduleCell.id != exclude_cell_id)
-
-        for cell in query.all():
-            if schedules_conflict(
-                candidate_shift, lesson, day,
-                cell.school_class.shift_id, cell.lesson_number, cell.day_of_week,
-                session=self.session,
-            ):
-                return cell
+        for fact in busy_map.get(teacher_id, []):
+            if slot_facts_conflict(candidate_slot, fact):
+                cell = self._cell_by_id(fact.source_cell_id)
+                if cell is not None:
+                    return cell
         return None
 
     def check_classroom_conflict(self, classroom_id, day, lesson, exclude_cell_id=None, class_id=None):
@@ -216,25 +236,21 @@ class ScheduleValidator:
         classroom = self.session.get(Classroom, classroom_id)
         cap = (classroom.classes_capacity or 1) if classroom else 1
 
-        sc = self.session.get(SchoolClass, class_id) if class_id else None
-        candidate_shift = sc.shift_id if sc else None
-
-        query = self.session.query(ScheduleCell).filter(
-            ScheduleCell.classroom_id == classroom_id,
-            ScheduleCell.day_of_week == day,
+        candidate_slot = self._candidate_slot(class_id, day, lesson)
+        busy_map = load_classroom_busy(
+            self.session,
+            {classroom_id},
+            exclude_cell_id=exclude_cell_id,
         )
-        if exclude_cell_id:
-            query = query.filter(ScheduleCell.id != exclude_cell_id)
-
-        occupying = []
-        for cell in query.all():
-            if schedules_conflict(
-                candidate_shift, lesson, day,
-                cell.school_class.shift_id, cell.lesson_number, cell.day_of_week,
-                session=self.session,
-            ):
-                occupying.append(cell)
-        return occupying if len(occupying) >= cap else []
+        overlapping = overlapping_classroom_busy(candidate_slot, classroom_id, busy_map)
+        if len(overlapping) < cap:
+            return []
+        cells = []
+        for fact in overlapping:
+            cell = self._cell_by_id(fact.source_cell_id)
+            if cell is not None:
+                cells.append(cell)
+        return cells
 
     def check_class_conflict(
         self,
@@ -244,34 +260,43 @@ class ScheduleValidator:
         group_number=None,
         exclude_cell_id=None,
         subject_id=None,
+        assignment=None,
     ):
         """
         Return the occupying cell if the class is busy, otherwise None.
-        Groups can be scheduled simultaneously when times do not overlap
-        and groups_can_share_slot allows it.
+        Uses the same occupancy_blocks_unit predicate as the CP-SAT builder.
         """
         school_class = self.session.get(SchoolClass, class_id)
-        candidate_shift = school_class.shift_id if school_class else None
-
-        query = self.session.query(ScheduleCell).join(TeachingAssignment).filter(
-            ScheduleCell.class_id == class_id,
-            ScheduleCell.day_of_week == day,
+        level = (
+            school_class.school_level
+            if school_class and school_class.school_level
+            else "elementary"
         )
-        if exclude_cell_id:
-            query = query.filter(ScheduleCell.id != exclude_cell_id)
-
-        for cell in query.all():
-            if not schedules_conflict(
-                candidate_shift, lesson, day,
-                cell.school_class.shift_id, cell.lesson_number, cell.day_of_week,
-                session=self.session,
-            ):
-                continue
-
-            og = cell.assignment.group_number
-            osid = cell.assignment.subject_id if cell.assignment else None
-            if not groups_can_share_slot(group_number, og, subject_id, osid):
-                return cell
+        if assignment is not None:
+            unit = candidate_unit_fact(assignment)
+        else:
+            unit = UnitFact(
+                unit_id="candidate",
+                assignment_id=-1,
+                teacher_id=None,
+                class_id=class_id,
+                subject_id=subject_id,
+                group_number=group_number,
+                school_level=level,
+            )
+        candidate_slot = self._candidate_slot(class_id, day, lesson)
+        occupancy = load_class_occupancy(
+            self.session,
+            [class_id],
+            exclude_cell_id=exclude_cell_id,
+        )
+        for occupied in occupancy.get(class_id, []):
+            if occupancy_blocks_unit(unit, occupied, candidate_slot=candidate_slot):
+                cell = self._cell_by_id(occupied.source_cell_id)
+                if cell is not None:
+                    return cell
+                # Fallback if cell was deleted mid-check
+                return None
 
         return None
 

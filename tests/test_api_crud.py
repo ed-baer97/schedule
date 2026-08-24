@@ -5,7 +5,14 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
 
-from app.models import Classroom, SchoolClass, Shift, Teacher
+from app.models import (
+    Classroom,
+    ScheduleCell,
+    SchoolClass,
+    Shift,
+    Teacher,
+    TeachingAssignment,
+)
 from backend.deps import SessionLocal
 from backend.main import app
 
@@ -15,6 +22,9 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def _clear() -> None:
     with SessionLocal() as session:
+        # Children before parents — avoids orphan FKs and SQLite id reuse collisions.
+        session.execute(delete(ScheduleCell))
+        session.execute(delete(TeachingAssignment))
         session.execute(delete(SchoolClass))
         session.execute(delete(Teacher))
         session.execute(delete(Classroom))

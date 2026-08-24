@@ -6,11 +6,27 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from app.models import Classroom, SchoolClass, ScheduleCell, TeachingAssignment
-from app.domain.schedule_rules import groups_can_share_slot
-from app.services.bell_schedule import schedules_conflict
+from app.domain.schedule_facts import SlotFact
+from app.domain.schedule_rules import (
+    classroom_at_capacity,
+    occupancy_blocks_unit,
+    subject_day_limit_reached,
+    teacher_busy_at_slot,
+    teacher_class_day_limit_reached,
+    units_cannot_share_class_slot,
+)
+from app.models import Classroom, SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_counts, remaining_for
 from app.services.classroom_resolver import load_settings
+from app.services.schedule_fact_loader import (
+    build_slots_by_class,
+    build_unit_facts,
+    load_cells_for_classes,
+    load_class_occupancy,
+    load_classroom_busy,
+    load_external_teacher_busy,
+    load_teacher_busy,
+)
 from app.services.schedule_service import ScheduleService
 from app.services.validators import ScheduleValidator
 
@@ -20,23 +36,43 @@ except ImportError:  # pragma: no cover
     cp_model = None
 
 
-@dataclass
-class AssignmentUnit:
-    unit_id: str
-    assignment_id: int
-    teacher_id: int | None
-    class_id: int
-    subject_id: int
-    school_level: str
+def _add_capacity_overlap_constraints(model, items: list[tuple[Any, SlotFact]], capacity: int):
+    """
+    Constrain BoolVars so that at most ``capacity`` selected slots overlap in time.
+    Uses interval sweep when bells are present; otherwise same day+lesson.
+    Mixed (some missing intervals) follows slot_facts_conflict semantics.
+    """
+    if not items or capacity < 1:
+        return
+    by_day: dict[int, list[tuple[Any, SlotFact]]] = defaultdict(list)
+    for var, slot in items:
+        by_day[slot.day].append((var, slot))
 
+    for day_items in by_day.values():
+        with_iv = [(v, s) for v, s in day_items if s.interval is not None]
+        without = [(v, s) for v, s in day_items if s.interval is None]
 
-@dataclass
-class Slot:
-    slot_id: str
-    class_id: int
-    day: int
-    lesson: int
-    shift_id: int | None
+        if with_iv:
+            starts = sorted({s.interval[0] for _, s in with_iv})
+            for t in starts:
+                active = [
+                    v
+                    for v, s in with_iv
+                    if s.interval[0] <= t < s.interval[1]
+                ]
+                if active:
+                    model.Add(sum(active) <= capacity)
+
+        by_lesson: dict[int, list] = defaultdict(list)
+        for v, s in without:
+            by_lesson[s.lesson].append(v)
+        if without:
+            for v, s in with_iv:
+                if any(s2.lesson == s.lesson for _, s2 in without):
+                    by_lesson[s.lesson].append(v)
+        for vars_ in by_lesson.values():
+            if vars_:
+                model.Add(sum(vars_) <= capacity)
 
 
 @dataclass
@@ -69,46 +105,21 @@ class ResidualGraphSolver:
         self._classroom_resolver = classroom_resolver
         self._schedule = ScheduleService(session, school_id)
 
-
-    def _build_units(self, assignments):
-        units = []
-        by_assignment = defaultdict(list)
-        counts = placed_counts(self.session, [a.id for a in assignments])
-        for assignment in assignments:
-            rem = remaining_for(assignment, placed=counts.get(assignment.id, 0))
-            for i in range(rem):
-                unit = AssignmentUnit(
-                    unit_id=f"a{assignment.id}#{i+1}",
-                    assignment_id=assignment.id,
-                    teacher_id=assignment.teacher_id,
-                    class_id=assignment.class_id,
-                    subject_id=assignment.subject_id,
-                    school_level=assignment.school_class.school_level if assignment.school_class else "elementary",
-                )
-                units.append(unit)
-                by_assignment[assignment.id].append(unit)
-        return units, by_assignment
-
-    def _build_slots(self, classes):
-        by_class = defaultdict(list)
-        for school_class in classes:
-            shift = school_class.shift if school_class and school_class.shift_id else None
-            wd = shift.working_days if shift else 5
-            start = shift.start_lesson if shift else 1
-            end_excl = (shift.start_lesson + shift.lessons_count) if shift else 8
-            for day in range(1, wd + 1):
-                for lesson in range(start, end_excl):
-                    slot = Slot(
-                        slot_id=f"c{school_class.id}:d{day}:l{lesson}",
-                        class_id=school_class.id,
-                        day=day,
-                        lesson=lesson,
-                        shift_id=school_class.shift_id,
-                    )
-                    by_class[school_class.id].append(slot)
-        return by_class
-
-    def _build_edges(self, units, slots_by_class, assignment_map, school_level):
+    def _build_edges(
+        self,
+        units,
+        slots_by_class,
+        assignment_map,
+        school_level,
+        *,
+        teacher_busy,
+        classroom_busy,
+        class_occupancy,
+        classroom_caps,
+        max_per_subject_day,
+        subject_day_counts,
+        teacher_class_day_counts,
+    ):
         adjacency = defaultdict(list)
         edges = []
         diagnostics_raw = defaultdict(Counter)
@@ -118,17 +129,39 @@ class ResidualGraphSolver:
             assignment = assignment_map[unit.assignment_id]
             classroom_id = self._classroom_resolver(assignment, school_level)
             for slot in slots_by_class.get(unit.class_id, []):
-                errors = self.validator.validate_cell(
-                    assignment=assignment,
-                    day=slot.day,
-                    lesson=slot.lesson,
-                    classroom_id=classroom_id,
-                )
-                if errors:
-                    for err in errors:
-                        diagnostics_raw[assignment.id][err] += 1
+                reason = None
+                for occupied in class_occupancy.get(unit.class_id, []):
+                    if occupancy_blocks_unit(unit, occupied, candidate_slot=slot):
+                        reason = "Класс уже занят в это время"
+                        break
+                if reason is None and teacher_busy_at_slot(
+                    slot, unit.teacher_id, teacher_busy
+                ):
+                    reason = "Учитель уже занят в это время"
+                if reason is None and classroom_id:
+                    cap = classroom_caps.get(classroom_id, 1)
+                    if classroom_at_capacity(
+                        slot, classroom_id, classroom_busy, cap
+                    ):
+                        reason = "Кабинет уже занят в это время"
+                if reason is None:
+                    subj_key = (unit.assignment_id, slot.day)
+                    if subject_day_limit_reached(
+                        subject_day_counts.get(subj_key, 0), max_per_subject_day
+                    ):
+                        reason = "Лимит уроков по предмету в этот день"
+                if reason is None and unit.teacher_id:
+                    tc_key = (unit.teacher_id, unit.class_id, slot.day)
+                    if teacher_class_day_limit_reached(
+                        teacher_class_day_counts.get(tc_key, 0), 2
+                    ):
+                        reason = "Лимит учитель+класс в этот день"
+                if reason is not None:
+                    diagnostics_raw[assignment.id][reason] += 1
                     continue
-                edge = FeasibleEdge(unit_id=unit.unit_id, slot_id=slot.slot_id, hard_ok=True, cost=0)
+                edge = FeasibleEdge(
+                    unit_id=unit.unit_id, slot_id=slot.slot_id, hard_ok=True, cost=0
+                )
                 edges.append(edge)
                 adjacency[unit.unit_id].append(slot.slot_id)
                 feasible_by_assignment[assignment.id] += 1
@@ -187,10 +220,60 @@ class ResidualGraphSolver:
             else []
         )
 
-        units, _ = self._build_units(assignments)
-        slots_by_class = self._build_slots(classes)
+        settings = load_settings(self.session, self.school_id, school_level)
+        max_per_subject_day = settings.max_lessons_per_subject_per_day if settings else 2
+
+        units = build_unit_facts(
+            assignments,
+            hours_mode="remaining",
+            placed_counts=placed_counts(self.session, [a.id for a in assignments]),
+        )
+        slots_by_class = build_slots_by_class(
+            classes,
+            session=self.session,
+            with_intervals=True,
+            allow_default_grid=True,
+        )
+
+        teacher_ids = {u.teacher_id for u in units if u.teacher_id}
+        classroom_ids = set()
+        classroom_caps: dict[int, int] = {}
+        for a in assignments:
+            rid = self._classroom_resolver(a, school_level)
+            if rid:
+                classroom_ids.add(rid)
+        for rid in classroom_ids:
+            room = self.session.get(Classroom, rid)
+            classroom_caps[rid] = (room.classes_capacity or 1) if room else 1
+
+        teacher_busy = load_teacher_busy(self.session, teacher_ids)
+        classroom_busy = load_classroom_busy(self.session, classroom_ids)
+        class_occupancy = load_class_occupancy(self.session, class_ids)
+
+        subject_day_counts: dict[tuple[int, int], int] = Counter()
+        for _cid, facts in class_occupancy.items():
+            for fact in facts:
+                if fact.assignment_id is not None:
+                    subject_day_counts[(fact.assignment_id, fact.day)] += 1
+
+        teacher_class_day_counts: dict[tuple[int, int, int], int] = Counter()
+        for tid, facts in teacher_busy.items():
+            for fact in facts:
+                if fact.class_id is not None:
+                    teacher_class_day_counts[(tid, fact.class_id, fact.day)] += 1
+
         adjacency, _edges, diagnostics_raw, feasible_by_assignment = self._build_edges(
-            units, slots_by_class, assignment_map, school_level
+            units,
+            slots_by_class,
+            assignment_map,
+            school_level,
+            teacher_busy=teacher_busy,
+            classroom_busy=classroom_busy,
+            class_occupancy=class_occupancy,
+            classroom_caps=classroom_caps,
+            max_per_subject_day=max_per_subject_day,
+            subject_day_counts=subject_day_counts,
+            teacher_class_day_counts=teacher_class_day_counts,
         )
         matched = self._max_bipartite_matching(units, adjacency)
 
@@ -279,58 +362,6 @@ class ResidualGraphSolver:
         )
 
 
-def _external_teacher_busy_slots(
-    teacher_ids: set[int], class_ids_scope: list[int], session
-) -> dict[int, list[tuple]]:
-    """
-    Учителя заняты вне области пересборки: (shift_id, day, lesson) по существующим ячейкам.
-    """
-    busy: dict[int, list[tuple]] = defaultdict(list)
-    if not teacher_ids:
-        return busy
-    s = session
-    rows = (
-        s.query(ScheduleCell).join(TeachingAssignment)
-        .filter(
-            TeachingAssignment.teacher_id.in_(teacher_ids),
-            ~ScheduleCell.class_id.in_(class_ids_scope),
-        )
-        .all()
-    )
-    for cell in rows:
-        tid = cell.assignment.teacher_id
-        sc = cell.school_class
-        sh = sc.shift_id if sc else None
-        busy[tid].append((sh, cell.day_of_week, cell.lesson_number))
-    return busy
-
-
-def _slot_conflicts_teacher_external(
-    slot: Slot, teacher_id: int | None, external_busy: dict[int, list[tuple]], session=None
-) -> bool:
-    if not teacher_id:
-        return False
-    for sh_other, d, l in external_busy.get(teacher_id, []):
-        if schedules_conflict(
-            slot.shift_id, slot.lesson, slot.day,
-            sh_other, l, d,
-            session=session,
-        ):
-            return True
-    return False
-
-
-def _units_cannot_share_same_class_slot(a1: TeachingAssignment, a2: TeachingAssignment) -> bool:
-    """True if two assignments cannot occupy the same (class, day, lesson) slot simultaneously."""
-    if a1.class_id != a2.class_id:
-        return False
-    if a1.id == a2.id:
-        return True
-    return not groups_can_share_slot(
-        a1.group_number, a2.group_number, a1.subject_id, a2.subject_id
-    )
-
-
 @dataclass
 class CpSatSolveResult:
     """Result of CP-SAT optimization for one shift."""
@@ -366,42 +397,6 @@ class CpSatScheduleSolver:
         self._schedule = ScheduleService(session, school_id)
 
 
-    def _build_units(self, assignments: list[TeachingAssignment]) -> list[AssignmentUnit]:
-        units: list[AssignmentUnit] = []
-        for assignment in assignments:
-            for i in range(assignment.hours_per_week):
-                units.append(
-                    AssignmentUnit(
-                        unit_id=f"a{assignment.id}#{i+1}",
-                        assignment_id=assignment.id,
-                        teacher_id=assignment.teacher_id,
-                        class_id=assignment.class_id,
-                        subject_id=assignment.subject_id,
-                        school_level=assignment.school_class.school_level
-                        if assignment.school_class
-                        else "elementary",
-                    )
-                )
-        return units
-
-    def _slots_for_shift_class(self, school_class: SchoolClass) -> list[Slot]:
-        shift = school_class.shift if school_class and school_class.shift_id else None
-        if not shift:
-            return []
-        slots = []
-        for day in range(1, shift.working_days + 1):
-            for lesson in range(shift.start_lesson, shift.start_lesson + shift.lessons_count):
-                slots.append(
-                    Slot(
-                        slot_id=f"c{school_class.id}:d{day}:l{lesson}",
-                        class_id=school_class.id,
-                        day=day,
-                        lesson=lesson,
-                        shift_id=school_class.shift_id,
-                    )
-                )
-        return slots
-
     def _compute_schedule_metrics(self, class_ids: list[int]) -> dict[str, Any]:
         """Aggregate window gaps and simple class load balance for classes in scope."""
         if not class_ids:
@@ -434,11 +429,12 @@ class CpSatScheduleSolver:
             total_gaps += len(self.validator.get_teacher_windows(tid, working_days=wd))
 
         load_penalty = 0
+        cells = load_cells_for_classes(self.session, class_ids)
+        by_class_day: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+        for cell in cells:
+            by_class_day[cell.class_id][cell.day_of_week] += 1
         for cid in class_ids:
-            cells = self.session.query(ScheduleCell).filter(ScheduleCell.class_id == cid).all()
-            by_day: dict[int, int] = defaultdict(int)
-            for cell in cells:
-                by_day[cell.day_of_week] += 1
+            by_day = by_class_day.get(cid) or {}
             if not by_day:
                 continue
             vals = list(by_day.values())
@@ -509,13 +505,13 @@ class CpSatScheduleSolver:
 
         metrics_before = self._compute_schedule_metrics(class_ids)
 
-        units = self._build_units(assignments)
+        units = build_unit_facts(assignments, hours_mode="full")
         if not units:
             return CpSatSolveResult(status="MODEL_INVALID", diagnostics=[{"reason": "Нет часов для размещения"}])
 
-        slots_by_class: dict[int, list[Slot]] = {}
-        for sc in shift_classes:
-            slots_by_class[sc.id] = self._slots_for_shift_class(sc)
+        slots_by_class: dict[int, list[SlotFact]] = build_slots_by_class(
+            shift_classes, session=self.session, with_intervals=True
+        )
 
         shift_obj = shift_classes[0].shift
         if not shift_obj:
@@ -538,8 +534,8 @@ class CpSatScheduleSolver:
                 )
 
         teacher_ids_scope = {u.teacher_id for u in units if u.teacher_id}
-        external_busy = _external_teacher_busy_slots(
-            teacher_ids_scope, class_ids, session=self.session
+        external_busy = load_external_teacher_busy(
+            self.session, teacher_ids_scope, class_ids
         )
 
         # --- CP-SAT model
@@ -549,7 +545,7 @@ class CpSatScheduleSolver:
         unit_list = list(enumerate(units))
         unit_by_idx = {i: u for i, u in unit_list}
 
-        feasible_slots_by_unit: dict[int, list[Slot]] = {}
+        feasible_slots_by_unit: dict[int, list[SlotFact]] = {}
         for ui, unit in unit_list:
             slot_list = slots_by_class.get(unit.class_id, [])
             if not slot_list:
@@ -560,9 +556,7 @@ class CpSatScheduleSolver:
             feasible = [
                 s
                 for s in slot_list
-                if not _slot_conflicts_teacher_external(
-                    s, unit.teacher_id, external_busy, session=self.session
-                )
+                if not teacher_busy_at_slot(s, unit.teacher_id, external_busy)
             ]
             if not feasible:
                 return CpSatSolveResult(
@@ -594,9 +588,9 @@ class CpSatScheduleSolver:
             for i_a in range(len(idxs)):
                 for i_b in range(i_a + 1, len(idxs)):
                     uia, uib = idxs[i_a], idxs[i_b]
-                    a1 = assignment_map[unit_by_idx[uia].assignment_id]
-                    a2 = assignment_map[unit_by_idx[uib].assignment_id]
-                    if not _units_cannot_share_same_class_slot(a1, a2):
+                    if not units_cannot_share_class_slot(
+                        unit_by_idx[uia], unit_by_idx[uib]
+                    ):
                         continue
                     for slot in slot_list:
                         key_a = (uia, slot.slot_id)
@@ -636,26 +630,22 @@ class CpSatScheduleSolver:
                 for lesson in range(lesson_start + 1, lesson_end):
                     model.Add(occ_by_lesson[lesson] <= occ_by_lesson[lesson - 1])
 
-        # Teacher: at most one lesson per (day, lesson) across all classes in this shift
+        # Teacher: at most one overlapping lesson across all classes in this shift
         by_teacher: dict[int, list[int]] = defaultdict(list)
         for ui, unit in unit_list:
             if unit.teacher_id:
                 by_teacher[unit.teacher_id].append(ui)
 
-        for tid, uidxs in by_teacher.items():
-            for day in range(1, shift_obj.working_days + 1):
-                for lesson in range(shift_obj.start_lesson, shift_obj.start_lesson + shift_obj.lessons_count):
-                    terms = []
-                    for ui in uidxs:
-                        for slot in feasible_slots_by_unit[ui]:
-                            if slot.day == day and slot.lesson == lesson:
-                                key = (ui, slot.slot_id)
-                                if key in x:
-                                    terms.append(x[key])
-                    if terms:
-                        model.Add(sum(terms) <= 1)
+        for _tid, uidxs in by_teacher.items():
+            items: list[tuple[Any, SlotFact]] = []
+            for ui in uidxs:
+                for slot in feasible_slots_by_unit[ui]:
+                    key = (ui, slot.slot_id)
+                    if key in x:
+                        items.append((x[key], slot))
+            _add_capacity_overlap_constraints(model, items, capacity=1)
 
-        # Classroom: respect capacity per overlapping time (same shift, same day+lesson as proxy)
+        # Classroom: respect capacity for overlapping time (interval sweep)
         for room_id in {self._classroom_resolver(a, school_level) for a in assignments}:
             if not room_id:
                 continue
@@ -663,20 +653,16 @@ class CpSatScheduleSolver:
             cap_n = (cap.classes_capacity or 1) if cap else 1
             if cap_n >= 10**5:
                 continue
-            for day in range(1, shift_obj.working_days + 1):
-                for lesson in range(shift_obj.start_lesson, shift_obj.start_lesson + shift_obj.lessons_count):
-                    terms = []
-                    for ui, unit in unit_list:
-                        a = assignment_map[unit.assignment_id]
-                        if self._classroom_resolver(a, school_level) != room_id:
-                            continue
-                        for slot in feasible_slots_by_unit[ui]:
-                            if slot.day == day and slot.lesson == lesson:
-                                key = (ui, slot.slot_id)
-                                if key in x:
-                                    terms.append(x[key])
-                    if terms:
-                        model.Add(sum(terms) <= cap_n)
+            items = []
+            for ui, unit in unit_list:
+                a = assignment_map[unit.assignment_id]
+                if self._classroom_resolver(a, school_level) != room_id:
+                    continue
+                for slot in feasible_slots_by_unit[ui]:
+                    key = (ui, slot.slot_id)
+                    if key in x:
+                        items.append((x[key], slot))
+            _add_capacity_overlap_constraints(model, items, capacity=cap_n)
 
         # Max lessons per subject per day (per assignment)
         for a in assignments:
