@@ -301,6 +301,10 @@ class ScheduleQueriesMixin:
         max_lessons_per_subject_per_day: int,
         classroom_mode: str,
         elementary_group_subjects_leave: bool | None = None,
+        pref_teacher_gaps: int | None = None,
+        pref_hard_subjects_early: int | None = None,
+        pref_adjacent_pairs: int | None = None,
+        pref_classroom_stability: int | None = None,
     ) -> ScheduleSettingsData:
         if school_level not in ("elementary", "secondary"):
             raise BadRequestError("Invalid school_level")
@@ -312,6 +316,14 @@ class ScheduleQueriesMixin:
         s.classroom_mode = classroom_mode
         if school_level == "elementary" and elementary_group_subjects_leave is not None:
             s.elementary_group_subjects_leave = elementary_group_subjects_leave
+        if pref_teacher_gaps is not None:
+            s.pref_teacher_gaps = pref_teacher_gaps
+        if pref_hard_subjects_early is not None:
+            s.pref_hard_subjects_early = pref_hard_subjects_early
+        if pref_adjacent_pairs is not None:
+            s.pref_adjacent_pairs = pref_adjacent_pairs
+        if pref_classroom_stability is not None:
+            s.pref_classroom_stability = pref_classroom_stability
         self.db.commit()
         self.db.refresh(s)
         return settings_data(s)

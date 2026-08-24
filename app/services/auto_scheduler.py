@@ -101,6 +101,34 @@ class AutoScheduler:
             done["solver_used"] = True
         yield done
 
+    def repair_iter(
+        self,
+        school_level: str = "elementary",
+        teacher_id: int | None = None,
+        class_id: int | None = None,
+    ):
+        """Дозаполнить непроставленные часы через residual solver (тот же write-path)."""
+        yield {
+            "type": "progress",
+            "current": 0,
+            "total": 1,
+            "message": "Repair: дозаполнение оставшихся часов…",
+        }
+        result = self.graph_solver.solve_residuals(
+            school_level=school_level,
+            teacher_id=teacher_id,
+            class_id=class_id,
+            max_diag_items=20,
+        )
+        yield {
+            "type": "done",
+            "count": result.placed_count,
+            "unplaced": result.unplaced,
+            "diagnostics": result.diagnostics,
+            "solver_used": True,
+            "message": f"Repair: добавлено уроков: {result.placed_count}",
+        }
+
     def cp_sat_schedule_shift_result(
         self,
         shift_id: int,

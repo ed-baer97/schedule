@@ -14,6 +14,10 @@ class ScheduleSettings(Base):
     max_lessons_per_subject_per_day = Column(Integer, default=2)
     classroom_mode = Column(String(20), default="class_room")
     elementary_group_subjects_leave = Column(Boolean, default=True)
+    pref_teacher_gaps = Column(Integer, default=5, nullable=False)
+    pref_hard_subjects_early = Column(Integer, default=5, nullable=False)
+    pref_adjacent_pairs = Column(Integer, default=5, nullable=False)
+    pref_classroom_stability = Column(Integer, default=5, nullable=False)
 
     school = relationship("School")
 

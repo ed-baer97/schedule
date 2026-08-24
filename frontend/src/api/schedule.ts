@@ -9,6 +9,10 @@ export type ScheduleSettings = {
   max_lessons_per_subject_per_day: number
   classroom_mode: ClassroomMode
   elementary_group_subjects_leave: boolean
+  pref_teacher_gaps: number
+  pref_hard_subjects_early: number
+  pref_adjacent_pairs: number
+  pref_classroom_stability: number
 }
 
 export type ClassroomWarning = { type: string; message: string }
@@ -198,6 +202,47 @@ export function enqueueAutoAll(payload: AutoAllPayload) {
 
 export function enqueueAutoByTeacher(payload: AutoByTeacherPayload) {
   return apiJson<{ job_id: number }>('/api/schedule/auto/by-teacher', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export type ExplainSlotPayload = {
+  assignment_id: number
+  day_of_week: number
+  lesson_number: number
+  classroom_id?: number | null
+  cell_id?: number | null
+}
+
+export type ExplainSlotOut = {
+  allowed: boolean
+  blockers: string[]
+  alternatives: {
+    day_of_week: number
+    lesson_number: number
+    day_name: string
+    label: string
+  }[]
+  text: string
+  llm_used: boolean
+}
+
+export function explainSlot(payload: ExplainSlotPayload) {
+  return apiJson<ExplainSlotOut>('/api/schedule/explain', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export type RepairPayload = {
+  school_level: SchoolLevel
+  teacher_id?: number | null
+  class_id?: number | null
+}
+
+export function enqueueRepair(payload: RepairPayload) {
+  return apiJson<{ job_id: number }>('/api/schedule/repair', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

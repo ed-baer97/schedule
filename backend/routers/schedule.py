@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import School, User
 from app.services.job_service import JobService
+from app.services.schedule_explain import ScheduleExplainService
 from app.services.schedule_service import ScheduleService
 from backend.deps import get_current_school, get_current_user, get_db
 from backend.schemas.schedule import (
@@ -20,6 +21,9 @@ from backend.schemas.schedule import (
     ClassroomWarningOut,
     ClearScheduleBody,
     ClearScheduleResult,
+    ExplainSlotBody,
+    ExplainSlotOut,
+    RepairBody,
     ScheduleCellCreate,
     ScheduleCellMove,
     ScheduleCellOut,
@@ -246,5 +250,53 @@ def update_settings(
         max_lessons_per_subject_per_day=body.max_lessons_per_subject_per_day,
         classroom_mode=body.classroom_mode,
         elementary_group_subjects_leave=body.elementary_group_subjects_leave,
+        pref_teacher_gaps=body.pref_teacher_gaps,
+        pref_hard_subjects_early=body.pref_hard_subjects_early,
+        pref_adjacent_pairs=body.pref_adjacent_pairs,
+        pref_classroom_stability=body.pref_classroom_stability,
     )
     return ScheduleSettingsOut.model_validate(asdict(s))
+
+
+@router.post("/explain", response_model=ExplainSlotOut)
+def explain_slot(
+    body: ExplainSlotBody,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> ExplainSlotOut:
+    result = ScheduleExplainService(db, school.id).explain_slot(
+        assignment_id=body.assignment_id,
+        day_of_week=body.day_of_week,
+        lesson_number=body.lesson_number,
+        classroom_id=body.classroom_id,
+        cell_id=body.cell_id,
+    )
+    return ExplainSlotOut(
+        allowed=result.allowed,
+        blockers=result.blockers,
+        alternatives=[
+            {
+                "day_of_week": a.day_of_week,
+                "lesson_number": a.lesson_number,
+                "day_name": a.day_name,
+                "label": a.label,
+            }
+            for a in result.alternatives
+        ],
+        text=result.text,
+        llm_used=result.llm_used,
+    )
+
+
+@router.post("/repair", status_code=202)
+def enqueue_repair(
+    body: RepairBody,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+    user: User = Depends(get_current_user),
+) -> dict:
+    return JobService(db, school.id).enqueue_auto(
+        kind="repair",
+        payload=body.model_dump(),
+        created_by_id=user.id,
+    )

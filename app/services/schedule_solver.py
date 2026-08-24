@@ -737,17 +737,22 @@ class CpSatScheduleSolver:
                     model.Add(sum(terms) <= 2)
 
         # Objective: prefer earlier days/lessons + soft balance + quality preferences
+        from app.domain.preferences import solver_scales, weights_from_settings
+
+        scales = solver_scales(weights_from_settings(settings))
         obj_terms = []
-        w_slot = 1
-        w_balance = 1
-        w_non_adjacent_pair = 200
-        w_subgroup_spread = 30
+        w_slot = scales.slot
+        w_balance = scales.day_balance
+        w_non_adjacent_pair = scales.non_adjacent_pair
+        w_subgroup_spread = scales.subgroup_spread
         for ui, unit in unit_list:
             for slot in feasible_slots_by_unit[ui]:
                 key = (ui, slot.slot_id)
                 if key not in x:
                     continue
                 weight = slot.day * 100 + slot.lesson
+                if slot.lesson >= 6:
+                    weight += scales.late_lesson * (slot.lesson - 5)
                 obj_terms.append(x[key] * weight * w_slot)
 
         # Penalize uneven distribution across days per class (linear proxy)
@@ -852,6 +857,28 @@ class CpSatScheduleSolver:
                 else:
                     model.Add(day_active == 0)
                 obj_terms.append(day_active * w_subgroup_spread)
+
+        if scales.teacher_days:
+            teacher_ids = {unit.teacher_id for _, unit in unit_list if unit.teacher_id}
+            for tid in teacher_ids:
+                for day in range(1, shift_obj.working_days + 1):
+                    day_terms = []
+                    for ui, unit in unit_list:
+                        if unit.teacher_id != tid:
+                            continue
+                        for slot in feasible_slots_by_unit[ui]:
+                            if slot.day == day:
+                                key = (ui, slot.slot_id)
+                                if key in x:
+                                    day_terms.append(x[key])
+                    day_active = model.NewBoolVar(f"tdays_t{tid}_d{day}")
+                    if day_terms:
+                        dsum = sum(day_terms)
+                        model.Add(dsum >= day_active)
+                        model.Add(dsum <= len(day_terms) * day_active)
+                    else:
+                        model.Add(day_active == 0)
+                    obj_terms.append(day_active * scales.teacher_days)
 
         model.Minimize(sum(obj_terms))
 

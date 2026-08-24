@@ -50,6 +50,10 @@ class ScheduleSettingsData:
     max_lessons_per_subject_per_day: int
     classroom_mode: str
     elementary_group_subjects_leave: bool
+    pref_teacher_gaps: int = 5
+    pref_hard_subjects_early: int = 5
+    pref_adjacent_pairs: int = 5
+    pref_classroom_stability: int = 5
 
 
 @dataclass
@@ -183,6 +187,10 @@ def settings_data(s) -> ScheduleSettingsData:
         max_lessons_per_subject_per_day=s.max_lessons_per_subject_per_day,
         classroom_mode=s.classroom_mode,
         elementary_group_subjects_leave=s.elementary_group_subjects_leave,
+        pref_teacher_gaps=int(getattr(s, "pref_teacher_gaps", 5) or 5),
+        pref_hard_subjects_early=int(getattr(s, "pref_hard_subjects_early", 5) or 5),
+        pref_adjacent_pairs=int(getattr(s, "pref_adjacent_pairs", 5) or 5),
+        pref_classroom_stability=int(getattr(s, "pref_classroom_stability", 5) or 5),
     )
 
 

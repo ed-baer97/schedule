@@ -7,6 +7,7 @@ import { extractApiError } from '../api/client'
 import {
   createScheduleCell,
   deleteScheduleCell,
+  explainSlot,
   fetchAssignmentsForClass,
   fetchGrid,
   updateScheduleCell,
@@ -236,6 +237,7 @@ export function SchedulePage() {
   const [toast, setToast] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
   const { expanded, setExpanded } = useScheduleExpand()
   const [slot, setSlot] = useState<SlotKey | null>(null)
+  const [whyCell, setWhyCell] = useState<CellOut | null>(null)
   const hashTimer = useRef<number>(0)
   const restoreDone = useRef(false)
   const syncAllowed = useRef(false)
@@ -735,6 +737,18 @@ export function SchedulePage() {
                                   )}
                                   <button
                                     type="button"
+                                    className="btn btn-sm btn-link text-muted p-0 position-absolute"
+                                    style={{ top: 2, right: 18 }}
+                                    title="Почему этот слот"
+                                    onClick={(ev) => {
+                                      ev.stopPropagation()
+                                      setWhyCell(cell)
+                                    }}
+                                  >
+                                    ?
+                                  </button>
+                                  <button
+                                    type="button"
                                     className="btn btn-sm btn-link text-danger p-0 position-absolute"
                                     style={{ top: 2, right: 4 }}
                                     title="Удалить"
@@ -786,6 +800,10 @@ export function SchedulePage() {
           }
           submitting={addM.isPending}
         />
+      )}
+
+      {whyCell && (
+        <WhyCellModal cell={whyCell} onClose={() => setWhyCell(null)} />
       )}
     </div>
   )
@@ -921,6 +939,14 @@ function AddLessonModal(props: {
                     ))}
                   </select>
                 </div>
+                {assignmentId !== '' && (
+                  <WhyPanel
+                    assignmentId={assignmentId}
+                    day={slot.day}
+                    lesson={slot.lesson}
+                    classroomId={classroomId === '' ? null : classroomId}
+                  />
+                )}
               </>
             )}
           </div>
@@ -943,6 +969,90 @@ function AddLessonModal(props: {
         </div>
       </div>
     </div>
+    </ModalPortal>
+  )
+}
+
+function WhyPanel(props: {
+  assignmentId: number
+  day: number
+  lesson: number
+  classroomId: number | null
+  cellId?: number | null
+}) {
+  const { assignmentId, day, lesson, classroomId, cellId } = props
+  const q = useQuery({
+    queryKey: ['schedule', 'explain', assignmentId, day, lesson, classroomId, cellId ?? null],
+    queryFn: () =>
+      explainSlot({
+        assignment_id: assignmentId,
+        day_of_week: day,
+        lesson_number: lesson,
+        classroom_id: classroomId,
+        cell_id: cellId ?? null,
+      }),
+  })
+  return (
+    <div className="border rounded p-2 bg-light small">
+      <div className="fw-semibold mb-1">Почему</div>
+      {q.isLoading && <div className="text-muted">Проверяем слот…</div>}
+      {q.isError && <div className="text-danger">{(q.error as Error).message}</div>}
+      {q.data && (
+        <>
+          <div className={q.data.allowed ? 'text-success' : 'text-danger'} style={{ whiteSpace: 'pre-line' }}>
+            {q.data.text}
+          </div>
+          {q.data.llm_used && (
+            <div className="text-muted mt-1">Текст сформулирован Qwen по фактам валидатора.</div>
+          )}
+          {q.data.alternatives.length > 0 && (
+            <div className="mt-2">
+              <div className="text-muted">Другие свободные слоты:</div>
+              <ul className="mb-0 mt-1 ps-3">
+                {q.data.alternatives.map((a) => (
+                  <li key={`${a.day_of_week}-${a.lesson_number}`}>{a.label}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function WhyCellModal(props: { cell: CellOut; onClose: () => void }) {
+  const { cell, onClose } = props
+  return (
+    <ModalPortal>
+      <div className="modal show d-block" tabIndex={-1} style={{ background: 'rgba(0,0,0,.35)' }}>
+        <div className="modal-dialog">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h5 className="modal-title">Почему этот слот</h5>
+              <button type="button" className="btn-close" aria-label="Закрыть" onClick={onClose} />
+            </div>
+            <div className="modal-body">
+              <div className="text-muted small mb-2">
+                {cell.subject_name}
+                {cell.teacher_name ? ` · ${cell.teacher_name}` : ''}
+              </div>
+              <WhyPanel
+                assignmentId={cell.assignment_id}
+                day={cell.day_of_week}
+                lesson={cell.lesson_number}
+                classroomId={cell.classroom_id}
+                cellId={cell.id}
+              />
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={onClose}>
+                Закрыть
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </ModalPortal>
   )
 }

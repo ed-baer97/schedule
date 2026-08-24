@@ -99,7 +99,7 @@ schedule/
 | `/api/dashboard` | сводка |
 | `/api/teachers`, `/classrooms`, `/school-classes`, `/shifts`, `/subjects` | CRUD |
 | `/api/workload`, `/assignments` | нагрузка и назначения |
-| `/api/schedule` | сетка, ячейки, настройки; `POST …/auto` → `202` + `job_id` |
+| `/api/schedule` | сетка, ячейки, настройки; `POST …/auto` и `POST …/repair` → `202` + `job_id`; `POST …/explain` — факты валидатора + текст Qwen |
 | `/api/reports` | просмотр и Excel |
 | `/api/import` | Excel: `POST /subject-hours` (несколько файлов), старые шаблоны пока на месте |
 
@@ -144,11 +144,15 @@ Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker 
 | `schedule_fact_loader.py` | плоские `UnitFact` / `SlotFact` / teacher/classroom busy для валидатора и солверов |
 | `validators.py` | конфликты ячеек (грузят факты; предикаты из domain) |
 | `excel_import.py` | парсинг Excel; запись только через сервисы |
-| `auto_scheduler.py` | «лесенка»; ячейки только через `ScheduleService`; подгруппы через `groups_can_share_slot` |
-| `schedule_solver.py` | residual + OR-Tools CP-SAT на фактах из loader; ячейки через `ScheduleService` |
+| `schedule_explain.py` | панель «почему»: факты валидатора + остаток часов; Qwen только формулирует текст |
+| `qwen_client.py` | DashScope OpenAI-compatible; phrasing only, без записи ячеек |
+| `auto_scheduler.py` | «лесенка»; ячейки только через `ScheduleService`; `repair_iter` — residual solver, тот же write-path |
+| `schedule_solver.py` | residual + OR-Tools CP-SAT на фактах из loader; веса из `ScheduleSettings` / `app.domain.preferences` |
 | `bell_schedule.py` | интервалы звонков; `slots_conflict` из domain |
 
-Чистые хелперы: `app/domain/` — дни/`fmt_time`, `grade_from_name` / `level_from_grade` / `level_label`, `normalize_person_name`, `remaining_hours`, `schedule_facts` (`UnitFact`/`SlotFact`/`BusySlotFact`), `slots_conflict` / `slot_facts_conflict` / `groups_can_share_slot` / `units_cannot_share_class_slot` / `occupancy_blocks_unit` / `teacher_busy_at_slot` / `classroom_at_capacity` / лимиты дня.
+Чистые хелперы: `app/domain/` — дни/`fmt_time`, `grade_from_name` / `level_from_grade` / `level_label`, `normalize_person_name`, `remaining_hours`, `schedule_facts` (`UnitFact`/`SlotFact`/`BusySlotFact`), `slots_conflict` / `slot_facts_conflict` / `groups_can_share_slot` / `units_cannot_share_class_slot` / `occupancy_blocks_unit` / `teacher_busy_at_slot` / `classroom_at_capacity` / лимиты дня, `preferences` (веса 0–10 → коэффициенты CP-SAT).
+
+Автосоставление: есть Redis — Celery worker; нет — синхронный fallback. Одна активная задача на школу (иначе `409`). Виды job: `auto_all`, `auto_by_teacher`, `repair`. Repair не пишет ячейки сам — только residual solver через `ScheduleService`. Панель «почему» на сетке не ставит уроки: валидатор даёт факты, Qwen (если задан `QWEN_API_KEY`) пересказывает их.
 
 Все школьные сервисы принимают обязательный `school_id: int` (`AdminService` — platform-wide).
 

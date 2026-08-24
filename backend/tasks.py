@@ -87,6 +87,12 @@ def run_auto_schedule(self, job_id: int) -> dict:
                 int(payload["teacher_id"]),
                 payload.get("school_level", "elementary"),
             )
+        elif kind == "repair":
+            iterator = scheduler.repair_iter(
+                payload.get("school_level", "elementary"),
+                teacher_id=payload.get("teacher_id"),
+                class_id=payload.get("class_id"),
+            )
         else:
             _update_job(db, job_id, status=JOB_FAILED, error=f"Unknown kind {kind}")
             return {"error": "unknown kind"}

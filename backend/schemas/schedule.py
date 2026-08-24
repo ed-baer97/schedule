@@ -52,6 +52,10 @@ class ScheduleSettingsOut(BaseModel):
     max_lessons_per_subject_per_day: int
     classroom_mode: str
     elementary_group_subjects_leave: bool
+    pref_teacher_gaps: int = 5
+    pref_hard_subjects_early: int = 5
+    pref_adjacent_pairs: int = 5
+    pref_classroom_stability: int = 5
 
 
 class ClassroomWarningOut(BaseModel):
@@ -163,3 +167,29 @@ class SettingsUpdate(BaseModel):
     max_lessons_per_subject_per_day: int = Field(..., ge=1, le=5)
     classroom_mode: str = Field(..., pattern="^(class_room|teacher_room)$")
     elementary_group_subjects_leave: bool | None = None
+    pref_teacher_gaps: int = Field(5, ge=0, le=10)
+    pref_hard_subjects_early: int = Field(5, ge=0, le=10)
+    pref_adjacent_pairs: int = Field(5, ge=0, le=10)
+    pref_classroom_stability: int = Field(5, ge=0, le=10)
+
+
+class ExplainSlotBody(BaseModel):
+    assignment_id: int
+    day_of_week: int = Field(..., ge=1, le=6)
+    lesson_number: int = Field(..., ge=0, le=20)
+    classroom_id: int | None = None
+    cell_id: int | None = None
+
+
+class ExplainSlotOut(BaseModel):
+    allowed: bool
+    blockers: list[str]
+    alternatives: list[dict]
+    text: str
+    llm_used: bool
+
+
+class RepairBody(BaseModel):
+    school_level: str = Field("elementary", pattern="^(elementary|secondary)$")
+    teacher_id: int | None = None
+    class_id: int | None = None

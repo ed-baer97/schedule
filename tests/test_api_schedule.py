@@ -7,6 +7,7 @@ from sqlalchemy import delete
 
 from app.models import (
     Classroom,
+    Job,
     ScheduleCell,
     ScheduleSettings,
     SchoolClass,
@@ -29,6 +30,7 @@ def _clear_db() -> None:
             ScheduleCell,
             TeachingAssignment,
             ScheduleSettings,
+            Job,
             SchoolClass,
             Shift,
             Subject,
@@ -61,13 +63,21 @@ def test_schedule_settings_roundtrip() -> None:
             "max_lessons_per_subject_per_day": 1,
             "classroom_mode": "teacher_room",
             "elementary_group_subjects_leave": False,
+            "pref_teacher_gaps": 8,
+            "pref_hard_subjects_early": 9,
+            "pref_adjacent_pairs": 2,
+            "pref_classroom_stability": 7,
         },
     )
     assert upd.status_code == 200, upd.text
     assert upd.json()["classroom_mode"] == "teacher_room"
+    assert upd.json()["pref_teacher_gaps"] == 8
+    assert upd.json()["pref_hard_subjects_early"] == 9
 
     refreshed = client.get("/api/schedule/settings").json()
     assert refreshed["elementary"]["max_lessons_per_subject_per_day"] == 1
+    assert refreshed["elementary"]["pref_adjacent_pairs"] == 2
+    assert refreshed["elementary"]["pref_classroom_stability"] == 7
 
 
 def test_auto_page_data_empty() -> None:
@@ -338,6 +348,61 @@ def test_schedule_cell_crud_and_report() -> None:
 
     assert client.delete(f"/api/schedule/cells/{cell_id}").status_code == 204
     assert client.get("/api/schedule/grid?school_level=elementary").json()["cells"] == []
+
+
+def test_explain_slot_without_qwen_key() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Сидоров С.С.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1Б", grade=1, school_level="elementary"
+        )
+        session.add_all([shift, subject, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        assignment = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=subject.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=4,
+        )
+        session.add(assignment)
+        session.commit()
+        assignment_id = assignment.id
+
+    explained = client.post(
+        "/api/schedule/explain",
+        json={
+            "assignment_id": assignment_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+        },
+    )
+    assert explained.status_code == 200, explained.text
+    body = explained.json()
+    assert body["allowed"] is True
+    assert body["llm_used"] is False
+    assert body["text"]
+    assert "Математика" in body["text"]
+
+
+def test_repair_enqueue_returns_202() -> None:
+    queued = client.post(
+        "/api/schedule/repair",
+        json={"school_level": "elementary"},
+    )
+    assert queued.status_code == 202, queued.text
+    assert "job_id" in queued.json()
 
 
 def test_subject_assignments_too_many_teachers() -> None:

@@ -5,6 +5,7 @@ import {
   clearSchedule,
   enqueueAutoAll,
   enqueueAutoByTeacher,
+  enqueueRepair,
   fetchAutoPageData,
   runJobAndPoll,
   updateScheduleSettings,
@@ -20,6 +21,10 @@ function defaultSettings(level: SchoolLevel): ScheduleSettings {
     max_lessons_per_subject_per_day: 2,
     classroom_mode: 'class_room',
     elementary_group_subjects_leave: true,
+    pref_teacher_gaps: 5,
+    pref_hard_subjects_early: 5,
+    pref_adjacent_pairs: 5,
+    pref_classroom_stability: 5,
   }
 }
 
@@ -171,6 +176,24 @@ export function AutoSchedulerPage() {
     }
   }
 
+  async function runRepair() {
+    resetState()
+    setRunning(true)
+    try {
+      const job = await runJobAndPoll(
+        () => enqueueRepair({ school_level: level }),
+        (p) => setProgress(p),
+        appendLog,
+      )
+      handleJobResult(job)
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setRunning(false)
+    }
+  }
+
   if (q.isLoading) return <p>Загрузка…</p>
   if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
   const data = q.data!
@@ -302,6 +325,14 @@ export function AutoSchedulerPage() {
                 </button>
                 <button
                   type="button"
+                  className="btn btn-outline-success"
+                  disabled={running}
+                  onClick={runRepair}
+                >
+                  Repair (дозаполнить)
+                </button>
+                <button
+                  type="button"
                   className="btn btn-outline-danger"
                   disabled={running}
                   onClick={() => doClear({ school_level: level })}
@@ -399,15 +430,27 @@ function RulesCard(props: {
   const [maxPerDay, setMaxPerDay] = useState(initial.max_lessons_per_subject_per_day)
   const [mode, setMode] = useState<ClassroomMode>(initial.classroom_mode)
   const [groupLeave, setGroupLeave] = useState(initial.elementary_group_subjects_leave)
+  const [prefGaps, setPrefGaps] = useState(initial.pref_teacher_gaps ?? 5)
+  const [prefEarly, setPrefEarly] = useState(initial.pref_hard_subjects_early ?? 5)
+  const [prefPairs, setPrefPairs] = useState(initial.pref_adjacent_pairs ?? 5)
+  const [prefRooms, setPrefRooms] = useState(initial.pref_classroom_stability ?? 5)
 
   useEffect(() => {
     setMaxPerDay(initial.max_lessons_per_subject_per_day)
     setMode(initial.classroom_mode)
     setGroupLeave(initial.elementary_group_subjects_leave)
+    setPrefGaps(initial.pref_teacher_gaps ?? 5)
+    setPrefEarly(initial.pref_hard_subjects_early ?? 5)
+    setPrefPairs(initial.pref_adjacent_pairs ?? 5)
+    setPrefRooms(initial.pref_classroom_stability ?? 5)
   }, [
     initial.max_lessons_per_subject_per_day,
     initial.classroom_mode,
     initial.elementary_group_subjects_leave,
+    initial.pref_teacher_gaps,
+    initial.pref_hard_subjects_early,
+    initial.pref_adjacent_pairs,
+    initial.pref_classroom_stability,
   ])
 
   return (
@@ -458,6 +501,38 @@ function RulesCard(props: {
               </label>
             </div>
           )}
+          <div className="col-12 mt-3">
+            <div className="fw-semibold small mb-2">Предпочтения автосоставления (0 — не важно, 10 — важно)</div>
+            <div className="row g-2">
+              <PrefSlider
+                id="pref-gaps"
+                label="Без окон у учителя"
+                value={prefGaps}
+                onChange={setPrefGaps}
+              />
+              <PrefSlider
+                id="pref-early"
+                label="Сложные предметы раньше"
+                value={prefEarly}
+                onChange={setPrefEarly}
+              />
+              <PrefSlider
+                id="pref-pairs"
+                label="Сдвоенные уроки рядом"
+                value={prefPairs}
+                onChange={setPrefPairs}
+              />
+              <PrefSlider
+                id="pref-rooms"
+                label="Стабильность кабинетов / баланс дней"
+                value={prefRooms}
+                onChange={setPrefRooms}
+              />
+            </div>
+            <div className="form-text">
+              Веса сохраняются в настройках уровня и применяются при следующем прогоне CP-SAT.
+            </div>
+          </div>
         </div>
         <button
           type="button"
@@ -468,12 +543,43 @@ function RulesCard(props: {
               max_lessons_per_subject_per_day: maxPerDay,
               classroom_mode: mode,
               elementary_group_subjects_leave: showGroupLeave ? groupLeave : undefined,
+              pref_teacher_gaps: prefGaps,
+              pref_hard_subjects_early: prefEarly,
+              pref_adjacent_pairs: prefPairs,
+              pref_classroom_stability: prefRooms,
             })
           }
         >
           Сохранить
         </button>
       </div>
+    </div>
+  )
+}
+
+function PrefSlider(props: {
+  id: string
+  label: string
+  value: number
+  onChange: (n: number) => void
+}) {
+  const { id, label, value, onChange } = props
+  return (
+    <div className="col-md-6">
+      <label className="form-label small d-flex justify-content-between" htmlFor={id}>
+        <span>{label}</span>
+        <span className="text-muted">{value}</span>
+      </label>
+      <input
+        id={id}
+        type="range"
+        className="form-range"
+        min={0}
+        max={10}
+        step={1}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
     </div>
   )
 }

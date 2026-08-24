@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Config
-from app.models import Job, Shift, Teacher
+from app.models import Job, SchoolClass, Shift, Teacher
 from app.models.job import JOB_PENDING, JOB_RUNNING
 from app.services.errors import ConflictError
 from app.services.job_dispatch import dispatch_auto_job
@@ -67,6 +67,9 @@ class JobService:
         teacher_id = body.get("teacher_id")
         if teacher_id is not None:
             require_owned(self.db, Teacher, int(teacher_id), self.school_id)
+        class_id = body.get("class_id")
+        if class_id is not None:
+            require_owned(self.db, SchoolClass, int(class_id), self.school_id)
 
         active = self.db.scalars(
             select(Job).where(
