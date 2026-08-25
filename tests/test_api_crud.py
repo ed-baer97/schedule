@@ -40,6 +40,9 @@ def test_classroom_crud() -> None:
     assert created.status_code == 200, created.text
     cid = created.json()["id"]
     assert created.json()["display_name"]
+    assert created.json()["subject_id"] is None
+    assert created.json()["is_exclusive"] is False
+    assert created.json()["teachers"] == []
 
     listed = client.get("/api/classrooms/")
     assert listed.status_code == 200
@@ -55,6 +58,89 @@ def test_classroom_crud() -> None:
     deleted = client.delete(f"/api/classrooms/{cid}")
     assert deleted.status_code == 204
     assert client.get(f"/api/classrooms/{cid}").status_code == 404
+
+
+def test_classroom_subject_pool() -> None:
+    subj = client.post(
+        "/api/subjects/",
+        json={
+            "name": "Информатика",
+            "color": "#147f78",
+            "requires_fixed_classroom": True,
+        },
+    )
+    assert subj.status_code == 200, subj.text
+    sid = subj.json()["id"]
+
+    bad = client.post(
+        "/api/classrooms/",
+        json={"number": "32", "is_exclusive": True},
+    )
+    assert bad.status_code in (400, 422)
+
+    room = client.post(
+        "/api/classrooms/",
+        json={
+            "number": "32",
+            "name": "Инф",
+            "subject_id": sid,
+            "is_exclusive": True,
+            "classes_capacity": 1,
+        },
+    )
+    assert room.status_code == 200, room.text
+    assert room.json()["subject_id"] == sid
+    assert room.json()["is_exclusive"] is True
+    assert room.json()["subject"]["name"] == "Информатика"
+
+    listed_subj = client.get("/api/subjects/")
+    assert listed_subj.status_code == 200
+    row = next(s for s in listed_subj.json() if s["id"] == sid)
+    assert any(c["id"] == room.json()["id"] for c in row["classrooms"])
+
+
+def test_classroom_multiple_teachers() -> None:
+    first = client.post("/api/teachers/", json={"full_name": "Иванов И.И."})
+    second = client.post("/api/teachers/", json={"full_name": "Петрова П.П."})
+    third = client.post("/api/teachers/", json={"full_name": "Сидоров С.С."})
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert third.status_code == 200, third.text
+    a_id, b_id, c_id = first.json()["id"], second.json()["id"], third.json()["id"]
+
+    room = client.post(
+        "/api/classrooms/",
+        json={"number": "12", "name": "Математика", "teacher_ids": [a_id, b_id]},
+    )
+    assert room.status_code == 200, room.text
+    names = [t["full_name"] for t in room.json()["teachers"]]
+    assert names == ["Иванов И.И.", "Петрова П.П."]
+
+    other = client.post(
+        "/api/classrooms/",
+        json={"number": "14", "teacher_ids": [c_id]},
+    )
+    assert other.status_code == 200, other.text
+    other_id = other.json()["id"]
+
+    moved = client.put(
+        f"/api/classrooms/{room.json()['id']}",
+        json={"teacher_ids": [b_id, c_id]},
+    )
+    assert moved.status_code == 200, moved.text
+    moved_ids = {t["id"] for t in moved.json()["teachers"]}
+    assert moved_ids == {b_id, c_id}
+
+    listed = client.get("/api/teachers/")
+    assert listed.status_code == 200
+    by_id = {t["id"]: t for t in listed.json()}
+    assert by_id[a_id]["home_classroom_id"] is None
+    assert by_id[b_id]["home_classroom_id"] == room.json()["id"]
+    assert by_id[c_id]["home_classroom_id"] == room.json()["id"]
+
+    leftover = client.get(f"/api/classrooms/{other_id}")
+    assert leftover.status_code == 200
+    assert leftover.json()["teachers"] == []
 
 
 def test_shift_and_class_crud() -> None:

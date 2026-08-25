@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.domain.days import DAY_NAMES
 from app.models import SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_count, remaining_for
-from app.services.classroom_resolver import load_settings, resolve_classroom
+from app.services.classroom_resolver import pick_classroom_for
 from app.services.errors import NotFoundError
 from app.services.qwen_client import phrase_for_scheduler
 from app.services.tenancy import require_owned
@@ -107,9 +107,16 @@ class ScheduleExplainService:
 
         school_class = assignment.school_class
         school_level = school_class.school_level if school_class else "elementary"
-        settings = load_settings(self.db, self.school_id, school_level)
         if classroom_id is None:
-            classroom_id = resolve_classroom(assignment, school_level, settings)
+            classroom_id = pick_classroom_for(
+                self.db,
+                self.school_id,
+                assignment,
+                school_level,
+                day=day_of_week,
+                lesson=lesson_number,
+                exclude_cell_id=cell_id,
+            )
 
         blockers = self.validator.validate_cell(
             assignment,

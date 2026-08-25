@@ -7,15 +7,13 @@ export type Subject = {
   color: string | null
   display_color: string
   requires_fixed_classroom: boolean
-  default_classroom_id: number | null
-  default_classroom: { display_name: string } | null
+  classrooms: { id: number; display_name: string }[]
 }
 
 export type SubjectPayload = {
   name: string
   color: string
   requires_fixed_classroom: boolean
-  default_classroom_id: number | null
 }
 
 export type SubjectAssignmentClassRow = {

@@ -12,7 +12,6 @@ import {
   updateSubjectColor,
   type Subject,
 } from '../api/subjects'
-import { listClassrooms } from '../api/classrooms'
 
 const DEFAULT_PALETTE = [
   '#147f78',
@@ -37,16 +36,11 @@ export function SubjectsPage() {
     name: '',
     color: '#147f78',
     requires_fixed_classroom: false,
-    default_classroom_id: '',
   })
 
   const subjectsQ = useQuery({
     queryKey: ['subjects', filter],
     queryFn: () => listSubjects(filter),
-  })
-  const roomsQ = useQuery({
-    queryKey: ['classrooms'],
-    queryFn: listClassrooms,
   })
   const paletteQ = useQuery({
     queryKey: ['subjects', 'color-palette'],
@@ -70,7 +64,6 @@ export function SubjectsPage() {
         name: form.name.trim(),
         color: form.color,
         requires_fixed_classroom: form.requires_fixed_classroom,
-        default_classroom_id: form.default_classroom_id === '' ? null : Number(form.default_classroom_id),
       }
       if (!payload.name) throw new Error('Укажите название')
       if (editingId === 'new') {
@@ -107,7 +100,6 @@ export function SubjectsPage() {
       name: '',
       color: '#147f78',
       requires_fixed_classroom: false,
-      default_classroom_id: '',
     })
     setEditingId('new')
   }
@@ -117,16 +109,14 @@ export function SubjectsPage() {
       name: s.name,
       color: s.display_color,
       requires_fixed_classroom: s.requires_fixed_classroom,
-      default_classroom_id: s.default_classroom_id === null ? '' : String(s.default_classroom_id),
     })
     setEditingId(s.id)
   }
 
-  if (subjectsQ.isLoading || roomsQ.isLoading) return <p>Загрузка…</p>
+  if (subjectsQ.isLoading) return <p>Загрузка…</p>
   if (subjectsQ.isError) return <p className="text-danger">{(subjectsQ.error as Error).message}</p>
 
   const subjects = subjectsQ.data ?? []
-  const rooms = roomsQ.data ?? []
 
   return (
     <div>
@@ -164,7 +154,7 @@ export function SubjectsPage() {
               <th style={{ width: 48 }} />
               <th>Название</th>
               <th>Фикс. кабинет</th>
-              <th>По умолчанию</th>
+              <th>Кабинеты</th>
               <th />
             </tr>
           </thead>
@@ -189,7 +179,11 @@ export function SubjectsPage() {
                   </Link>
                 </td>
                 <td>{s.requires_fixed_classroom ? 'да' : '—'}</td>
-                <td>{s.default_classroom?.display_name ?? '—'}</td>
+                <td>
+                  {s.classrooms?.length
+                    ? s.classrooms.map((c) => c.display_name).join(', ')
+                    : '—'}
+                </td>
                 <td className="text-end text-nowrap">
                   <Link
                     to={`/subjects/${s.id}/assignments${filter === 'all' ? '' : `?school_level=${filter}`}`}
@@ -296,21 +290,10 @@ export function SubjectsPage() {
                     Нужен фиксированный кабинет
                   </label>
                 </div>
-                <div className="mb-2">
-                  <label className="form-label">Кабинет по умолчанию</label>
-                  <select
-                    className="form-select"
-                    value={form.default_classroom_id}
-                    onChange={(e) => setForm((f) => ({ ...f, default_classroom_id: e.target.value }))}
-                  >
-                    <option value="">—</option>
-                    {rooms.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.display_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <p className="small text-muted mb-0">
+                  Кабинеты предмета задаются на странице{' '}
+                  <Link to="/classrooms">Кабинеты</Link>.
+                </p>
               </div>
               <div className="modal-footer">
                 <button type="button" className="btn btn-secondary" onClick={() => setEditingId(null)}>

@@ -1010,6 +1010,11 @@ html[data-theme='dark'] .admin-page .accordion-button::after {
   font-weight: 600;
 }
 
+.app-shell .classroom-teachers-picker {
+  max-height: 11rem;
+  overflow-y: auto;
+}
+
 html[data-theme='dark'] .app-shell .accordion-button::after {
   filter: invert(1) brightness(1.2);
 }

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
-from app.models import Classroom, SchoolClass, Subject, TeachingAssignment
+from app.models import SchoolClass, Subject, TeachingAssignment
 from app.services.dto import SubjectData, subject_data
 from app.services.errors import NotFoundError
 from app.services.tenancy import require_owned
@@ -26,7 +26,7 @@ class SubjectService:
     def _load_one(self, subject_id: int) -> Subject:
         stmt = (
             select(Subject)
-            .options(joinedload(Subject.default_classroom))
+            .options(joinedload(Subject.classrooms))
             .where(Subject.id == subject_id, Subject.school_id == self.school_id)
         )
         row = self.db.execute(stmt).scalars().unique().one_or_none()
@@ -52,17 +52,23 @@ class SubjectService:
             stmt = (
                 select(Subject)
                 .where(Subject.id.in_(ids), Subject.school_id == self.school_id)
-                .options(joinedload(Subject.default_classroom))
+                .options(joinedload(Subject.classrooms))
                 .order_by(Subject.name)
             )
-            return [subject_data(s) for s in self.db.scalars(stmt).unique().all()]
+            return [
+                subject_data(s)
+                for s in self.db.execute(stmt).scalars().unique().all()
+            ]
         stmt = (
             select(Subject)
             .where(Subject.school_id == self.school_id)
-            .options(joinedload(Subject.default_classroom))
+            .options(joinedload(Subject.classrooms))
             .order_by(Subject.name)
         )
-        return [subject_data(s) for s in self.db.scalars(stmt).unique().all()]
+        return [
+            subject_data(s)
+            for s in self.db.execute(stmt).scalars().unique().all()
+        ]
 
     def get(self, subject_id: int) -> SubjectData:
         return subject_data(self._load_one(subject_id))
@@ -73,17 +79,13 @@ class SubjectService:
         name: str,
         color: str,
         requires_fixed_classroom: bool = False,
-        default_classroom_id: int | None = None,
         commit: bool = True,
     ) -> SubjectData | Subject:
-        if default_classroom_id is not None:
-            require_owned(self.db, Classroom, default_classroom_id, self.school_id)
         s = Subject(
             school_id=self.school_id,
             name=name.strip(),
             color=color,
             requires_fixed_classroom=requires_fixed_classroom,
-            default_classroom_id=default_classroom_id,
         )
         self.db.add(s)
         if commit:
@@ -130,22 +132,17 @@ class SubjectService:
         name: str | None = None,
         color: str | None = None,
         requires_fixed_classroom: bool | None = None,
-        default_classroom_id: int | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> SubjectData:
         s = require_owned(self.db, Subject, subject_id, self.school_id)
         if fields_set is None:
             fields_set = frozenset()
-        if "default_classroom_id" in fields_set and default_classroom_id is not None:
-            require_owned(self.db, Classroom, default_classroom_id, self.school_id)
         if "name" in fields_set and name is not None:
             s.name = str(name).strip()
         if "color" in fields_set and color is not None:
             s.color = color
         if "requires_fixed_classroom" in fields_set and requires_fixed_classroom is not None:
             s.requires_fixed_classroom = bool(requires_fixed_classroom)
-        if "default_classroom_id" in fields_set:
-            s.default_classroom_id = default_classroom_id
         self.db.commit()
         self.db.refresh(s)
         return subject_data(self._load_one(s.id))

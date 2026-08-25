@@ -33,8 +33,8 @@ def _clear_db() -> None:
             Job,
             SchoolClass,
             Shift,
-            Subject,
             Classroom,
+            Subject,
             Teacher,
         ):
             session.execute(delete(model))
@@ -788,3 +788,79 @@ def test_workload_shows_class_hours_not_sum_of_subgroups() -> None:
     ]
     assert cells == [{"class_id": class_id, "subject_id": subject_id, "hours": 3}]
 
+
+def test_fixed_subject_rejects_wrong_classroom() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        info = Subject(
+            school_id=TEST_SCHOOL_ID,
+            name="Информатика",
+            requires_fixed_classroom=True,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Баер Э.В.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="7А", grade=7, school_level="secondary"
+        )
+        session.add_all([shift, info, math, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        lab = Classroom(
+            school_id=TEST_SCHOOL_ID,
+            number="32",
+            subject_id=info.id,
+            is_exclusive=True,
+        )
+        math_room = Classroom(
+            school_id=TEST_SCHOOL_ID,
+            number="43",
+            subject_id=math.id,
+            is_exclusive=False,
+        )
+        session.add_all([lab, math_room])
+        session.flush()
+        assignment = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=info.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=2,
+        )
+        session.add(assignment)
+        session.commit()
+        class_id = cls.id
+        assignment_id = assignment.id
+        math_room_id = math_room.id
+        lab_id = lab.id
+
+    denied = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+            "classroom_id": math_room_id,
+        },
+    )
+    assert denied.status_code == 422, denied.text
+
+    ok = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+            "classroom_id": lab_id,
+        },
+    )
+    assert ok.status_code == 201, ok.text

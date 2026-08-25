@@ -2,12 +2,14 @@
 Automatic schedule generation service
 """
 from app.domain.schedule_rules import groups_can_share_slot
-from app.models import Teacher, SchoolClass, TeachingAssignment, ScheduleCell
+from app.models import SchoolClass, TeachingAssignment, ScheduleCell
 from app.services.assignment_hours import remaining_for
 from app.services.classroom_resolver import (
     get_classroom_warnings,
+    load_classroom_facts,
     load_settings,
-    resolve_classroom,
+    pick_classroom,
+    pick_classroom_for,
 )
 from app.services.schedule_diagnostics import build_unplaced_diagnostics
 from app.services.schedule_service import ScheduleService
@@ -36,11 +38,6 @@ class AutoScheduler:
 
     def _settings_for(self, school_level):
         return load_settings(self.session, self.school_id, school_level)
-
-    def _scope(self, query, model):
-        if hasattr(model, "school_id"):
-            return query.filter(model.school_id == self.school_id)
-        return query
 
     def cp_sat_schedule_shift_iter(
         self,
@@ -86,7 +83,6 @@ class AutoScheduler:
         done = {
             "type": "done",
             "count": result.placed_count,
-            "solver": "cp_sat_mvp",
             "cp_sat_status": result.status,
             "solver_status": result.solver_status,
             "objective": result.objective,
@@ -160,30 +156,6 @@ class AutoScheduler:
             lessons_by_teacher[tid].add(cell.lesson_number)
         return lessons_by_teacher
 
-    def _prioritize_available_for_adjacent(
-        self, available, class_id, day, lesson_num
-    ):
-        """
-        Prefer assignments that create adjacent pair for the same teacher+class.
-        """
-        lessons_by_teacher = self._get_teacher_lessons_for_class_day(class_id, day)
-
-        def score(row):
-            assignment, remaining = row
-            tid = assignment.teacher_id
-            if not tid:
-                return (2, -remaining)
-            lessons = lessons_by_teacher.get(tid, set())
-            # If one lesson already exists today for this teacher in this class,
-            # try to place the second one right next to it.
-            if len(lessons) == 1:
-                only = next(iter(lessons))
-                if abs(lesson_num - only) == 1:
-                    return (0, -remaining)
-            return (1, -remaining)
-
-        return sorted(available, key=score)
-
     def _ordered_lessons_for_teacher_class_day(self, assignment, day, max_lessons):
         """
         For teacher-ladder: if teacher already has one lesson in this class/day,
@@ -208,13 +180,26 @@ class AutoScheduler:
         rest = [x for x in base if x not in around]
         return around + rest
 
-    def _get_classroom_for_cell(self, assignment, school_level):
+    def _get_classroom_for_cell(
+        self, assignment, school_level, day=None, lesson=None, exclude_cell_id=None
+    ):
         """
-        Определяет classroom_id для ячейки расписания.
-        Приоритет: 1) предмет с фиксированным кабинетом, 2) групповой урок в началке, 3) сценарий.
+        Pick classroom for a cell. With day/lesson uses free capacity in the pool;
+        otherwise returns the best-ranked candidate.
         """
+        if day is not None and lesson is not None:
+            return pick_classroom_for(
+                self.session,
+                self.school_id,
+                assignment,
+                school_level,
+                day=day,
+                lesson=lesson,
+                exclude_cell_id=exclude_cell_id,
+            )
         settings = self._settings_for(school_level)
-        return resolve_classroom(assignment, school_level, settings)
+        rooms = load_classroom_facts(self.session, self.school_id)
+        return pick_classroom(assignment, settings, rooms)
 
     def schedule_by_teacher_ladder(self, teacher_id, school_level='elementary'):
         """
@@ -346,7 +331,9 @@ class AutoScheduler:
 
     def _create_hour_cell(self, assignment, day, lesson, school_level):
         """Create a cell (and complementary subgroup if possible). Returns cell count."""
-        classroom_id = self._get_classroom_for_cell(assignment, school_level)
+        classroom_id = self._get_classroom_for_cell(
+            assignment, school_level, day=day, lesson=lesson
+        )
         errors = self.validator.validate_cell(
             assignment=assignment,
             day=day,
@@ -446,7 +433,13 @@ class AutoScheduler:
         for c in bundle:
             if c.day_of_week == new_day and c.lesson_number == new_lesson:
                 return False
-            room = self._get_classroom_for_cell(c.assignment, school_level)
+            room = self._get_classroom_for_cell(
+                c.assignment,
+                school_level,
+                day=new_day,
+                lesson=new_lesson,
+                exclude_cell_id=c.id,
+            )
             errors = self.validator.validate_cell(
                 assignment=c.assignment,
                 day=new_day,
@@ -596,7 +589,9 @@ class AutoScheduler:
             for day, lesson in self._iter_assignment_slots(
                 assignment, working_days, max_lessons
             ):
-                classroom_id = self._get_classroom_for_cell(assignment, school_level)
+                classroom_id = self._get_classroom_for_cell(
+                    assignment, school_level, day=day, lesson=lesson
+                )
                 errors = self.validator.validate_cell(
                     assignment=assignment,
                     day=day,
@@ -854,262 +849,6 @@ class AutoScheduler:
             'diagnostics': solver_result.diagnostics,
         }
 
-    def schedule_class_day(self, class_id, day, school_level='elementary'):
-        """
-        Fill one day for a class with available lessons.
-        Distributes lessons evenly.
-        
-        Returns count of scheduled lessons.
-        """
-        school_class = self.session.get(SchoolClass, class_id)
-        shift = school_class.shift if school_class and school_class.shift_id else None
-        max_lessons = shift.max_lessons_per_day if shift else 7
-
-        # Get unscheduled assignments for this class
-        aq = self.session.query(TeachingAssignment).filter(
-            TeachingAssignment.class_id == class_id,
-            TeachingAssignment.teacher_id.isnot(None),
-            TeachingAssignment.school_id == self.school_id,
-        )
-        assignments = aq.all()
-
-        # Get assignments with remaining hours, sorted by remaining hours (most first)
-        available = []
-        for a in assignments:
-            remaining = remaining_for(a)
-            if remaining > 0:
-                available.append((a, remaining))
-        available.sort(key=lambda x: -x[1])
-
-        scheduled_count = 0
-        # Несколько проходов по урокам 1..N: после первого прохода часть слотов
-        # может остаться пустой (порядок перебора available), следующий проход с
-        # пересортировкой по остатку часов заполняет их.
-        max_day_passes = max(max_lessons, 12)
-
-        for _pass in range(max_day_passes):
-            if not available:
-                break
-            available.sort(key=lambda x: -x[1])
-            round_placed = 0
-
-            for lesson_num in range(1, max_lessons + 1):
-                if not available:
-                    break
-
-                pair_count = self._try_place_subgroup_pair(
-                    available, class_id, day, lesson_num, school_level
-                )
-                if pair_count:
-                    scheduled_count += pair_count
-                    round_placed += pair_count
-                    continue
-
-                ordered_available = self._prioritize_available_for_adjacent(
-                    available, class_id, day, lesson_num
-                )
-                for assignment, remaining in ordered_available:
-                    i = next((idx for idx, (a, _r) in enumerate(available) if a.id == assignment.id), None)
-                    if i is None:
-                        continue
-                    classroom_id = self._get_classroom_for_cell(assignment, school_level)
-                    errors = self.validator.validate_cell(
-                        assignment=assignment,
-                        day=day,
-                        lesson=lesson_num,
-                        classroom_id=classroom_id
-                    )
-
-                    if not errors:
-                        cell = self._schedule.insert_cell(
-                            class_id=class_id,
-                            day_of_week=day,
-                            lesson_number=lesson_num,
-                            assignment_id=assignment.id,
-                            classroom_id=classroom_id,
-                        )
-
-                        new_remaining = remaining - 1
-                        if new_remaining <= 0:
-                            available.pop(i)
-                        else:
-                            available[i] = (assignment, new_remaining)
-
-                        comp = 0
-                        if assignment.group_number is not None:
-                            comp = self._place_complementary_in_slot(
-                                available, assignment, class_id, day, lesson_num, school_level
-                            )
-                            if (
-                                comp == 0
-                                and self._other_subgroup_needs_parallel_pair(assignment, available)
-                            ):
-                                self._schedule.delete_cells(
-                                    cell_ids=[cell.id], commit=False
-                                )
-                                self._restore_available_hours(
-                                    available, assignment, remaining
-                                )
-                                continue
-
-                        scheduled_count += 1 + comp
-                        round_placed += 1 + comp
-
-                        break
-
-            if round_placed == 0:
-                break
-
-        self.session.commit()
-        return scheduled_count
-
-    def _restore_available_hours(self, available, assignment, original_remaining):
-        """Вернуть час после отката ячейки (не удалось поставить вторую подгруппу)."""
-        for idx, (a, rem) in enumerate(available):
-            if a.id == assignment.id:
-                available[idx] = (assignment, original_remaining)
-                return
-        available.append((assignment, original_remaining))
-
-    def _decrement_available_assignment(self, available, assignment):
-        """Списать один час у назначения в списке available."""
-        for idx, (a, rem) in enumerate(available):
-            if a.id != assignment.id:
-                continue
-            new_rem = rem - 1
-            if new_rem <= 0:
-                available.pop(idx)
-            else:
-                available[idx] = (assignment, new_rem)
-            return
-
-    def _other_subgroup_needs_parallel_pair(self, assignment, available):
-        """
-        Есть ли вторая подгруппа по тому же предмету с оставшимися часами и другим учителем.
-        Тогда одна подгруппа в слоте без второй — недопустима (нужен откат или пара).
-        """
-        if assignment.group_number is None:
-            return False
-        for a, rem in available:
-            if rem <= 0 or a.id == assignment.id:
-                continue
-            if not groups_can_share_slot(
-                assignment.group_number,
-                a.group_number,
-                assignment.subject_id,
-                a.subject_id,
-            ):
-                continue
-            if a.teacher_id == assignment.teacher_id:
-                return False
-            return True
-        return False
-
-    def _try_place_subgroup_pair(self, available, class_id, day, lesson_num, school_level):
-        """
-        Поставить в слот обе подгруппы одного предмета (разные учителя) или ни одной.
-        Возвращает 0 или 2.
-        """
-        from collections import defaultdict
-
-        by_subject = defaultdict(list)
-        for idx, (a, rem) in enumerate(available):
-            if rem <= 0 or a.group_number is None:
-                continue
-            by_subject[a.subject_id].append((idx, a, rem))
-
-        for _subject_id, rows in by_subject.items():
-            if len(rows) < 2:
-                continue
-            for i in range(len(rows)):
-                for j in range(i + 1, len(rows)):
-                    _idx_i, a_i, rem_i = rows[i]
-                    _idx_j, a_j, rem_j = rows[j]
-                    if not groups_can_share_slot(
-                        a_i.group_number,
-                        a_j.group_number,
-                        a_i.subject_id,
-                        a_j.subject_id,
-                    ):
-                        continue
-                    if a_i.teacher_id and a_i.teacher_id == a_j.teacher_id:
-                        continue
-                    c_i = self._get_classroom_for_cell(a_i, school_level)
-                    c_j = self._get_classroom_for_cell(a_j, school_level)
-                    e_i = self.validator.validate_cell(
-                        a_i, day, lesson_num, classroom_id=c_i
-                    )
-                    if e_i:
-                        continue
-                    cell_i = self._schedule.insert_cell(
-                        class_id=class_id,
-                        day_of_week=day,
-                        lesson_number=lesson_num,
-                        assignment_id=a_i.id,
-                        classroom_id=c_i,
-                    )
-                    e_j = self.validator.validate_cell(
-                        a_j, day, lesson_num, classroom_id=c_j
-                    )
-                    if e_j:
-                        self._schedule.delete_cells(
-                            cell_ids=[cell_i.id], commit=False
-                        )
-                        continue
-                    self._schedule.insert_cell(
-                        class_id=class_id,
-                        day_of_week=day,
-                        lesson_number=lesson_num,
-                        assignment_id=a_j.id,
-                        classroom_id=c_j,
-                    )
-                    self._decrement_available_assignment(available, a_i)
-                    self._decrement_available_assignment(available, a_j)
-                    return 2
-        return 0
-
-    def _place_complementary_in_slot(self, available, placed_assignment, class_id, day, lesson_num, school_level='elementary'):
-        """
-        After placing a subgroup from the available list,
-        find and place the complementary subgroup (same subject, other group) in the same slot.
-        Returns 1 if placed, 0 otherwise.
-        """
-        if placed_assignment.group_number is None:
-            return 0
-
-        for i, (assignment, remaining) in enumerate(available):
-            if not groups_can_share_slot(
-                placed_assignment.group_number,
-                assignment.group_number,
-                placed_assignment.subject_id,
-                assignment.subject_id,
-            ):
-                continue
-
-            classroom_id = self._get_classroom_for_cell(assignment, school_level)
-            errors = self.validator.validate_cell(
-                assignment=assignment,
-                day=day,
-                lesson=lesson_num,
-                classroom_id=classroom_id
-            )
-            if not errors:
-                self._schedule.insert_cell(
-                    class_id=class_id,
-                    day_of_week=day,
-                    lesson_number=lesson_num,
-                    assignment_id=assignment.id,
-                    classroom_id=classroom_id,
-                )
-
-                new_remaining = remaining - 1
-                if new_remaining <= 0:
-                    available.pop(i)
-                else:
-                    available[i] = (assignment, new_remaining)
-                return 1
-        return 0
-
     def _try_place_complementary_subgroup(self, placed_assignment, day, lesson, school_level='elementary'):
         """
         After placing a subgroup in teacher-ladder mode,
@@ -1138,7 +877,9 @@ class AutoScheduler:
         for comp in complementary_assignments:
             if remaining_for(comp) <= 0:
                 continue
-            classroom_id = self._get_classroom_for_cell(comp, school_level)
+            classroom_id = self._get_classroom_for_cell(
+                comp, school_level, day=day, lesson=lesson
+            )
             errors = self.validator.validate_cell(
                 assignment=comp,
                 day=day,
@@ -1156,138 +897,63 @@ class AutoScheduler:
                 return 1
         return 0
 
-    def auto_schedule_all(self, school_level='elementary', solver='legacy', shift_id=None,
-                          time_limit_sec=60.0, random_seed=1):
-        """
-        Automatically schedule all unscheduled lessons.
-        Uses a combination of strategies.
-        
-        Returns total count of scheduled lessons.
-        """
+    def auto_schedule_all(
+        self,
+        school_level='elementary',
+        shift_id=None,
+        time_limit_sec=60.0,
+        random_seed=1,
+    ):
+        """CP-SAT for one shift. Returns count of placed lessons."""
         result = self.auto_schedule_all_result(
-            school_level, solver=solver, shift_id=shift_id,
-            time_limit_sec=time_limit_sec, random_seed=random_seed,
+            school_level,
+            shift_id=shift_id,
+            time_limit_sec=time_limit_sec,
+            random_seed=random_seed,
         )
         if result.get('type') == 'error':
             return 0
         return result.get('count', 0)
 
-    def auto_schedule_all_result(self, school_level='elementary', solver='legacy', shift_id=None,
-                                 time_limit_sec=60.0, random_seed=1):
+    def auto_schedule_all_result(
+        self,
+        school_level='elementary',
+        shift_id=None,
+        time_limit_sec=60.0,
+        random_seed=1,
+    ):
         """Return last done- или error-event для не-stream маршрутов."""
         last = {'type': 'done', 'count': 0}
         for event in self.auto_schedule_all_iter(
-            school_level, solver=solver, shift_id=shift_id,
-            time_limit_sec=time_limit_sec, random_seed=random_seed,
+            school_level,
+            shift_id=shift_id,
+            time_limit_sec=time_limit_sec,
+            random_seed=random_seed,
         ):
             if event.get('type') in ('done', 'error'):
                 last = event
         return last
 
-    def auto_schedule_all_iter(self, school_level='elementary', solver='legacy', shift_id=None,
-                               time_limit_sec=60.0, random_seed=1):
-        """
-        Автозаполнение с событиями прогресса (класс × день).
-        solver: 'legacy' (эвристики + граф) или 'cp_sat_mvp' (для одной смены, shift_id обязателен).
-        """
-        if solver == 'cp_sat_mvp':
-            if shift_id is None:
-                yield {
-                    'type': 'error',
-                    'message': 'Для стратегии CP-SAT укажите shift_id (смену)',
-                }
-                return
-            yield from self.cp_sat_schedule_shift_iter(
-                shift_id=int(shift_id),
-                school_level=school_level,
-                time_limit_sec=float(time_limit_sec),
-                random_seed=int(random_seed),
-            )
+    def auto_schedule_all_iter(
+        self,
+        school_level='elementary',
+        shift_id=None,
+        time_limit_sec=60.0,
+        random_seed=1,
+    ):
+        """Автозаполнение CP-SAT для одной смены."""
+        if shift_id is None:
+            yield {
+                'type': 'error',
+                'message': 'Укажите shift_id (смену)',
+            }
             return
-
-        classes = self._scope(self.session.query(SchoolClass), SchoolClass).filter_by(school_level=school_level)\
-            .order_by(SchoolClass.grade, SchoolClass.name).all()
-        tq = self.session.query(Teacher).join(TeachingAssignment).join(SchoolClass).filter(
-            SchoolClass.school_level == school_level,
-            Teacher.school_id == self.school_id,
-            SchoolClass.school_id == self.school_id,
-        )
-        teachers = tq.distinct().order_by(Teacher.full_name).all()
-
-        # Если сетка уровня пустая, сначала используем teacher-ladder:
-        # это заметно уменьшает окна у учителей на старте.
-        hq = self.session.query(ScheduleCell).join(SchoolClass).filter(
-            SchoolClass.school_level == school_level,
-            ScheduleCell.school_id == self.school_id,
-        )
-        has_cells = hq.first() is not None
-
-        total_steps = 0
-        for sc in classes:
-            sh = sc.shift if sc.shift_id else None
-            wd = sh.working_days if sh else 5
-            total_steps += wd
-
-        total_scheduled = 0
-        max_rounds = 12
-        for round_num in range(1, max_rounds + 1):
-            round_scheduled = 0
-
-            if not has_cells:
-                # Раунд teacher-ladder на пустой сетке
-                t_total = len(teachers) if teachers else 1
-                for t_idx, teacher in enumerate(teachers, start=1):
-                    yield {
-                        'type': 'progress',
-                        'current': t_idx,
-                        'total': t_total,
-                        'message': f'Раунд {round_num}: учитель {teacher.full_name}',
-                    }
-                    c = self.schedule_by_teacher_ladder(teacher.id, school_level)
-                    round_scheduled += c
-                    total_scheduled += c
-                has_cells = True
-            else:
-                # Раунд class-day (добивка/выравнивание)
-                step = 0
-                for school_class in classes:
-                    shift = school_class.shift if school_class.shift_id else None
-                    wd = shift.working_days if shift else 5
-                    for day in range(1, wd + 1):
-                        step += 1
-                        yield {
-                            'type': 'progress',
-                            'current': step,
-                            'total': total_steps if total_steps else 1,
-                            'message': f'Раунд {round_num}: {school_class.name}, день {day}',
-                        }
-                        count = self.schedule_class_day(school_class.id, day, school_level)
-                        round_scheduled += count
-                        total_scheduled += count
-
-                # После class-day — дополнительная добивка по учителям
-                # (часто закрывает остатки из-за порядка обхода классов).
-                for teacher in teachers:
-                    c = self.schedule_by_teacher_ladder(teacher.id, school_level)
-                    round_scheduled += c
-                    total_scheduled += c
-
-            if round_scheduled == 0:
-                break
-
-        solver_result = self.graph_solver.solve_residuals(
+        yield from self.cp_sat_schedule_shift_iter(
+            shift_id=int(shift_id),
             school_level=school_level,
-            max_diag_items=20,
+            time_limit_sec=float(time_limit_sec),
+            random_seed=int(random_seed),
         )
-        total_scheduled += solver_result.placed_count
-        yield {
-            'type': 'done',
-            'count': total_scheduled,
-            'solver_used': True,
-            'solver_placed_count': solver_result.placed_count,
-            'unplaced': solver_result.unplaced,
-            'diagnostics': solver_result.diagnostics,
-        }
 
     def clear_schedule(self, school_level=None, class_id=None, teacher_id=None):
         """Clear schedule (delete cells) with optional filters."""

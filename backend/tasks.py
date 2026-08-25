@@ -77,7 +77,6 @@ def run_auto_schedule(self, job_id: int) -> dict:
         if kind == "auto_all":
             iterator = scheduler.auto_schedule_all_iter(
                 payload.get("school_level", "elementary"),
-                solver=payload.get("solver", True),
                 shift_id=payload.get("shift_id"),
                 time_limit_sec=limit,
                 random_seed=payload.get("random_seed"),

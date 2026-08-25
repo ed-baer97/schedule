@@ -32,7 +32,6 @@ function defaultSettings(level: SchoolLevel): ScheduleSettings {
 export function AutoSchedulerPage() {
   const qc = useQueryClient()
   const [level, setLevel] = useState<SchoolLevel>('elementary')
-  const [solver, setSolver] = useState<'legacy' | 'cp_sat_mvp'>('legacy')
   const [shiftId, setShiftId] = useState<number | ''>('')
   const [timeLimit, setTimeLimit] = useState<number>(60)
   const [seed, setSeed] = useState<number>(1)
@@ -44,6 +43,7 @@ export function AutoSchedulerPage() {
   )
   const [log, setLog] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
 
   const q = useQuery({
@@ -51,7 +51,22 @@ export function AutoSchedulerPage() {
     queryFn: fetchAutoPageData,
   })
 
-  const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
+  useEffect(() => {
+    const list =
+      q.data == null
+        ? []
+        : level === 'elementary'
+          ? q.data.shifts_elementary
+          : q.data.shifts_secondary
+    if (list.length === 0) {
+      setShiftId('')
+      return
+    }
+    setShiftId((prev) => {
+      if (prev !== '' && list.some((s) => s.id === prev)) return prev
+      return list[0].id
+    })
+  }, [level, q.data])
 
   useEffect(() => {
     if (!rulesMsg) return
@@ -107,8 +122,8 @@ export function AutoSchedulerPage() {
   }
 
   async function runAll() {
-    if (solver === 'cp_sat_mvp' && shiftId === '') {
-      setError('Для CP-SAT выберите смену')
+    if (shiftId === '') {
+      setError('Выберите смену')
       return
     }
     resetState()
@@ -118,8 +133,7 @@ export function AutoSchedulerPage() {
         () =>
           enqueueAutoAll({
             school_level: level,
-            solver,
-            shift_id: solver === 'cp_sat_mvp' ? Number(shiftId) : null,
+            shift_id: Number(shiftId),
             time_limit_sec: timeLimit,
             random_seed: seed,
             diagnose,
@@ -253,27 +267,15 @@ export function AutoSchedulerPage() {
       <div className="row g-3 mt-0">
         <div className="col-md-6">
           <div className="card shadow-sm h-100">
-            <div className="card-header fw-semibold">Заполнить всё (по уровню)</div>
+            <div className="card-header fw-semibold">Заполнить всё (CP-SAT, одна смена)</div>
             <div className="card-body">
               <div className="row g-2">
                 <div className="col-md-6">
-                  <label className="form-label small">Стратегия</label>
-                  <select
-                    className="form-select"
-                    value={solver}
-                    onChange={(e) => setSolver(e.target.value as 'legacy' | 'cp_sat_mvp')}
-                  >
-                    <option value="legacy">legacy (эвристики + граф)</option>
-                    <option value="cp_sat_mvp">cp_sat_mvp (OR-Tools, одна смена)</option>
-                  </select>
-                </div>
-                <div className="col-md-6">
-                  <label className="form-label small">Смена (только для CP-SAT)</label>
+                  <label className="form-label small">Смена</label>
                   <select
                     className="form-select"
                     value={shiftId === '' ? '' : String(shiftId)}
                     onChange={(e) => setShiftId(e.target.value === '' ? '' : Number(e.target.value))}
-                    disabled={solver !== 'cp_sat_mvp'}
                   >
                     <option value="">—</option>
                     {shifts.map((s) => (
@@ -289,7 +291,6 @@ export function AutoSchedulerPage() {
                     min={1}
                     value={timeLimit}
                     onChange={(e) => setTimeLimit(Number(e.target.value) || 60)}
-                    disabled={solver !== 'cp_sat_mvp'}
                   />
                 </div>
                 <div className="col-md-6">
@@ -299,7 +300,6 @@ export function AutoSchedulerPage() {
                     className="form-control"
                     value={seed}
                     onChange={(e) => setSeed(Number(e.target.value) || 1)}
-                    disabled={solver !== 'cp_sat_mvp'}
                   />
                 </div>
                 <div className="col-12 form-check ms-2 mt-2">

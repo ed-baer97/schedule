@@ -15,6 +15,7 @@ import {
 } from '../api/schedule'
 import type { SchoolLevel } from '../domain/schoolLevel'
 import { assignmentCanJoinSlot, slotAcceptsAnotherLesson } from '../domain/scheduleRules'
+import { roomAllowsSubject } from '../domain/classroomRules'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
@@ -894,6 +895,28 @@ function AddLessonModal(props: {
     [compatibleAssignments, subjectName],
   )
 
+  const selectedAssignment = useMemo(
+    () =>
+      typeof assignmentId === 'number'
+        ? filteredAssignments.find((a) => a.id === assignmentId) ?? null
+        : null,
+    [filteredAssignments, assignmentId],
+  )
+
+  const allowedClassrooms = useMemo(() => {
+    const rooms = q.data?.classrooms ?? []
+    if (!selectedAssignment) return rooms
+    return rooms.filter((c) =>
+      roomAllowsSubject(
+        { id: c.id, subject_id: c.subject_id ?? null, is_exclusive: Boolean(c.is_exclusive) },
+        {
+          subject_id: selectedAssignment.subject_id,
+          requires_fixed_classroom: Boolean(selectedAssignment.requires_fixed_classroom),
+        },
+      ),
+    )
+  }, [q.data?.classrooms, selectedAssignment])
+
   useEffect(() => {
     if (filteredAssignments.length === 1) {
       const only = filteredAssignments[0]
@@ -903,6 +926,13 @@ function AddLessonModal(props: {
       setAssignmentId('')
     }
   }, [filteredAssignments])
+
+  useEffect(() => {
+    if (classroomId === '') return
+    if (!allowedClassrooms.some((c) => c.id === classroomId)) {
+      setClassroomId('')
+    }
+  }, [allowedClassrooms, classroomId])
 
   const slotLabel = slot.lesson === 0 ? 'классный час' : `урок ${slot.lesson}`
   const title = `${slot.class_name}, ${dayNames[slot.day - 1]}, ${slotLabel}`
@@ -993,7 +1023,7 @@ function AddLessonModal(props: {
                     }
                   >
                     <option value="">Без кабинета</option>
-                    {q.data.classrooms.map((c) => (
+                    {allowedClassrooms.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.display_name}
                       </option>

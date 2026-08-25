@@ -63,6 +63,15 @@ export type GridData = {
   settings: ScheduleSettings | null
 }
 
+export type ClassroomChoice = {
+  id: number
+  number: string
+  name: string | null
+  display_name: string
+  subject_id: number | null
+  is_exclusive: boolean
+}
+
 export type AssignmentChoice = {
   id: number
   subject_id: number
@@ -73,13 +82,7 @@ export type AssignmentChoice = {
   group_number: number | null
   remaining_hours: number
   preferred_classroom_id: number | null
-}
-
-export type ClassroomChoice = {
-  id: number
-  number: string
-  name: string | null
-  display_name: string
+  requires_fixed_classroom?: boolean
 }
 
 export type AssignmentsData = {
@@ -180,8 +183,7 @@ export function getJob(jobId: number) {
 
 export type AutoAllPayload = {
   school_level: SchoolLevel
-  solver: 'legacy' | 'cp_sat_mvp'
-  shift_id: number | null
+  shift_id: number
   time_limit_sec: number
   random_seed: number
   diagnose: boolean

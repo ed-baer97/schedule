@@ -37,11 +37,15 @@ class Subject(Base):
     name = Column(String(100), nullable=False)
     color = Column(String(7), default=DEFAULT_COLOR)
     requires_fixed_classroom = Column(Boolean, default=False)
-    default_classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
 
     school = relationship("School")
     assignments = relationship("TeachingAssignment", back_populates="subject", lazy="dynamic")
-    default_classroom = relationship("Classroom", foreign_keys=[default_classroom_id], lazy="select")
+    classrooms = relationship(
+        "Classroom",
+        foreign_keys="Classroom.subject_id",
+        back_populates="subject",
+        lazy="select",
+    )
 
     def __repr__(self):
         return f"<Subject {self.name}>"

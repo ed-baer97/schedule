@@ -203,6 +203,9 @@ class ScheduleQueriesMixin:
                     group_number=a.group_number,
                     remaining_hours=remaining,
                     preferred_classroom_id=a.preferred_classroom_id,
+                    requires_fixed_classroom=bool(
+                        subj.requires_fixed_classroom if subj else False
+                    ),
                 )
             )
         classrooms = list(

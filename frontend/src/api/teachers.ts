@@ -15,7 +15,6 @@ export type TeacherPayload = {
   full_name: string
   email: string | null
   phone: string | null
-  home_classroom_id: number | null
 }
 
 export function listTeachers() {

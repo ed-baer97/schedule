@@ -12,9 +12,10 @@ from app.domain.schedule_rules import (
     subject_day_limit_reached,
     teacher_class_day_limit_reached,
 )
-from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass, Shift
+from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass, Shift, Subject
 from app.services.assignment_hours import placed_count
 from app.services.classroom_resolver import load_settings
+from app.domain.classroom_rules import ClassroomFact, room_denial_message
 from app.services.schedule_fact_loader import (
     candidate_slot_fact,
     candidate_unit_fact,
@@ -138,6 +139,33 @@ class ScheduleValidator:
                     )
                 else:
                     errors.append(f'Кабинет {room_name} уже занят в это время: {briefs}')
+
+            # Subject ↔ classroom suitability
+            classroom = self.session.get(Classroom, classroom_id)
+            subject = assignment.subject
+            if classroom and subject:
+                room_fact = ClassroomFact(
+                    id=classroom.id,
+                    subject_id=classroom.subject_id,
+                    is_exclusive=bool(classroom.is_exclusive),
+                    classes_capacity=classroom.classes_capacity or 1,
+                )
+                room_subj_name = None
+                if classroom.subject_id:
+                    room_subj = classroom.subject
+                    if room_subj is None:
+                        room_subj = self.session.get(Subject, classroom.subject_id)
+                    room_subj_name = room_subj.display_name if room_subj else None
+                denial = room_denial_message(
+                    room_fact,
+                    subject_id=subject.id,
+                    subject_name=subject.display_name,
+                    requires_fixed_classroom=bool(subject.requires_fixed_classroom),
+                    room_display_name=classroom.display_name,
+                    room_subject_name=room_subj_name,
+                )
+                if denial:
+                    errors.append(denial)
 
         # Check class conflict (except for groups)
         class_busy = self.check_class_conflict(

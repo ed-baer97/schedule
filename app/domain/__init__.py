@@ -1,7 +1,17 @@
 """Pure domain helpers (no Session, no FastAPI)."""
 from app.domain.assignment import hours_exhausted, remaining_hours
+from app.domain.classroom_rules import (
+    ClassroomFact,
+    PlacementContext,
+    candidate_rooms_for,
+    placement_cost,
+    rank_candidate_rooms,
+    room_allows_subject,
+    room_denial_message,
+)
 from app.domain.days import DAY_NAMES, SHORT_DAY_NAMES, fmt_time, time_range_label
 from app.domain.names import normalize_person_name
+from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
 from app.domain.schedule_rules import (
     classroom_at_capacity,
     groups_can_share_slot,
@@ -15,7 +25,6 @@ from app.domain.schedule_rules import (
     time_intervals_overlap,
     units_cannot_share_class_slot,
 )
-from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
 from app.domain.school_class import grade_from_name, level_from_grade
 from app.domain.school_level import level_label
 
@@ -44,4 +53,11 @@ __all__ = [
     "UnitFact",
     "SlotFact",
     "BusySlotFact",
+    "ClassroomFact",
+    "PlacementContext",
+    "room_allows_subject",
+    "room_denial_message",
+    "placement_cost",
+    "rank_candidate_rooms",
+    "candidate_rooms_for",
 ]

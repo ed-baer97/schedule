@@ -90,6 +90,7 @@ class AssignmentChoiceOut(BaseModel):
     group_number: int | None = None
     remaining_hours: int
     preferred_classroom_id: int | None = None
+    requires_fixed_classroom: bool = False
 
 
 class ClassroomChoiceOut(BaseModel):
@@ -99,6 +100,8 @@ class ClassroomChoiceOut(BaseModel):
     number: str
     name: str | None = None
     display_name: str
+    subject_id: int | None = None
+    is_exclusive: bool = False
 
 
 class AssignmentsForClassOut(BaseModel):
@@ -135,8 +138,7 @@ class AutoPageData(BaseModel):
 
 class AutoAllStreamBody(BaseModel):
     school_level: str = Field("elementary", pattern="^(elementary|secondary)$")
-    solver: str = Field("legacy", pattern="^(legacy|cp_sat_mvp)$")
-    shift_id: int | None = None
+    shift_id: int
     time_limit_sec: float = 60.0
     random_seed: int = 1
     diagnose: bool = False

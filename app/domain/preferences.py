@@ -39,6 +39,7 @@ class SolverScales:
     subgroup_spread: int
     teacher_days: int
     late_lesson: int
+    room_placement: int
 
 
 def solver_scales(prefs: PreferenceWeights) -> SolverScales:
@@ -54,6 +55,7 @@ def solver_scales(prefs: PreferenceWeights) -> SolverScales:
         subgroup_spread=max(0, int(round(30 * f_stab))),
         teacher_days=max(0, int(round(40 * f_gaps))),
         late_lesson=max(0, int(round(25 * f_early))),
+        room_placement=max(1, int(round(2 * f_stab))),
     )
 
 

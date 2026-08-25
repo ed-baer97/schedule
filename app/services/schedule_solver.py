@@ -15,9 +15,13 @@ from app.domain.schedule_rules import (
     teacher_class_day_limit_reached,
     units_cannot_share_class_slot,
 )
-from app.models import Classroom, SchoolClass, TeachingAssignment
+from app.models import SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_counts, remaining_for
-from app.services.classroom_resolver import load_settings
+from app.services.classroom_resolver import (
+    candidate_classrooms,
+    load_classroom_facts,
+    load_settings,
+)
 from app.services.schedule_fact_loader import (
     build_slots_by_class,
     build_unit_facts,
@@ -116,9 +120,11 @@ class ResidualGraphSolver:
         classroom_busy,
         class_occupancy,
         classroom_caps,
+        candidates_by_assignment,
         max_per_subject_day,
         subject_day_counts,
         teacher_class_day_counts,
+        room_cost_scale: int = 1,
     ):
         adjacency = defaultdict(list)
         edges = []
@@ -127,7 +133,7 @@ class ResidualGraphSolver:
 
         for unit in units:
             assignment = assignment_map[unit.assignment_id]
-            classroom_id = self._classroom_resolver(assignment, school_level)
+            candidates = candidates_by_assignment.get(assignment.id, [])
             for slot in slots_by_class.get(unit.class_id, []):
                 reason = None
                 for occupied in class_occupancy.get(unit.class_id, []):
@@ -138,12 +144,25 @@ class ResidualGraphSolver:
                     slot, unit.teacher_id, teacher_busy
                 ):
                     reason = "Учитель уже занят в это время"
-                if reason is None and classroom_id:
-                    cap = classroom_caps.get(classroom_id, 1)
-                    if classroom_at_capacity(
-                        slot, classroom_id, classroom_busy, cap
-                    ):
+                room_cost = 0
+                if reason is None and candidates:
+                    free_costs = []
+                    for room_id, cost in candidates:
+                        cap = classroom_caps.get(room_id, 1)
+                        if not classroom_at_capacity(
+                            slot, room_id, classroom_busy, cap
+                        ):
+                            free_costs.append(cost)
+                    if not free_costs:
                         reason = "Кабинет уже занят в это время"
+                    else:
+                        room_cost = min(free_costs)
+                elif reason is None and not candidates:
+                    # No room candidates (e.g. fixed subject with empty pool) —
+                    # still allow slot if classroom is optional for non-fixed.
+                    subj = assignment.subject
+                    if subj and subj.requires_fixed_classroom:
+                        reason = "Нет доступного кабинета для предмета"
                 if reason is None:
                     subj_key = (unit.assignment_id, slot.day)
                     if subject_day_limit_reached(
@@ -160,7 +179,10 @@ class ResidualGraphSolver:
                     diagnostics_raw[assignment.id][reason] += 1
                     continue
                 edge = FeasibleEdge(
-                    unit_id=unit.unit_id, slot_id=slot.slot_id, hard_ok=True, cost=0
+                    unit_id=unit.unit_id,
+                    slot_id=slot.slot_id,
+                    hard_ok=True,
+                    cost=room_cost * room_cost_scale,
                 )
                 edges.append(edge)
                 adjacency[unit.unit_id].append(slot.slot_id)
@@ -222,6 +244,9 @@ class ResidualGraphSolver:
 
         settings = load_settings(self.session, self.school_id, school_level)
         max_per_subject_day = settings.max_lessons_per_subject_per_day if settings else 2
+        from app.domain.preferences import solver_scales, weights_from_settings
+
+        room_cost_scale = solver_scales(weights_from_settings(settings)).room_placement
 
         units = build_unit_facts(
             assignments,
@@ -235,17 +260,20 @@ class ResidualGraphSolver:
             allow_default_grid=True,
         )
 
-        teacher_ids = {u.teacher_id for u in units if u.teacher_id}
-        classroom_ids = set()
+        rooms = load_classroom_facts(self.session, self.school_id)
+        candidates_by_assignment: dict[int, list[tuple[int, int]]] = {}
+        classroom_ids: set[int] = set()
         classroom_caps: dict[int, int] = {}
         for a in assignments:
-            rid = self._classroom_resolver(a, school_level)
-            if rid:
+            cands = candidate_classrooms(a, settings, rooms)
+            candidates_by_assignment[a.id] = cands
+            for rid, _cost in cands:
                 classroom_ids.add(rid)
-        for rid in classroom_ids:
-            room = self.session.get(Classroom, rid)
-            classroom_caps[rid] = (room.classes_capacity or 1) if room else 1
+        for r in rooms:
+            if r.id in classroom_ids:
+                classroom_caps[r.id] = r.classes_capacity
 
+        teacher_ids = {u.teacher_id for u in units if u.teacher_id}
         teacher_busy = load_teacher_busy(self.session, teacher_ids)
         classroom_busy = load_classroom_busy(self.session, classroom_ids)
         class_occupancy = load_class_occupancy(self.session, class_ids)
@@ -271,9 +299,11 @@ class ResidualGraphSolver:
             classroom_busy=classroom_busy,
             class_occupancy=class_occupancy,
             classroom_caps=classroom_caps,
+            candidates_by_assignment=candidates_by_assignment,
             max_per_subject_day=max_per_subject_day,
             subject_day_counts=subject_day_counts,
             teacher_class_day_counts=teacher_class_day_counts,
+            room_cost_scale=room_cost_scale,
         )
         matched = self._max_bipartite_matching(units, adjacency)
 
@@ -291,7 +321,9 @@ class ResidualGraphSolver:
             unit = unit_map[unit_id]
             slot = slot_map[slot_id]
             assignment = assignment_map[unit.assignment_id]
-            classroom_id = self._classroom_resolver(assignment, school_level)
+            classroom_id = self._classroom_resolver(
+                assignment, school_level, day=slot.day, lesson=slot.lesson
+            )
             errors = self.validator.validate_cell(
                 assignment=assignment,
                 day=slot.day,
@@ -578,6 +610,28 @@ class CpSatScheduleSolver:
             feas = feasible_slots_by_unit[ui]
             model.AddExactlyOne([x[(ui, s.slot_id)] for s in feas])
 
+        rooms = load_classroom_facts(self.session, self.school_id)
+        candidates_by_assignment: dict[int, list[tuple[int, int]]] = {
+            a.id: candidate_classrooms(a, settings, rooms) for a in assignments
+        }
+        # y[ui, slot_id, room_id] — which room when unit placed in slot
+        y: dict[tuple[int, str, int], Any] = {}
+        for ui, unit in unit_list:
+            a = assignment_map[unit.assignment_id]
+            cands = candidates_by_assignment.get(a.id, [])
+            if not cands:
+                continue
+            for slot in feasible_slots_by_unit[ui]:
+                key = (ui, slot.slot_id)
+                if key not in x:
+                    continue
+                y_vars = []
+                for rid, _cost in cands:
+                    yv = model.NewBoolVar(f"y_u{ui}_{slot.slot_id}_r{rid}")
+                    y[(ui, slot.slot_id, rid)] = yv
+                    y_vars.append(yv)
+                model.Add(sum(y_vars) == x[key])
+
         # Same class slot: conflicting pairs cannot share slot
         by_class: dict[int, list[int]] = defaultdict(list)
         for ui, unit in unit_list:
@@ -646,22 +700,22 @@ class CpSatScheduleSolver:
             _add_capacity_overlap_constraints(model, items, capacity=1)
 
         # Classroom: respect capacity for overlapping time (interval sweep)
-        for room_id in {self._classroom_resolver(a, school_level) for a in assignments}:
-            if not room_id:
-                continue
-            cap = self.session.get(Classroom, room_id)
-            cap_n = (cap.classes_capacity or 1) if cap else 1
+        all_room_ids = {
+            rid
+            for cands in candidates_by_assignment.values()
+            for rid, _ in cands
+        }
+        room_caps = {r.id: r.classes_capacity for r in rooms}
+        for room_id in all_room_ids:
+            cap_n = room_caps.get(room_id, 1)
             if cap_n >= 10**5:
                 continue
             items = []
             for ui, unit in unit_list:
-                a = assignment_map[unit.assignment_id]
-                if self._classroom_resolver(a, school_level) != room_id:
-                    continue
                 for slot in feasible_slots_by_unit[ui]:
-                    key = (ui, slot.slot_id)
-                    if key in x:
-                        items.append((x[key], slot))
+                    ykey = (ui, slot.slot_id, room_id)
+                    if ykey in y:
+                        items.append((y[ykey], slot))
             _add_capacity_overlap_constraints(model, items, capacity=cap_n)
 
         # Max lessons per subject per day (per assignment)
@@ -745,6 +799,7 @@ class CpSatScheduleSolver:
         w_balance = scales.day_balance
         w_non_adjacent_pair = scales.non_adjacent_pair
         w_subgroup_spread = scales.subgroup_spread
+        w_room = scales.room_placement
         for ui, unit in unit_list:
             for slot in feasible_slots_by_unit[ui]:
                 key = (ui, slot.slot_id)
@@ -754,6 +809,18 @@ class CpSatScheduleSolver:
                 if slot.lesson >= 6:
                     weight += scales.late_lesson * (slot.lesson - 5)
                 obj_terms.append(x[key] * weight * w_slot)
+
+        # Prefer owner / same-subject rooms (placement_cost from candidates)
+        for ui, unit in unit_list:
+            a = assignment_map[unit.assignment_id]
+            cands = candidates_by_assignment.get(a.id, [])
+            for rid, cost in cands:
+                if cost <= 0:
+                    continue
+                for slot in feasible_slots_by_unit[ui]:
+                    ykey = (ui, slot.slot_id, rid)
+                    if ykey in y:
+                        obj_terms.append(y[ykey] * cost * w_room)
 
         # Penalize uneven distribution across days per class (linear proxy)
         for cid in class_ids:
@@ -939,7 +1006,6 @@ class CpSatScheduleSolver:
             placements = []
             for ui, unit in unit_list:
                 a = assignment_map[unit.assignment_id]
-                classroom_id = self._classroom_resolver(a, school_level)
                 chosen = None
                 for slot in feasible_slots_by_unit[ui]:
                     key = (ui, slot.slot_id)
@@ -954,6 +1020,18 @@ class CpSatScheduleSolver:
                         status="ERROR",
                         error_message="Решение не удалось извлечь (нет выбранного слота)",
                         metrics_before=metrics_before,
+                    )
+
+                classroom_id = None
+                cands = candidates_by_assignment.get(a.id, [])
+                for rid, _cost in cands:
+                    ykey = (ui, chosen.slot_id, rid)
+                    if ykey in y and solver.Value(y[ykey]) == 1:
+                        classroom_id = rid
+                        break
+                if classroom_id is None and cands:
+                    classroom_id = self._classroom_resolver(
+                        a, school_level, day=chosen.day, lesson=chosen.lesson
                     )
 
                 self._schedule.insert_cell(

@@ -62,7 +62,6 @@ def create_subject(
         name=body.name,
         color=body.color,
         requires_fixed_classroom=body.requires_fixed_classroom,
-        default_classroom_id=body.default_classroom_id,
     )
     return SubjectOut.model_validate(asdict(s))
 
@@ -80,7 +79,6 @@ def update_subject(
         name=data.get("name"),
         color=data.get("color"),
         requires_fixed_classroom=data.get("requires_fixed_classroom"),
-        default_classroom_id=data.get("default_classroom_id"),
         fields_set=frozenset(data.keys()),
     )
     return SubjectOut.model_validate(asdict(s))

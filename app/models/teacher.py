@@ -25,7 +25,11 @@ class Teacher(Base):
 
     school = relationship("School")
     assignments = relationship("TeachingAssignment", back_populates="teacher", lazy="dynamic")
-    home_classroom = relationship("Classroom", foreign_keys=[home_classroom_id])
+    home_classroom = relationship(
+        "Classroom",
+        foreign_keys=[home_classroom_id],
+        back_populates="teachers",
+    )
 
     def __repr__(self):
         return f"<Teacher {self.full_name}>"

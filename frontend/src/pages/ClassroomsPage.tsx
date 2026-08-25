@@ -7,6 +7,8 @@ import {
   updateClassroom,
   type Classroom,
 } from '../api/classrooms'
+import { listSubjects, type Subject } from '../api/subjects'
+import { listTeachers, type Teacher } from '../api/teachers'
 import { ModalPortal } from '../components/ModalPortal'
 import { PageHeader } from '../components/PageHeader'
 
@@ -70,11 +72,22 @@ export function ClassroomsPage() {
     floor: '',
     building: '',
     classes_capacity: '1',
+    subject_id: '',
+    is_exclusive: false,
+    teacher_ids: [] as number[],
   })
 
   const q = useQuery({
     queryKey: ['classrooms'],
     queryFn: listClassrooms,
+  })
+  const subjectsQ = useQuery({
+    queryKey: ['subjects', 'all'],
+    queryFn: () => listSubjects('all'),
+  })
+  const teachersQ = useQuery({
+    queryKey: ['teachers'],
+    queryFn: listTeachers,
   })
 
   const saveM = useMutation({
@@ -85,8 +98,14 @@ export function ClassroomsPage() {
         floor: form.floor === '' ? null : Number(form.floor),
         building: form.building.trim() || null,
         classes_capacity: Number(form.classes_capacity || 1) || 1,
+        subject_id: form.subject_id === '' ? null : Number(form.subject_id),
+        is_exclusive: form.subject_id === '' ? false : form.is_exclusive,
+        teacher_ids: form.teacher_ids,
       }
       if (!payload.number) throw new Error('Укажите номер кабинета')
+      if (payload.is_exclusive && payload.subject_id === null) {
+        throw new Error('Фиксированный кабинет должен иметь предмет')
+      }
       if (editingId === 'new') {
         await createClassroom(payload)
       } else if (typeof editingId === 'number') {
@@ -97,6 +116,8 @@ export function ClassroomsPage() {
       setMsg('Сохранено')
       setEditingId(null)
       await qc.invalidateQueries({ queryKey: ['classrooms'] })
+      await qc.invalidateQueries({ queryKey: ['subjects'] })
+      await qc.invalidateQueries({ queryKey: ['teachers'] })
     },
     onError: (e: Error) => setMsg(e.message),
   })
@@ -106,6 +127,8 @@ export function ClassroomsPage() {
     onSuccess: async () => {
       setMsg('Удалено')
       await qc.invalidateQueries({ queryKey: ['classrooms'] })
+      await qc.invalidateQueries({ queryKey: ['subjects'] })
+      await qc.invalidateQueries({ queryKey: ['teachers'] })
     },
     onError: (e: Error) => setMsg(e.message),
   })
@@ -117,6 +140,13 @@ export function ClassroomsPage() {
   }, [msg])
 
   const rows = q.data ?? []
+  const subjects = subjectsQ.data ?? []
+  const teachers = teachersQ.data ?? []
+  const subjectById = useMemo(() => {
+    const m = new Map<number, Subject>()
+    for (const s of subjects) m.set(s.id, s)
+    return m
+  }, [subjects])
   const groups = useMemo(() => groupByFloor(rows), [rows])
 
   useEffect(() => {
@@ -126,7 +156,16 @@ export function ClassroomsPage() {
   }, [groups])
 
   function openNew() {
-    setForm({ number: '', name: '', floor: '', building: '', classes_capacity: '1' })
+    setForm({
+      number: '',
+      name: '',
+      floor: '',
+      building: '',
+      classes_capacity: '1',
+      subject_id: '',
+      is_exclusive: false,
+      teacher_ids: [],
+    })
     setEditingId('new')
   }
 
@@ -137,8 +176,35 @@ export function ClassroomsPage() {
       floor: c.floor === null || c.floor === undefined ? '' : String(c.floor),
       building: c.building ?? '',
       classes_capacity: String(c.classes_capacity ?? 1),
+      subject_id: c.subject_id === null || c.subject_id === undefined ? '' : String(c.subject_id),
+      is_exclusive: Boolean(c.is_exclusive),
+      teacher_ids: (c.teachers ?? []).map((t) => t.id),
     })
     setEditingId(c.id)
+  }
+
+  function toggleTeacher(id: number) {
+    setForm((f) => ({
+      ...f,
+      teacher_ids: f.teacher_ids.includes(id)
+        ? f.teacher_ids.filter((tid) => tid !== id)
+        : [...f.teacher_ids, id],
+    }))
+  }
+
+  function otherRoomHint(t: Teacher) {
+    if (!t.home_classroom_id) return null
+    if (typeof editingId === 'number' && t.home_classroom_id === editingId) return null
+    return t.home_classroom?.display_name ?? null
+  }
+
+  function onSubjectChange(value: string) {
+    const subj = value === '' ? null : subjectById.get(Number(value))
+    setForm((f) => ({
+      ...f,
+      subject_id: value,
+      is_exclusive: value === '' ? false : subj?.requires_fixed_classroom ? true : f.is_exclusive,
+    }))
   }
 
   if (q.isLoading) return <p>Загрузка…</p>
@@ -148,7 +214,7 @@ export function ClassroomsPage() {
     <div>
       <PageHeader
         title="Кабинеты"
-        subtitle="Сгруппированы по этажам здания"
+        subtitle="Сгруппированы по этажам. За кабинетом можно закрепить нескольких учителей"
         actions={
           <button type="button" className="btn btn-primary" onClick={openNew}>
             <i className="bi bi-plus-lg me-1" />
@@ -193,6 +259,8 @@ export function ClassroomsPage() {
                           <tr>
                             <th>Номер</th>
                             <th>Название</th>
+                            <th>Предмет</th>
+                            <th>Учителя</th>
                             <th>Корпус</th>
                             <th>Классов в слот</th>
                             <th />
@@ -203,6 +271,17 @@ export function ClassroomsPage() {
                             <tr key={c.id}>
                               <td>{c.number}</td>
                               <td>{c.name ?? '—'}</td>
+                              <td>
+                                {c.subject?.name ?? '—'}
+                                {c.is_exclusive && c.subject ? (
+                                  <span className="badge text-bg-secondary ms-1">фикс.</span>
+                                ) : null}
+                              </td>
+                              <td>
+                                {(c.teachers ?? []).length === 0
+                                  ? '—'
+                                  : (c.teachers ?? []).map((t) => t.full_name).join(', ')}
+                              </td>
                               <td>{c.building ?? '—'}</td>
                               <td>{c.classes_capacity ?? 1}</td>
                               <td className="text-end text-nowrap">
@@ -239,7 +318,7 @@ export function ClassroomsPage() {
       {editingId !== null && (
         <ModalPortal>
         <div className="modal show d-block" tabIndex={-1} style={{ background: 'rgba(0,0,0,.35)' }}>
-          <div className="modal-dialog">
+          <div className="modal-dialog modal-dialog-scrollable">
             <div className="modal-content">
               <div className="modal-header">
                 <h5 className="modal-title">{editingId === 'new' ? 'Новый кабинет' : 'Редактирование'}</h5>
@@ -253,6 +332,69 @@ export function ClassroomsPage() {
                 <div className="mb-2">
                   <label className="form-label">Название</label>
                   <input className="form-control" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+                </div>
+                <div className="mb-2">
+                  <label className="form-label">Предмет</label>
+                  <select
+                    className="form-select"
+                    value={form.subject_id}
+                    onChange={(e) => onSubjectChange(e.target.value)}
+                  >
+                    <option value="">— общий —</option>
+                    {subjects.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name}
+                        {s.requires_fixed_classroom ? ' (фикс.)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="form-check mb-2">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    id="roomExclusive"
+                    checked={form.is_exclusive}
+                    disabled={form.subject_id === ''}
+                    onChange={(e) => setForm((f) => ({ ...f, is_exclusive: e.target.checked }))}
+                  />
+                  <label className="form-check-label" htmlFor="roomExclusive">
+                    Фиксированный — только этот предмет
+                  </label>
+                </div>
+                <div className="mb-2">
+                  <label className="form-label">Учителя</label>
+                  {teachers.length === 0 ? (
+                    <div className="form-text">Сначала добавьте учителей в справочник.</div>
+                  ) : (
+                    <div className="classroom-teachers-picker border rounded px-2 py-1">
+                      {teachers.map((t) => {
+                        const hint = otherRoomHint(t)
+                        const checked = form.teacher_ids.includes(t.id)
+                        return (
+                          <div className="form-check" key={t.id}>
+                            <input
+                              className="form-check-input"
+                              type="checkbox"
+                              id={`room-teacher-${t.id}`}
+                              checked={checked}
+                              onChange={() => toggleTeacher(t.id)}
+                            />
+                            <label className="form-check-label" htmlFor={`room-teacher-${t.id}`}>
+                              {t.full_name}
+                              {hint ? (
+                                <span className="text-muted"> · сейчас {hint}</span>
+                              ) : null}
+                            </label>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  <div className="form-text">
+                    Можно закрепить нескольких учителей. Если учитель уже в другом кабинете, он будет
+                    перенесён сюда.
+                  </div>
                 </div>
                 <div className="mb-2">
                   <label className="form-label">Этаж</label>

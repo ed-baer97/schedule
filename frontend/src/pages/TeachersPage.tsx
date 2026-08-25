@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import { ModalPortal } from '../components/ModalPortal'
 import { createTeacher, deleteTeacher, listTeachers, updateTeacher, type Teacher } from '../api/teachers'
-import { listClassrooms } from '../api/classrooms'
 
 export function TeachersPage() {
   const qc = useQueryClient()
@@ -12,17 +11,12 @@ export function TeachersPage() {
     full_name: '',
     email: '',
     phone: '',
-    home_classroom_id: '' as string | number,
   })
   const [editingId, setEditingId] = useState<number | 'new' | null>(null)
 
   const teachersQ = useQuery({
     queryKey: ['teachers'],
     queryFn: listTeachers,
-  })
-  const roomsQ = useQuery({
-    queryKey: ['classrooms'],
-    queryFn: listClassrooms,
   })
 
   const saveM = useMutation({
@@ -31,7 +25,6 @@ export function TeachersPage() {
         full_name: form.full_name.trim(),
         email: form.email.trim() || null,
         phone: form.phone.trim() || null,
-        home_classroom_id: form.home_classroom_id === '' ? null : Number(form.home_classroom_id),
       }
       if (!payload.full_name) throw new Error('Укажите ФИО')
       if (editingId === 'new') {
@@ -53,6 +46,7 @@ export function TeachersPage() {
     onSuccess: async () => {
       setMsg('Удалено')
       await qc.invalidateQueries({ queryKey: ['teachers'] })
+      await qc.invalidateQueries({ queryKey: ['classrooms'] })
     },
     onError: (e: Error) => setMsg(e.message),
   })
@@ -64,7 +58,7 @@ export function TeachersPage() {
   }, [msg])
 
   function openNew() {
-    setForm({ full_name: '', email: '', phone: '', home_classroom_id: '' })
+    setForm({ full_name: '', email: '', phone: '' })
     setEditingId('new')
   }
 
@@ -73,17 +67,15 @@ export function TeachersPage() {
       full_name: t.full_name,
       email: t.email ?? '',
       phone: t.phone ?? '',
-      home_classroom_id: t.home_classroom_id ?? '',
     })
     setEditingId(t.id)
   }
 
-  if (teachersQ.isLoading || roomsQ.isLoading) return <p>Загрузка…</p>
+  if (teachersQ.isLoading) return <p>Загрузка…</p>
   if (teachersQ.isError)
     return <p className="text-danger">{(teachersQ.error as Error).message}</p>
 
   const teachers = teachersQ.data ?? []
-  const rooms = roomsQ.data ?? []
 
   return (
     <div>
@@ -107,7 +99,6 @@ export function TeachersPage() {
             <tr>
               <th>ФИО</th>
               <th>Email</th>
-              <th>Кабинет</th>
               <th />
             </tr>
           </thead>
@@ -116,7 +107,6 @@ export function TeachersPage() {
               <tr key={t.id}>
                 <td>{t.full_name}</td>
                 <td>{t.email ?? '—'}</td>
-                <td>{t.home_classroom?.display_name ?? '—'}</td>
                 <td className="text-end text-nowrap">
                   <button
                     type="button"
@@ -177,26 +167,6 @@ export function TeachersPage() {
                     value={form.phone}
                     onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
                   />
-                </div>
-                <div className="mb-2">
-                  <label className="form-label">Домашний кабинет</label>
-                  <select
-                    className="form-select"
-                    value={form.home_classroom_id === '' ? '' : String(form.home_classroom_id)}
-                    onChange={(e) =>
-                      setForm((f) => ({
-                        ...f,
-                        home_classroom_id: e.target.value === '' ? '' : Number(e.target.value),
-                      }))
-                    }
-                  >
-                    <option value="">—</option>
-                    {rooms.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.display_name}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </div>
               <div className="modal-footer">

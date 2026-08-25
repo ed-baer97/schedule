@@ -1,5 +1,10 @@
 import { apiJson } from './client'
 
+export type ClassroomTeacher = {
+  id: number
+  full_name: string
+}
+
 export type Classroom = {
   id: number
   number: string
@@ -8,6 +13,10 @@ export type Classroom = {
   building: string | null
   classes_capacity: number | null
   display_name: string
+  subject_id: number | null
+  is_exclusive: boolean
+  subject: { id: number; name: string; display_color: string } | null
+  teachers: ClassroomTeacher[]
 }
 
 export type ClassroomBrief = Pick<Classroom, 'id' | 'display_name'>
@@ -18,6 +27,9 @@ export type ClassroomPayload = {
   floor: number | null
   building: string | null
   classes_capacity: number
+  subject_id: number | null
+  is_exclusive: boolean
+  teacher_ids: number[]
 }
 
 export function listClassrooms() {

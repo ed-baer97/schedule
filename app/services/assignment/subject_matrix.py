@@ -21,7 +21,7 @@ class AssignmentSubjectMatrixMixin:
     ) -> SubjectAssignmentsViewData:
         subject = self.db.execute(
             select(Subject)
-            .options(joinedload(Subject.default_classroom))
+            .options(joinedload(Subject.classrooms))
             .where(Subject.id == subject_id, Subject.school_id == self.school_id)
         ).scalars().unique().one_or_none()
         if subject is None:

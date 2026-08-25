@@ -62,6 +62,8 @@ class ClassroomChoiceData:
     number: str
     name: str | None
     display_name: str
+    subject_id: int | None = None
+    is_exclusive: bool = False
 
 
 @dataclass
@@ -105,6 +107,10 @@ class ClassroomData:
     floor: int | None
     building: str | None
     display_name: str
+    subject_id: int | None = None
+    is_exclusive: bool = False
+    subject: SubjectBriefData | None = None
+    teachers: list[TeacherBriefData] | None = None
 
 
 @dataclass
@@ -114,8 +120,7 @@ class SubjectData:
     color: str | None
     display_color: str
     requires_fixed_classroom: bool
-    default_classroom_id: int | None
-    default_classroom: ClassroomBriefData | None
+    classrooms: list[ClassroomBriefData] | None = None
 
 
 @dataclass
@@ -202,6 +207,8 @@ def classroom_choice(c) -> ClassroomChoiceData:
         number=c.number,
         name=c.name,
         display_name=c.display_name,
+        subject_id=getattr(c, "subject_id", None),
+        is_exclusive=bool(getattr(c, "is_exclusive", False)),
     )
 
 
@@ -237,6 +244,8 @@ def teacher_data(t) -> TeacherData:
 
 
 def classroom_data(c) -> ClassroomData:
+    subj = getattr(c, "subject", None)
+    teachers = getattr(c, "teachers", None) or []
     return ClassroomData(
         id=c.id,
         number=c.number,
@@ -246,20 +255,22 @@ def classroom_data(c) -> ClassroomData:
         floor=c.floor,
         building=c.building,
         display_name=c.display_name,
+        subject_id=getattr(c, "subject_id", None),
+        is_exclusive=bool(getattr(c, "is_exclusive", False)),
+        subject=subject_brief(subj) if subj else None,
+        teachers=[teacher_brief(t) for t in teachers],
     )
 
 
 def subject_data(s) -> SubjectData:
+    rooms = getattr(s, "classrooms", None) or []
     return SubjectData(
         id=s.id,
         name=s.name,
         color=s.color,
         display_color=s.display_color,
         requires_fixed_classroom=bool(s.requires_fixed_classroom),
-        default_classroom_id=s.default_classroom_id,
-        default_classroom=(
-            classroom_brief(s.default_classroom) if s.default_classroom else None
-        ),
+        classrooms=[classroom_brief(r) for r in rooms],
     )
 
 

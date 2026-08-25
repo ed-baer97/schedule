@@ -68,13 +68,18 @@ def build_unplaced_diagnostics(
         reasons: Counter[str] = Counter()
         feasible_slots = 0
         checked_slots = 0
-        classroom_id = (
-            classroom_id_for(a, school_level) if classroom_id_for else None
-        )
 
         for day in range(1, working_days + 1):
             for lesson in range(lesson_start, lesson_end_excl):
                 checked_slots += 1
+                classroom_id = None
+                if classroom_id_for:
+                    try:
+                        classroom_id = classroom_id_for(
+                            a, school_level, day=day, lesson=lesson
+                        )
+                    except TypeError:
+                        classroom_id = classroom_id_for(a, school_level)
                 errors = validator.validate_cell(
                     assignment=a,
                     day=day,

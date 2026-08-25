@@ -38,6 +38,7 @@ class AssignmentChoiceData:
     group_number: int | None
     remaining_hours: int
     preferred_classroom_id: int | None
+    requires_fixed_classroom: bool = False
 
 
 @dataclass

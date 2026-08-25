@@ -17,15 +17,13 @@ class SubjectOut(BaseModel):
     color: str | None = None
     display_color: str
     requires_fixed_classroom: bool
-    default_classroom_id: int | None = None
-    default_classroom: ClassroomBrief | None = None
+    classrooms: list[ClassroomBrief] = []
 
 
 class SubjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     color: str = Subject.DEFAULT_COLOR
     requires_fixed_classroom: bool = False
-    default_classroom_id: int | None = None
 
     @field_validator("color")
     @classmethod
@@ -39,7 +37,6 @@ class SubjectUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     color: str | None = None
     requires_fixed_classroom: bool | None = None
-    default_classroom_id: int | None = None
 
     @field_validator("color")
     @classmethod
