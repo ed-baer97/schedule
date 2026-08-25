@@ -1,7 +1,9 @@
 """Excel import service — writes only via catalog/assignment services."""
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -15,6 +17,197 @@ from app.services.subject_service import SubjectService
 from app.services.teacher_service import TeacherService
 
 _MAX_GROUPS = 4
+_CLASS_NAME_RE = re.compile(r"^(\d{1,2})\s*([^\W\d_]{1,3})$", re.UNICODE)
+_YEAR_RE = re.compile(r"^\d{4}\s*[-–/]\s*\d{2,4}$")
+_TEACHER_HEADER_KEYS = frozenset(
+    {"фио", "учитель", "учителя", "teacher", "teachers"}
+)
+_IGNORE_HEADER_KEYS = frozenset(
+    {
+        "n",
+        "nn",
+        "no",
+        "пп",
+        "итого",
+        "всего",
+        "сумма",
+        "час",
+        "часов",
+        "нагрузка",
+    }
+)
+_GENERIC_SHEET_KEYS = frozenset(
+    {"sheet", "sheet1", "sheet2", "лист", "лист1", "лист2"}
+)
+
+
+def _cell_text(value) -> str:
+    import pandas as pd
+
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return ""
+    if isinstance(value, str):
+        return " ".join(value.split())
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return str(value).strip()
+    return " ".join(str(value).split())
+
+
+def _header_key(text: str) -> str:
+    folded = text.casefold().strip()
+    if folded in {"№", "#"}:
+        return "n"
+    return "".join(ch for ch in folded if ch.isalnum())
+
+
+def _is_class_name(text: str) -> bool:
+    return bool(text and _CLASS_NAME_RE.match(text.replace(" ", "")))
+
+
+def _is_teacher_header(text: str) -> bool:
+    return _header_key(text) in _TEACHER_HEADER_KEYS
+
+
+def _is_ignore_header(text: str) -> bool:
+    key = _header_key(text)
+    return key in _IGNORE_HEADER_KEYS or key.startswith("итого")
+
+
+def _is_generic_sheet(name: str) -> bool:
+    return _header_key(name) in _GENERIC_SHEET_KEYS
+
+
+@dataclass(frozen=True)
+class _HoursSheet:
+    teacher_col: int
+    class_columns: tuple[tuple[int, str], ...]
+    header_row: int
+    sheet_name: str
+    subject_hint: str | None
+    frame: object
+
+
+def _subject_from_title_rows(rows: list[list[str]]) -> str | None:
+    for values in rows:
+        for text in values:
+            if not text or len(text) < 2:
+                continue
+            if _YEAR_RE.match(text) or _is_class_name(text):
+                continue
+            if _is_teacher_header(text) or _is_ignore_header(text):
+                continue
+            if _is_generic_sheet(text):
+                continue
+            return text
+    return None
+
+
+def _pick_header_row(df) -> int:
+    best_idx = -1
+    best_score = 0
+    scan = min(len(df), 20)
+    for idx in range(scan):
+        values = [_cell_text(v) for v in df.iloc[idx].tolist()]
+        score = sum(1 for text in values if _is_class_name(text))
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    if best_idx < 0 or best_score < 1:
+        raise ValueError("Не найдена строка с классами (1А, 5Б, 11Г…)")
+    return best_idx
+
+
+def _read_hours_sheet(file_path) -> _HoursSheet:
+    import pandas as pd
+
+    with pd.ExcelFile(file_path) as xl:
+        sheet_name = str(xl.sheet_names[0]).strip() if xl.sheet_names else ""
+        df = pd.read_excel(xl, sheet_name=0, header=None)
+
+    if df.empty or df.shape[1] < 2:
+        raise ValueError(
+            "В файле нужны столбец учителей и хотя бы один столбец класса"
+        )
+
+    header_row = _pick_header_row(df)
+    headers = [_cell_text(v) for v in df.iloc[header_row].tolist()]
+
+    teacher_col: int | None = None
+    for idx, text in enumerate(headers):
+        if _is_teacher_header(text):
+            teacher_col = idx
+            break
+    if teacher_col is None:
+        for idx, text in enumerate(headers):
+            if text and not _is_class_name(text) and not _is_ignore_header(text):
+                teacher_col = idx
+                break
+    if teacher_col is None:
+        raise ValueError("Не найден столбец с ФИО учителей")
+
+    class_columns: list[tuple[int, str]] = []
+    seen_classes: set[str] = set()
+    for idx, text in enumerate(headers):
+        if idx == teacher_col or not _is_class_name(text):
+            continue
+        class_name = text.replace(" ", "")
+        if class_name in seen_classes:
+            continue
+        seen_classes.add(class_name)
+        class_columns.append((idx, class_name))
+    if not class_columns:
+        raise ValueError("Нет столбцов с классами")
+
+    title_rows = [
+        [_cell_text(v) for v in df.iloc[r].tolist()]
+        for r in range(header_row)
+    ]
+    subject_hint = _subject_from_title_rows(title_rows)
+    if not subject_hint and sheet_name and not _is_generic_sheet(sheet_name):
+        subject_hint = sheet_name
+
+    return _HoursSheet(
+        teacher_col=teacher_col,
+        class_columns=tuple(class_columns),
+        header_row=header_row,
+        sheet_name=sheet_name,
+        subject_hint=subject_hint,
+        frame=df,
+    )
+
+
+def _resolve_subject_name(
+    *,
+    explicit: str | None,
+    sheet: _HoursSheet,
+    file_path,
+    filename: str | None,
+) -> str:
+    for candidate in (
+        (explicit or "").strip(),
+        (sheet.subject_hint or "").strip(),
+        Path(filename).stem.strip() if filename else "",
+        Path(file_path).stem.strip(),
+    ):
+        if candidate and not _is_generic_sheet(candidate):
+            return candidate
+    raise ValueError("Не удалось определить название предмета")
+
+
+def _is_teacher_name(text: str) -> bool:
+    if not text or text.casefold() == "nan":
+        return False
+    if _is_teacher_header(text) or _is_ignore_header(text) or _is_class_name(text):
+        return False
+    if text.isdigit():
+        return False
+    return True
 
 
 def _parse_hours(value) -> int:
@@ -203,30 +396,30 @@ class ExcelImporter:
         self.session.commit()
         return created_subjects, created_assignments
 
-    def import_subject_hours(self, file_path, subject_name: str | None = None) -> dict:
+    def import_subject_hours(
+        self,
+        file_path,
+        subject_name: str | None = None,
+        *,
+        filename: str | None = None,
+    ) -> dict:
         """
         Import one subject file: teachers × classes, cells = hours per week.
 
-        Column A — teacher names. Remaining columns — classes.
-        Subject name: explicit argument, otherwise the file stem.
+        Accepts the school workbook: title row with the subject name, then a
+        header (№ / ФИО / classes / итого). The older one-row header
+        (Учитель, 1А, …) still works.
+
+        Subject name: explicit argument, else title/sheet, else file stem.
+        Same normalized ФИО across files reuses the Teacher row.
         """
-        import pandas as pd
-
-        df = pd.read_excel(file_path)
-        if df.empty or len(df.columns) < 2:
-            raise ValueError(
-                "В файле нужны столбец учителей и хотя бы один столбец класса"
-            )
-
-        df.columns = df.columns.astype(str).str.strip()
-        teacher_col = df.columns[0]
-        class_cols = [c for c in df.columns[1:] if c and c.lower() != "nan"]
-        if not class_cols:
-            raise ValueError("Нет столбцов с классами")
-
-        resolved_subject = (subject_name or Path(file_path).stem).strip()
-        if not resolved_subject:
-            raise ValueError("Не удалось определить название предмета")
+        sheet = _read_hours_sheet(file_path)
+        resolved_subject = _resolve_subject_name(
+            explicit=subject_name,
+            sheet=sheet,
+            file_path=file_path,
+            filename=filename,
+        )
 
         subject, subject_created = self._subjects.ensure(
             resolved_subject, commit=False
@@ -238,24 +431,22 @@ class ExcelImporter:
         updated_assignments = 0
         warnings: list[str] = []
         by_class: dict[int, list[tuple[Teacher, int]]] = defaultdict(list)
+        df = sheet.frame
 
-        for _, row in df.iterrows():
-            raw_name = row.get(teacher_col)
-            if raw_name is None or (isinstance(raw_name, float) and pd.isna(raw_name)):
-                continue
-            teacher_name = " ".join(str(raw_name).split())
-            if not teacher_name or teacher_name.lower() == "nan":
+        for row_idx in range(sheet.header_row + 1, len(df)):
+            row = df.iloc[row_idx]
+            teacher_name = _cell_text(row.iloc[sheet.teacher_col])
+            if not _is_teacher_name(teacher_name):
                 continue
 
             teacher, t_new = self._get_or_create_teacher(teacher_name)
             if t_new:
                 created_teachers += 1
 
-            for col in class_cols:
-                hours = _parse_hours(row.get(col))
+            for col_idx, class_name in sheet.class_columns:
+                hours = _parse_hours(row.iloc[col_idx])
                 if hours <= 0:
                     continue
-                class_name = str(col).strip()
                 school_class, c_new = self._get_or_create_class_inferred(class_name)
                 if c_new:
                     created_classes += 1

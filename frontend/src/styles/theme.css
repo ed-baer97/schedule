@@ -281,6 +281,25 @@ h6 {
   --bs-btn-hover-color: var(--kivi-btn-fg);
 }
 
+.excel-file-pick {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+.excel-file-pick .btn {
+  pointer-events: none;
+}
+
+.excel-file-pick:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.excel-file-pick:focus-within .btn {
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--kivi-primary) 35%, transparent);
+}
+
 /* Bootstrap's default tab link is #0d6efd — it washes out on sage glass */
 .app-shell {
   --bs-nav-link-color: var(--kivi-muted);
@@ -1045,6 +1064,33 @@ html[data-theme='dark'] .app-shell .form-select:focus {
   color: var(--kivi-ink);
   border-color: var(--kivi-primary);
   box-shadow: 0 0 0 0.2rem rgba(46, 196, 182, 0.28);
+}
+
+/* Native file picker: Bootstrap paints ::file-selector-button with
+   --bs-body-color on --bs-tertiary-bg. Dark theme sets only the text
+   token, so the button stayed pale gray with cream type.
+   Keep the two pseudo-elements in separate rules: some engines drop
+   the whole declaration if one selector is unknown. */
+html[data-theme='dark'] .app-shell .form-control[type='file']::file-selector-button {
+  color: var(--kivi-ink);
+  background-color: #1c2a24;
+  border-inline-end-color: var(--kivi-line);
+}
+
+html[data-theme='dark'] .app-shell .form-control[type='file']::-webkit-file-upload-button {
+  color: var(--kivi-ink);
+  background-color: #1c2a24;
+  border-inline-end-color: var(--kivi-line);
+}
+
+html[data-theme='dark'] .app-shell .form-control[type='file']:hover:not(:disabled)::file-selector-button {
+  background-color: #24302a;
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .app-shell .form-control[type='file']:hover:not(:disabled)::-webkit-file-upload-button {
+  background-color: #24302a;
+  color: var(--kivi-ink);
 }
 
 html[data-theme='dark'] .modal-content {

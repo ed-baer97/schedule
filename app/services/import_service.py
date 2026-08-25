@@ -154,7 +154,7 @@ class ImportService:
         if len(files) > 1 and subject_name:
             raise BadRequestError(
                 "Название предмета задаётся только при загрузке одного файла; "
-                "для нескольких файлов имя берётся из имени файла"
+                "для нескольких файлов имя берётся из файла"
             )
 
         results: list[SubjectHoursFileResultData] = []
@@ -167,7 +167,7 @@ class ImportService:
                 name = subject_name if len(files) == 1 else None
                 try:
                     payload = self._importer.import_subject_hours(
-                        path, subject_name=name or stem
+                        path, subject_name=name, filename=filename
                     )
                 except ValueError as exc:
                     raise BadRequestError(str(exc)) from exc

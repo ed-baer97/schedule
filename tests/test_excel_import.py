@@ -39,6 +39,37 @@ def _write_hours_xlsx(
     wb.save(path)
 
 
+def _write_school_hours_xlsx(
+    path: Path,
+    *,
+    sheet: str,
+    subject: str,
+    classes: list[str],
+    rows: list[tuple[str, dict[str, int]]],
+    year: str = "2026-2027",
+) -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = sheet
+    ws["B1"] = subject
+    ws["V1"] = year
+    headers = ["№", "ФИО", *classes, "итого"]
+    for col, title in enumerate(headers, start=1):
+        ws.cell(2, col, title)
+    for index, (name, hours_by_class) in enumerate(rows, start=1):
+        excel_row = index + 2
+        ws.cell(excel_row, 1, index)
+        ws.cell(excel_row, 2, name)
+        total = 0
+        for offset, class_name in enumerate(classes):
+            hours = hours_by_class.get(class_name)
+            if hours:
+                ws.cell(excel_row, 3 + offset, hours)
+                total += hours
+        ws.cell(excel_row, 3 + len(classes), total)
+    wb.save(path)
+
+
 def test_subject_hours_creates_teachers_classes_subgroups(tmp_path: Path) -> None:
     path = tmp_path / "Английский язык.xlsx"
     _write_hours_xlsx(
@@ -126,3 +157,136 @@ def test_api_subject_hours_uses_filename(tmp_path: Path) -> None:
     assert body["files"][0]["subject"] == "История"
     assert body["files"][0]["assignments_created"] == 1
     assert "История" in body["message"]
+
+
+def test_school_workbook_reads_fio_skips_totals(tmp_path: Path) -> None:
+    path = tmp_path / "Инф.xlsx"
+    _write_school_hours_xlsx(
+        path,
+        sheet="Информатика",
+        subject="Информатика",
+        classes=["1А", "5А", "5Б"],
+        rows=[
+            ("Рскалиева Г.", {"1А": 1}),
+            ("Баер Э.В.", {"5А": 2, "5Б": 2}),
+            ("Өтепбергенов М.М.", {"5А": 2, "5Б": 2}),
+        ],
+    )
+
+    with SessionLocal() as session:
+        result = ExcelImporter(session, school_id=TEST_SCHOOL_ID).import_subject_hours(
+            str(path), filename="Инф.xlsx"
+        )
+
+    assert result["subject"] == "Информатика"
+    assert result["teachers_created"] == 3
+    assert result["classes_created"] == 3
+    assert result["subgroup_classes"] == 2
+
+    with SessionLocal() as session:
+        names = {t.full_name for t in session.scalars(select(Teacher)).all()}
+        assert names == {"Рскалиева Г.", "Баер Э.В.", "Өтепбергенов М.М."}
+        class_names = {c.name for c in session.scalars(select(SchoolClass)).all()}
+        assert class_names == {"1А", "5А", "5Б"}
+        assert "итого" not in class_names
+        assignments = list(session.scalars(select(TeachingAssignment)).all())
+        assert len(assignments) == 5
+        one_a = [a for a in assignments if a.school_class.name == "1А"]
+        assert len(one_a) == 1
+        assert one_a[0].group_number is None
+        five_a = [a for a in assignments if a.school_class.name == "5А"]
+        assert sorted(a.group_number for a in five_a) == [1, 2]
+
+
+def test_same_fio_in_second_subject_is_same_teacher(tmp_path: Path) -> None:
+    informatics = tmp_path / "Инф.xlsx"
+    math = tmp_path / "Математика.xlsx"
+    _write_school_hours_xlsx(
+        informatics,
+        sheet="Информатика",
+        subject="Информатика",
+        classes=["5А"],
+        rows=[("Баер Э.В.", {"5А": 2})],
+    )
+    _write_school_hours_xlsx(
+        math,
+        sheet="Математика",
+        subject="Математика",
+        classes=["5А"],
+        rows=[("Баер Э.В.", {"5А": 5})],
+    )
+
+    with SessionLocal() as session:
+        importer = ExcelImporter(session, school_id=TEST_SCHOOL_ID)
+        importer.import_subject_hours(str(informatics), filename="Инф.xlsx")
+        importer.import_subject_hours(str(math), filename="Математика.xlsx")
+
+    with SessionLocal() as session:
+        teachers = list(session.scalars(select(Teacher)).all())
+        assert len(teachers) == 1
+        assert teachers[0].full_name == "Баер Э.В."
+        subjects = {s.name for s in session.scalars(select(Subject)).all()}
+        assert subjects == {"Информатика", "Математика"}
+        assignments = list(session.scalars(select(TeachingAssignment)).all())
+        assert len(assignments) == 2
+        assert {a.hours_per_week for a in assignments} == {2, 5}
+
+
+def test_api_school_workbook_uses_subject_from_file(tmp_path: Path) -> None:
+    path = tmp_path / "Инф.xlsx"
+    _write_school_hours_xlsx(
+        path,
+        sheet="Информатика",
+        subject="Информатика",
+        classes=["8А"],
+        rows=[("Козлова Е.В.", {"8А": 2})],
+    )
+    with path.open("rb") as fh:
+        r = client.post(
+            "/api/import/subject-hours",
+            files=[
+                (
+                    "files",
+                    (
+                        "Инф.xlsx",
+                        fh,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                )
+            ],
+        )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["files"][0]["subject"] == "Информатика"
+    assert body["files"][0]["teachers_created"] == 1
+    assert body["files"][0]["assignments_created"] == 1
+
+
+_REAL_INFORMATICS = Path(r"c:\Users\eduar\Downloads\Инф.xlsx")
+
+
+@pytest.mark.skipif(not _REAL_INFORMATICS.exists(), reason="sample workbook missing")
+def test_real_informatics_workbook() -> None:
+    with SessionLocal() as session:
+        result = ExcelImporter(session, school_id=TEST_SCHOOL_ID).import_subject_hours(
+            str(_REAL_INFORMATICS), filename="Инф.xlsx"
+        )
+
+    assert result["subject"] == "Информатика"
+    assert result["teachers_created"] == 9
+    assert result["classes_created"] == 56
+
+    with SessionLocal() as session:
+        class_names = {c.name for c in session.scalars(select(SchoolClass)).all()}
+        assert "итого" not in class_names
+        assert "ФИО" not in {t.full_name for t in session.scalars(select(Teacher)).all()}
+        names = {t.full_name for t in session.scalars(select(Teacher)).all()}
+        assert "Баер Э.В." in names
+        assert "Өтепбергенов М.М." in names
+        five_a = [
+            a
+            for a in session.scalars(select(TeachingAssignment)).all()
+            if a.school_class.name == "5А"
+        ]
+        assert len(five_a) == 2
+        assert sorted(a.group_number for a in five_a) == [1, 2]

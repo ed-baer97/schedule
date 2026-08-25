@@ -61,20 +61,27 @@ export function ImportPage() {
                 Один Excel-файл на предмет. Можно выбрать сразу несколько файлов.
               </p>
               <ul className="small text-muted">
-                <li>Первый столбец — список учителей</li>
-                <li>Дальше столбцы — классы (1А, 5Б…)</li>
+                <li>
+                  Строка заголовков: <code>№</code>, <code>ФИО</code>, классы
+                  (1А, 5Б…), при необходимости <code>итого</code>
+                </li>
+                <li>
+                  Над таблицей можно указать предмет (как в ячейке B1) и учебный
+                  год — год не импортируется
+                </li>
                 <li>В ячейках — часы в неделю (пусто или 0 = не ведёт)</li>
                 <li>
                   Два учителя с часами в одном классе → предмет на подгруппы
                 </li>
                 <li>
-                  Один и тот же учитель в нескольких файлах → несколько предметов
+                  Одно и то же ФИО в разных файлах — один учитель, несколько
+                  предметов. Не дублируется
                 </li>
               </ul>
               <p className="small text-muted">
-                Название предмета берётся из имени файла (например{' '}
-                <code>Математика.xlsx</code>), либо задайте его ниже для одного
-                файла.
+                Название предмета: ячейка в шапке или имя листа, иначе имя файла
+                (<code>Инф.xlsx</code> → «Информатика» из файла). Ниже можно
+                задать вручную для одного файла.
               </p>
 
               <label className="form-label small mb-1" htmlFor="subject-override">
@@ -89,19 +96,25 @@ export function ImportPage() {
                 disabled={hoursPending}
               />
 
-              <input
-                type="file"
-                className="form-control mb-2"
-                accept=".xlsx,.xls"
-                multiple
-                onChange={(e) => {
-                  const list = e.target.files
-                  if (!list?.length) return
-                  void uploadSubjectHours(list)
-                  e.target.value = ''
-                }}
-                disabled={hoursPending}
-              />
+              <label className="excel-file-pick mb-2">
+                <input
+                  type="file"
+                  className="visually-hidden"
+                  accept=".xlsx,.xls"
+                  multiple
+                  onChange={(e) => {
+                    const list = e.target.files
+                    if (!list?.length) return
+                    void uploadSubjectHours(list)
+                    e.target.value = ''
+                  }}
+                  disabled={hoursPending}
+                />
+                <span className="btn btn-primary">
+                  <i className="bi bi-file-earmark-excel me-2" aria-hidden />
+                  Выбрать файлы Excel
+                </span>
+              </label>
 
               {hoursPending && <div className="small text-muted">Загрузка…</div>}
               {hoursFlash && (
@@ -140,10 +153,14 @@ export function ImportPage() {
         <div className="card-header fw-semibold">Как это сохраняется</div>
         <div className="card-body small text-muted">
           <ol className="mb-0">
-            <li>Учителя, классы и предмет создаются из файла нагрузки</li>
+            <li>
+              Учителя, классы и предмет создаются из файла нагрузки. Повтор
+              того же ФИО в другом предмете присоединяется к уже созданному
+              учителю
+            </li>
             <li>
               Каждая ячейка с часами — назначение: учитель + предмет + класс +
-              часы
+              часы. Столбец «итого» и номера строк не загружаются
             </li>
             <li>
               Если в одном классе по этому предмету часы у двух учителей —
