@@ -13,6 +13,7 @@ import {
   type ScheduleSettings,
   type ClassroomMode,
 } from '../api/schedule'
+import { extractApiError } from '../api/client'
 import type { SchoolLevel } from '../domain/schoolLevel'
 
 function defaultSettings(level: SchoolLevel): ScheduleSettings {
@@ -195,7 +196,7 @@ export function AutoSchedulerPage() {
   }
 
   if (q.isLoading) return <p>Загрузка…</p>
-  if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
+  if (q.isError) return <p className="text-danger">{extractApiError(q.error)}</p>
   const data = q.data!
 
   const shifts = level === 'elementary' ? data.shifts_elementary : data.shifts_secondary

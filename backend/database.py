@@ -28,7 +28,16 @@ _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "shifts": frozenset(
         {"working_days", "max_lessons_per_day", "class_hour_day", "class_hour_start", "class_hour_end"}
     ),
-    "schedule_settings": frozenset({"classroom_mode", "elementary_group_subjects_leave"}),
+    "schedule_settings": frozenset(
+        {
+            "classroom_mode",
+            "elementary_group_subjects_leave",
+            "pref_teacher_gaps",
+            "pref_hard_subjects_early",
+            "pref_adjacent_pairs",
+            "pref_classroom_stability",
+        }
+    ),
     "teachers": frozenset({"home_classroom_id"}),
 }
 
@@ -87,34 +96,22 @@ def _run_alembic_upgrade() -> None:
 
 
 def ensure_database(engine) -> dict[str, Any]:
-    """Apply pending Alembic migrations; create tables in empty dev DB."""
+    """Apply pending Alembic revisions, even if the column checklist looks complete."""
     from app.db import Base
     import app.models  # noqa: F401
 
     before = check_schema(engine)
-    if before["schema_ready"]:
-        return {**before, "migrated": False, "message": "ok"}
-
-    if before["tables_count"] == 0:
-        try:
-            _run_alembic_upgrade()
-            logger.info("Database: alembic upgrade head (empty database)")
-        except Exception as exc:
-            logger.warning("Migration failed (%s), using create_all()", exc)
+    migrated = False
+    try:
+        _run_alembic_upgrade()
+        migrated = True
+        logger.info("Database: alembic upgrade head")
+    except Exception as exc:
+        logger.warning("Could not run upgrade: %s", exc)
+        if before["tables_count"] == 0 or not before["schema_ready"]:
             Base.metadata.create_all(bind=engine)
-    else:
-        try:
-            _run_alembic_upgrade()
-            logger.info("Database: alembic upgrade head (pending revisions)")
-        except Exception as exc:
-            logger.warning("Could not run upgrade: %s", exc)
-            if not before["schema_ready"]:
-                Base.metadata.create_all(bind=engine)
 
     after = check_schema(engine)
-    after["migrated"] = True
-    if not after["schema_ready"]:
-        after["message"] = _SCHEMA_HINT
-    else:
-        after["message"] = "ok"
+    after["migrated"] = migrated
+    after["message"] = "ok" if after["schema_ready"] else _SCHEMA_HINT
     return after

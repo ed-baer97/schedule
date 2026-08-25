@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OverlayScrollArea } from '../components/OverlayScrollArea'
 import { ModalPortal } from '../components/ModalPortal'
@@ -72,6 +72,18 @@ function teacherHoverKey(cell: Pick<CellOut, 'teacher_id' | 'teacher_name'>) {
   if (cell.teacher_id != null) return `id-${cell.teacher_id}`
   const name = (cell.teacher_name ?? '').trim()
   return name ? `name-${name}` : ''
+}
+
+function suppressCardDrag(ev: ReactPointerEvent<HTMLElement>) {
+  ev.stopPropagation()
+  const card = (ev.currentTarget as HTMLElement).closest('.lesson-card') as HTMLElement | null
+  if (!card) return
+  card.draggable = false
+  const restore = () => {
+    card.draggable = true
+    window.removeEventListener('pointerup', restore)
+  }
+  window.addEventListener('pointerup', restore)
 }
 
 function buildTeacherHoverCss(keys: string[]) {
@@ -458,7 +470,7 @@ export function SchedulePage() {
   }, [gridQ.data, level, shiftId])
 
   if (gridQ.isPending && !gridQ.data) return <p>Загрузка…</p>
-  if (gridQ.isError) return <p className="text-danger">{(gridQ.error as Error).message}</p>
+  if (gridQ.isError) return <p className="text-danger">{extractApiError(gridQ.error)}</p>
 
   const grid = gridQ.data!
 
@@ -717,7 +729,7 @@ export function SchedulePage() {
                                     )
                                     onDragStartCell(e, cell)
                                   }}
-                                  className="lesson-card rounded p-1 mb-1 position-relative"
+                                  className="lesson-card rounded mb-1 position-relative"
                                   style={{
                                     ['--lesson-color' as string]: cell.subject_color,
                                   }}
@@ -735,36 +747,38 @@ export function SchedulePage() {
                                   {cell.classroom_name && (
                                     <div className="small text-muted">каб. {cell.classroom_name}</div>
                                   )}
-                                  <button
-                                    type="button"
-                                    className="btn btn-sm btn-link text-muted p-0 position-absolute"
-                                    style={{ top: 2, right: 18 }}
-                                    title="Почему этот слот"
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      setWhyCell(cell)
-                                    }}
-                                  >
-                                    ?
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-sm btn-link text-danger p-0 position-absolute"
-                                    style={{ top: 2, right: 4 }}
-                                    title="Удалить"
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      if (confirm('Удалить урок?'))
-                                        delM.mutate({
-                                          cell_id: cell.id,
-                                          class_id: cell.class_id,
-                                          day: cell.day_of_week,
-                                          lesson: cell.lesson_number,
-                                        })
-                                    }}
-                                  >
-                                    ×
-                                  </button>
+                                  <div className="lesson-card-actions">
+                                    <button
+                                      type="button"
+                                      className="lesson-card-action"
+                                      title="Почему этот слот"
+                                      onPointerDown={suppressCardDrag}
+                                      onClick={(ev) => {
+                                        ev.stopPropagation()
+                                        setWhyCell(cell)
+                                      }}
+                                    >
+                                      ?
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="lesson-card-action is-danger"
+                                      title="Удалить"
+                                      onPointerDown={suppressCardDrag}
+                                      onClick={(ev) => {
+                                        ev.stopPropagation()
+                                        if (confirm('Удалить урок?'))
+                                          delM.mutate({
+                                            cell_id: cell.id,
+                                            class_id: cell.class_id,
+                                            day: cell.day_of_week,
+                                            lesson: cell.lesson_number,
+                                          })
+                                      }}
+                                    >
+                                      ×
+                                    </button>
+                                  </div>
                                 </div>
                               ))
                             )}

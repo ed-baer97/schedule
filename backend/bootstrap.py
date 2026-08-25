@@ -6,6 +6,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.config import Config
 from app.models import ScheduleSettings, School, User
 from app.models.user import ROLE_PLATFORM_ADMIN
 from app.services.admin_service import slugify

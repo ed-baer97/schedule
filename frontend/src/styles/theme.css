@@ -464,6 +464,7 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 }
 
 .overlay-scroll {
+  --overlay-scroll-bar: 12px;
   position: relative;
   flex: 1 1 0%;
   min-height: 0;
@@ -477,6 +478,15 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   overflow: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
+}
+
+/* Keep grid cells out from under the overlay thumb so × stays clickable. */
+.schedule-grid-card .overlay-scroll.has-y .overlay-scroll-viewport {
+  right: var(--overlay-scroll-bar);
+}
+
+.schedule-grid-card .overlay-scroll.has-x .overlay-scroll-viewport {
+  bottom: var(--overlay-scroll-bar);
 }
 
 .overlay-scroll-viewport::-webkit-scrollbar {
@@ -496,22 +506,22 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   top: 0;
   right: 0;
   bottom: 0;
-  width: 12px;
+  width: var(--overlay-scroll-bar);
 }
 
 .overlay-scroll.has-x .overlay-scroll-bar-v {
-  bottom: 12px;
+  bottom: var(--overlay-scroll-bar);
 }
 
 .overlay-scroll-bar-h {
   left: 0;
   right: 0;
   bottom: 0;
-  height: 12px;
+  height: var(--overlay-scroll-bar);
 }
 
 .overlay-scroll.has-y .overlay-scroll-bar-h {
-  right: 12px;
+  right: var(--overlay-scroll-bar);
 }
 
 .overlay-scroll-thumb {
@@ -629,6 +639,7 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 
 .lesson-card {
   padding: 6px 8px;
+  padding-right: 3.5rem;
   border-radius: 6px;
   margin-bottom: 4px;
   font-size: 0.8rem;
@@ -641,6 +652,53 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 
 .lesson-card:active {
   cursor: grabbing;
+}
+
+.lesson-card-actions {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  z-index: 3;
+  display: flex;
+  gap: 2px;
+}
+
+.lesson-card-action {
+  box-sizing: border-box;
+  width: 1.625rem;
+  height: 1.625rem;
+  min-width: 1.625rem;
+  padding: 0;
+  border: 1px solid var(--kivi-line);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--kivi-surface);
+  color: var(--kivi-muted);
+  cursor: pointer;
+}
+
+.lesson-card-action:hover,
+.lesson-card-action:focus-visible {
+  color: var(--kivi-ink);
+  background: color-mix(in srgb, var(--kivi-ink) 8%, var(--kivi-surface));
+  outline: none;
+}
+
+.lesson-card-action.is-danger {
+  font-size: 1.2rem;
+  color: #c0392b;
+}
+
+.lesson-card-action.is-danger:hover,
+.lesson-card-action.is-danger:focus-visible {
+  color: #922b21;
+  background: color-mix(in srgb, #c0392b 16%, var(--kivi-surface));
+  border-color: color-mix(in srgb, #c0392b 35%, var(--kivi-line));
 }
 
 .lesson-card .lesson-subject,
