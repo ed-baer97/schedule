@@ -956,6 +956,49 @@ html[data-theme='dark'] .admin-page .accordion-button::after {
   filter: invert(1) brightness(1.2);
 }
 
+.app-shell .accordion-item {
+  background: var(--kivi-surface);
+  color: var(--kivi-ink);
+  border-color: var(--kivi-line);
+}
+
+.app-shell .accordion-button {
+  background: var(--kivi-surface);
+  color: var(--kivi-ink);
+  box-shadow: none;
+  font-weight: 600;
+}
+
+.app-shell .accordion-button:hover {
+  background: color-mix(in srgb, var(--kivi-primary) 8%, var(--kivi-surface));
+  color: var(--kivi-ink);
+}
+
+.app-shell .accordion-button:not(.collapsed) {
+  background: color-mix(in srgb, var(--kivi-primary) 14%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  box-shadow: none;
+}
+
+.app-shell .accordion-button:focus {
+  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--kivi-primary) 28%, transparent);
+}
+
+.app-shell .accordion-body {
+  background: var(--kivi-surface);
+  color: var(--kivi-ink);
+}
+
+.app-shell .classrooms-floor-count {
+  background: color-mix(in srgb, var(--kivi-primary) 16%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  font-weight: 600;
+}
+
+html[data-theme='dark'] .app-shell .accordion-button::after {
+  filter: invert(1) brightness(1.2);
+}
+
 html[data-theme='dark'] .admin-page .text-muted {
   color: var(--kivi-muted) !important;
 }
@@ -1097,6 +1140,14 @@ html[data-theme='dark'] .table {
   --bs-table-color: var(--kivi-ink);
   --bs-table-border-color: var(--kivi-line);
   --bs-table-striped-bg: #1c2a24;
+  --bs-table-striped-color: var(--kivi-ink);
+  /* Bootstrap hover uses --bs-table-hover-color = emphasis (black) unless
+     data-bs-theme=dark. Cream --bs-table-color is ignored, so «Начальная
+     школа» and other cells go black on the dark row. */
+  --bs-table-hover-color: var(--kivi-ink);
+  --bs-table-hover-bg: color-mix(in srgb, var(--kivi-primary) 18%, transparent);
+  --bs-table-active-color: var(--kivi-ink);
+  --bs-table-active-bg: color-mix(in srgb, var(--kivi-primary) 24%, transparent);
   color: var(--kivi-ink);
 }
 

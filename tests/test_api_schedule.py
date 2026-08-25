@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.models import (
     Classroom,
@@ -718,4 +718,73 @@ def test_teacher_ladder_relocates_clustered_leftover_hour() -> None:
         assert last is not None
         assert remaining_for(last) == 0, result
         assert remaining == 0, result
+
+
+def test_workload_shows_class_hours_not_sum_of_subgroups() -> None:
+    with SessionLocal() as session:
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Информатика")
+        t1 = Teacher(school_id=TEST_SCHOOL_ID, full_name="Отепбергенов М.М.")
+        t2 = Teacher(school_id=TEST_SCHOOL_ID, full_name="Иванов И.И.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5А", grade=5, school_level="secondary"
+        )
+        session.add_all([subject, t1, t2, cls])
+        session.flush()
+        session.add_all(
+            [
+                TeachingAssignment(
+                    school_id=TEST_SCHOOL_ID,
+                    subject_id=subject.id,
+                    class_id=cls.id,
+                    teacher_id=t1.id,
+                    hours_per_week=2,
+                    group_number=1,
+                ),
+                TeachingAssignment(
+                    school_id=TEST_SCHOOL_ID,
+                    subject_id=subject.id,
+                    class_id=cls.id,
+                    teacher_id=t2.id,
+                    hours_per_week=2,
+                    group_number=2,
+                ),
+            ]
+        )
+        session.commit()
+        subject_id, class_id = subject.id, cls.id
+
+    listed = client.get("/api/workload/?school_level=secondary")
+    assert listed.status_code == 200, listed.text
+    cells = [
+        c
+        for c in listed.json()["cells"]
+        if c["class_id"] == class_id and c["subject_id"] == subject_id
+    ]
+    assert cells == [{"class_id": class_id, "subject_id": subject_id, "hours": 2}]
+
+    upd = client.put(
+        "/api/workload/cell",
+        json={"class_id": class_id, "subject_id": subject_id, "hours": 3},
+    )
+    assert upd.status_code == 200, upd.text
+
+    with SessionLocal() as session:
+        rows = list(
+            session.scalars(
+                select(TeachingAssignment).where(
+                    TeachingAssignment.class_id == class_id,
+                    TeachingAssignment.subject_id == subject_id,
+                )
+            ).all()
+        )
+        assert len(rows) == 2
+        assert {r.hours_per_week for r in rows} == {3}
+
+    refreshed = client.get("/api/workload/?school_level=secondary")
+    cells = [
+        c
+        for c in refreshed.json()["cells"]
+        if c["class_id"] == class_id and c["subject_id"] == subject_id
+    ]
+    assert cells == [{"class_id": class_id, "subject_id": subject_id, "hours": 3}]
 

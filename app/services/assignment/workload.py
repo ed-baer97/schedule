@@ -39,11 +39,15 @@ class AssignmentWorkloadMixin:
                 )
             ).all()
         )
-        totals: dict[tuple[int, int], int] = {}
+        # Class timetable hours, not the sum of subgroup teachers.
+        class_hours: dict[tuple[int, int], int] = {}
         for a in assignments:
             key = (a.class_id, a.subject_id)
-            totals[key] = totals.get(key, 0) + int(a.hours_per_week or 0)
-        cells = [(k[0], k[1], h) for k, h in sorted(totals.items())]
+            hours = int(a.hours_per_week or 0)
+            prev = class_hours.get(key)
+            if prev is None or hours > prev:
+                class_hours[key] = hours
+        cells = [(k[0], k[1], h) for k, h in sorted(class_hours.items())]
         return WorkloadViewData(
             school_level=school_level,
             classes=[school_class_brief(c) for c in classes],
@@ -59,23 +63,28 @@ class AssignmentWorkloadMixin:
         require_owned(self.db, SchoolClass, class_id, self.school_id)
         require_owned(self.db, Subject, subject_id, self.school_id)
 
-        assignment = self.db.scalars(
-            select(TeachingAssignment).where(
-                TeachingAssignment.school_id == self.school_id,
-                TeachingAssignment.class_id == class_id,
-                TeachingAssignment.subject_id == subject_id,
-                TeachingAssignment.teacher_id.is_(None),
-            )
-        ).first()
+        assignments = list(
+            self.db.scalars(
+                select(TeachingAssignment).where(
+                    TeachingAssignment.school_id == self.school_id,
+                    TeachingAssignment.class_id == class_id,
+                    TeachingAssignment.subject_id == subject_id,
+                )
+            ).all()
+        )
 
         if hours == 0:
-            if assignment:
-                self.db.delete(assignment)
-                self.db.commit()
+            for assignment in assignments:
+                if assignment.teacher_id is None:
+                    self.db.delete(assignment)
+                else:
+                    assignment.hours_per_week = 0
+            self.db.commit()
             return
 
-        if assignment:
-            assignment.hours_per_week = hours
+        if assignments:
+            for assignment in assignments:
+                assignment.hours_per_week = hours
         else:
             self.create(
                 subject_id=subject_id,
@@ -85,4 +94,3 @@ class AssignmentWorkloadMixin:
                 commit=False,
             )
         self.db.commit()
-

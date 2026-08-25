@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   createClassroom,
   deleteClassroom,
@@ -8,11 +8,62 @@ import {
   type Classroom,
 } from '../api/classrooms'
 import { ModalPortal } from '../components/ModalPortal'
+import { PageHeader } from '../components/PageHeader'
+
+type FloorGroup = {
+  key: string
+  floor: number | null
+  items: Classroom[]
+}
+
+function compareRoomNumber(a: Classroom, b: Classroom) {
+  return a.number.localeCompare(b.number, 'ru', { numeric: true })
+}
+
+function groupByFloor(rows: Classroom[]): FloorGroup[] {
+  const buckets = new Map<number | 'none', Classroom[]>()
+  for (const room of rows) {
+    const key = room.floor === null || room.floor === undefined ? 'none' : room.floor
+    const list = buckets.get(key)
+    if (list) list.push(room)
+    else buckets.set(key, [room])
+  }
+  const floors = [...buckets.keys()].filter((k): k is number => k !== 'none').sort((a, b) => a - b)
+  const groups: FloorGroup[] = floors.map((floor) => ({
+    key: String(floor),
+    floor,
+    items: (buckets.get(floor) ?? []).slice().sort(compareRoomNumber),
+  }))
+  const unassigned = buckets.get('none')
+  if (unassigned?.length) {
+    groups.push({
+      key: 'none',
+      floor: null,
+      items: unassigned.slice().sort(compareRoomNumber),
+    })
+  }
+  return groups
+}
+
+function floorTitle(floor: number | null) {
+  if (floor === null) return 'Этаж не указан'
+  return `${floor} этаж`
+}
+
+function roomsWord(n: number) {
+  const n10 = n % 10
+  const n100 = n % 100
+  if (n10 === 1 && n100 !== 11) return 'кабинет'
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return 'кабинета'
+  return 'кабинетов'
+}
 
 export function ClassroomsPage() {
   const qc = useQueryClient()
   const [msg, setMsg] = useState<string | null>(null)
   const [editingId, setEditingId] = useState<number | 'new' | null>(null)
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  const openedOnce = useRef(false)
   const [form, setForm] = useState({
     number: '',
     name: '',
@@ -65,6 +116,15 @@ export function ClassroomsPage() {
     return () => clearTimeout(t)
   }, [msg])
 
+  const rows = q.data ?? []
+  const groups = useMemo(() => groupByFloor(rows), [rows])
+
+  useEffect(() => {
+    if (openedOnce.current || groups.length === 0) return
+    openedOnce.current = true
+    setOpenKey(groups[0].key)
+  }, [groups])
+
   function openNew() {
     setForm({ number: '', name: '', floor: '', building: '', classes_capacity: '1' })
     setEditingId('new')
@@ -83,56 +143,98 @@ export function ClassroomsPage() {
 
   if (q.isLoading) return <p>Загрузка…</p>
   if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
-  const rows = q.data ?? []
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <h1 className="h3 mb-0">Кабинеты</h1>
-        <button type="button" className="btn btn-primary" onClick={openNew}>
-          Добавить
-        </button>
-      </div>
-      {msg && <div className="alert alert-info py-2">{msg}</div>}
-      <div className="table-responsive card shadow-sm">
-        <table className="table table-hover mb-0">
-          <thead className="table-light">
-            <tr>
-              <th>Номер</th>
-              <th>Название</th>
-              <th>Этаж</th>
-              <th>Корпус</th>
-              <th>Классов в слот</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((c) => (
-              <tr key={c.id}>
-                <td>{c.number}</td>
-                <td>{c.name ?? '—'}</td>
-                <td>{c.floor ?? '—'}</td>
-                <td>{c.building ?? '—'}</td>
-                <td>{c.classes_capacity ?? 1}</td>
-                <td className="text-end text-nowrap">
-                  <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(c)}>
-                    Изменить
-                  </button>
+      <PageHeader
+        title="Кабинеты"
+        subtitle="Сгруппированы по этажам здания"
+        actions={
+          <button type="button" className="btn btn-primary" onClick={openNew}>
+            <i className="bi bi-plus-lg me-1" />
+            Добавить
+          </button>
+        }
+      />
+      {msg && (
+        <div className="alert alert-info py-2" role="status">
+          {msg}
+        </div>
+      )}
+
+      {groups.length === 0 ? (
+        <div className="card shadow-sm">
+          <div className="card-body text-muted">Кабинетов пока нет — добавьте первый.</div>
+        </div>
+      ) : (
+        <div className="accordion classrooms-accordion" id="classrooms-by-floor">
+          {groups.map((group) => {
+            const open = openKey === group.key
+            return (
+              <div className="accordion-item" key={group.key}>
+                <h2 className="accordion-header">
                   <button
+                    className={`accordion-button ${open ? '' : 'collapsed'}`}
                     type="button"
-                    className="btn btn-sm btn-outline-danger"
-                    onClick={() => {
-                      if (confirm(`Удалить кабинет «${c.display_name}»?`)) delM.mutate(c.id)
-                    }}
+                    aria-expanded={open}
+                    onClick={() => setOpenKey(open ? null : group.key)}
                   >
-                    Удалить
+                    <span className="me-2">{floorTitle(group.floor)}</span>
+                    <span className="badge rounded-pill classrooms-floor-count">
+                      {group.items.length} {roomsWord(group.items.length)}
+                    </span>
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </h2>
+                <div className={`accordion-collapse collapse ${open ? 'show' : ''}`}>
+                  <div className="accordion-body p-0">
+                    <div className="table-responsive">
+                      <table className="table table-hover mb-0">
+                        <thead className="table-light">
+                          <tr>
+                            <th>Номер</th>
+                            <th>Название</th>
+                            <th>Корпус</th>
+                            <th>Классов в слот</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.items.map((c) => (
+                            <tr key={c.id}>
+                              <td>{c.number}</td>
+                              <td>{c.name ?? '—'}</td>
+                              <td>{c.building ?? '—'}</td>
+                              <td>{c.classes_capacity ?? 1}</td>
+                              <td className="text-end text-nowrap">
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-secondary me-1"
+                                  onClick={() => openEdit(c)}
+                                >
+                                  Изменить
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-danger"
+                                  onClick={() => {
+                                    if (confirm(`Удалить кабинет «${c.display_name}»?`)) delM.mutate(c.id)
+                                  }}
+                                >
+                                  Удалить
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {editingId !== null && (
         <ModalPortal>
