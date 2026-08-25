@@ -5,7 +5,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain import grade_from_name
-from app.models import Classroom, SchoolClass, Shift, TeachingAssignment
+from app.models import Classroom, SchoolClass, Shift, Teacher, TeachingAssignment
 from app.services.dto import SchoolClassData, school_class_data
 from app.services.errors import BadRequestError, NotFoundError
 from app.services.schedule_service import ScheduleService
@@ -21,6 +21,7 @@ class SchoolClassService:
         return [
             joinedload(SchoolClass.shift),
             joinedload(SchoolClass.home_classroom),
+            joinedload(SchoolClass.homeroom_teacher),
         ]
 
     def _load_list(self) -> list[SchoolClass]:
@@ -74,6 +75,7 @@ class SchoolClassService:
         school_level: str,
         shift_id: int | None = None,
         home_classroom_id: int | None = None,
+        homeroom_teacher_id: int | None = None,
         students_count: int | None = None,
         commit: bool = True,
     ) -> SchoolClassData | SchoolClass:
@@ -82,6 +84,8 @@ class SchoolClassService:
             require_owned(self.db, Shift, shift_id, self.school_id)
         if home_classroom_id is not None:
             require_owned(self.db, Classroom, home_classroom_id, self.school_id)
+        if homeroom_teacher_id is not None:
+            require_owned(self.db, Teacher, homeroom_teacher_id, self.school_id)
         sc = SchoolClass(
             school_id=self.school_id,
             name=name,
@@ -89,6 +93,7 @@ class SchoolClassService:
             school_level=school_level,
             shift_id=shift_id,
             home_classroom_id=home_classroom_id,
+            homeroom_teacher_id=homeroom_teacher_id,
             students_count=students_count,
         )
         self.db.add(sc)
@@ -127,6 +132,7 @@ class SchoolClassService:
         school_level: str | None = None,
         shift_id: int | None = None,
         home_classroom_id: int | None = None,
+        homeroom_teacher_id: int | None = None,
         students_count: int | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> SchoolClassData:
@@ -137,6 +143,8 @@ class SchoolClassService:
             require_owned(self.db, Shift, shift_id, self.school_id)
         if "home_classroom_id" in fields_set and home_classroom_id is not None:
             require_owned(self.db, Classroom, home_classroom_id, self.school_id)
+        if "homeroom_teacher_id" in fields_set and homeroom_teacher_id is not None:
+            require_owned(self.db, Teacher, homeroom_teacher_id, self.school_id)
         if "name" in fields_set and name is not None:
             sc.name = str(name).strip()
             sc.grade = grade_from_name(sc.name)
@@ -146,6 +154,8 @@ class SchoolClassService:
             sc.shift_id = shift_id
         if "home_classroom_id" in fields_set:
             sc.home_classroom_id = home_classroom_id
+        if "homeroom_teacher_id" in fields_set:
+            sc.homeroom_teacher_id = homeroom_teacher_id
         if "students_count" in fields_set:
             sc.students_count = students_count
         self.db.commit()

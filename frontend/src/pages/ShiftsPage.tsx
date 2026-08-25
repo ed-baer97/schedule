@@ -97,39 +97,35 @@ function breaksAsNumbers(breaks: Record<string, string>): Record<string, number>
   return out
 }
 
+function emptyLessonTimes(nums: number[]): Record<string, BellRow> {
+  return Object.fromEntries(nums.map((n) => [String(n), { time_start: '', time_end: '' }]))
+}
+
 function buildLessonTimes(
   nums: number[],
   firstStart: string,
   duration: number,
   breaksAfter: Record<string, number>,
-  insert: { start: string; duration: number; breakAfter: number } | null,
 ): Record<string, BellRow> {
   const start0 = parseHM(firstStart)
-  if (start0 == null || duration < 1) {
-    return Object.fromEntries(nums.map((n) => [String(n), { time_start: '', time_end: '' }]))
-  }
-  const insStart = insert ? parseHM(insert.start) : null
-  const ins =
-    insert && insStart != null && insert.duration >= 1
-      ? { start: insStart, duration: insert.duration, breakAfter: Math.max(0, insert.breakAfter) }
-      : null
+  if (start0 == null || duration < 1) return emptyLessonTimes(nums)
 
   const out: Record<string, BellRow> = {}
   let t = start0
-  let inserted = !ins
-  if (ins && ins.start <= t) {
-    t = ins.start + ins.duration + ins.breakAfter
-    inserted = true
-  }
   for (const n of nums) {
-    if (!inserted && ins && ins.start <= t) {
-      t = ins.start + ins.duration + ins.breakAfter
-      inserted = true
-    }
     out[String(n)] = { time_start: formatHM(t), time_end: formatHM(t + duration) }
     t = t + duration + (breaksAfter[String(n)] ?? 0)
   }
   return out
+}
+
+function classDayFirstLessonStart(
+  classHourStart: string,
+  classHourDuration: number,
+  classHourBreak: number,
+): string | null {
+  if (parseHM(classHourStart) == null || classHourDuration < 1) return null
+  return addMinutes(classHourStart, classHourDuration + Math.max(0, classHourBreak))
 }
 
 function computeBells(params: {
@@ -149,23 +145,19 @@ function computeBells(params: {
     params.firstLessonStart,
     params.lessonDuration,
     params.breaksAfter,
-    null,
   )
   let classHourEnd: string | null = null
   let class_day: Record<string, BellRow> = {}
   if (params.classHourDay != null && params.classHourStart && params.classHourDuration >= 1) {
     classHourEnd = addMinutes(params.classHourStart, params.classHourDuration)
-    class_day = buildLessonTimes(
-      nums,
-      params.firstLessonStart,
-      params.lessonDuration,
-      params.breaksAfter,
-      {
-        start: params.classHourStart,
-        duration: params.classHourDuration,
-        breakAfter: Math.max(0, params.classHourBreak),
-      },
+    const classDayStart = classDayFirstLessonStart(
+      params.classHourStart,
+      params.classHourDuration,
+      params.classHourBreak,
     )
+    class_day = classDayStart
+      ? buildLessonTimes(nums, classDayStart, params.lessonDuration, params.breaksAfter)
+      : emptyLessonTimes(nums)
   }
   return { classHourEnd, common, class_day }
 }
@@ -511,6 +503,12 @@ function ShiftEditor({
     hasClassDay && computed.classHourEnd
       ? fmtRange(form.class_hour_start, computed.classHourEnd)
       : null
+  const classDayLesson1Start = hasClassDay
+    ? classDayFirstLessonStart(form.class_hour_start, classHourDuration, classHourBreak)
+    : null
+  const firstLessonOnClassDay = classDayLesson1Start
+    ? computed.class_day[String(startLesson)]
+    : null
 
   return (
     <ModalPortal>
@@ -647,6 +645,9 @@ function ShiftEditor({
                   <div className="small text-muted">
                     Классный час: {classHourEndLabel}
                     {classHourBreak >= 0 ? `, затем перемена ${classHourBreak} мин` : ''}
+                    {classDayLesson1Start
+                      ? `, ${startLesson}-й урок с ${classDayLesson1Start}`
+                      : ''}
                   </div>
                 </div>
               )}
@@ -667,6 +668,11 @@ function ShiftEditor({
                   value={form.first_lesson_start}
                   onChange={(e) => setForm((f) => ({ ...f, first_lesson_start: e.target.value }))}
                 />
+                <div className="form-text">
+                  {hasClassDay && firstLessonOnClassDay?.time_start
+                    ? `В обычные дни — с этого времени. В день классного часа ${startLesson}-й урок начинается после КЧ и перемены (${fmtRange(firstLessonOnClassDay.time_start, firstLessonOnClassDay.time_end)}).`
+                    : 'Если классный час не задан, уроки считаются от этого времени.'}
+                </div>
               </div>
               <div className="col-md-6">
                 <label className="form-label">Продолжительность урока, мин</label>

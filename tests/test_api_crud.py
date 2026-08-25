@@ -96,6 +96,33 @@ def test_shift_and_class_crud() -> None:
     assert client.delete(f"/api/shifts/{shift_id}").status_code == 204
 
 
+def test_class_homeroom_teacher() -> None:
+    teacher = client.post("/api/teachers/", json={"full_name": "Иванова А.А."})
+    assert teacher.status_code == 200, teacher.text
+    teacher_id = teacher.json()["id"]
+
+    created = client.post(
+        "/api/school-classes/",
+        json={
+            "name": "2Б",
+            "school_level": "elementary",
+            "homeroom_teacher_id": teacher_id,
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["homeroom_teacher_id"] == teacher_id
+    assert body["homeroom_teacher"]["full_name"] == "Иванова А.А."
+
+    updated = client.put(
+        f"/api/school-classes/{body['id']}",
+        json={"homeroom_teacher_id": None},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["homeroom_teacher_id"] is None
+    assert updated.json()["homeroom_teacher"] is None
+
+
 def test_teacher_crud_roundtrip() -> None:
     created = client.post(
         "/api/teachers/",

@@ -181,7 +181,7 @@ function SchoolPanel({ schoolId }: { schoolId: number }) {
         <p className="text-muted small">Пока нет администраторов</p>
       ) : (
         <div className="table-responsive mb-3">
-          <table className="table table-sm align-middle mb-0">
+          <table className="table table-sm table-hover align-middle mb-0">
             <thead>
               <tr>
                 <th>Логин</th>

@@ -39,6 +39,7 @@ _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
         }
     ),
     "teachers": frozenset({"home_classroom_id"}),
+    "school_classes": frozenset({"homeroom_teacher_id"}),
 }
 
 _SCHEMA_HINT = "Схема неполная. Из корня проекта: alembic upgrade head"

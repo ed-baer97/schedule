@@ -281,23 +281,28 @@ h6 {
   --bs-btn-hover-color: var(--kivi-btn-fg);
 }
 
-.excel-file-pick {
-  display: inline-flex;
-  align-items: center;
-  cursor: pointer;
+button.btn.excel-file-btn {
+  --bs-btn-color: #f4fffd;
+  --bs-btn-bg: var(--kivi-primary-deep);
+  --bs-btn-border-color: var(--kivi-primary-deep);
+  --bs-btn-hover-color: #f4fffd;
+  --bs-btn-hover-bg: var(--kivi-primary);
+  --bs-btn-hover-border-color: var(--kivi-primary);
+  --bs-btn-active-color: #f4fffd;
+  --bs-btn-active-bg: var(--kivi-primary);
+  --bs-btn-disabled-color: #f4fffd;
+  --bs-btn-disabled-bg: var(--kivi-primary-deep);
+  --bs-btn-disabled-border-color: var(--kivi-primary-deep);
+  color: #f4fffd;
+  background-color: var(--kivi-primary-deep);
+  border-color: var(--kivi-primary-deep);
+  font-weight: 650;
 }
 
-.excel-file-pick .btn {
-  pointer-events: none;
-}
-
-.excel-file-pick:has(input:disabled) {
-  cursor: not-allowed;
-  opacity: 0.65;
-}
-
-.excel-file-pick:focus-within .btn {
-  box-shadow: 0 0 0 0.2rem color-mix(in srgb, var(--kivi-primary) 35%, transparent);
+button.btn.excel-file-btn:hover:not(:disabled) {
+  color: #f4fffd;
+  background-color: var(--kivi-primary);
+  border-color: var(--kivi-primary);
 }
 
 /* Bootstrap's default tab link is #0d6efd — it washes out on sage glass */
@@ -877,6 +882,16 @@ html[data-theme='dark'] .bg-light {
   color: var(--kivi-ink);
 }
 
+/* Pale Bootstrap info chip keeps light-theme fill (no data-bs-theme).
+   Cream --kivi-ink on #cff4fc hides the class name (8Г). */
+html[data-theme='dark'] .bg-info-subtle {
+  color: #14201a;
+}
+
+html[data-theme='dark'] .bg-info-subtle .text-muted {
+  color: #0e5c57 !important;
+}
+
 html[data-theme='dark'] .modal-content .text-muted {
   color: color-mix(in srgb, var(--kivi-ink) 72%, var(--kivi-muted)) !important;
 }
@@ -1047,6 +1062,8 @@ html[data-theme='dark'] {
   --kivi-btn-fg: #06221f;
   --bs-primary: #2ec4b6;
   --bs-primary-rgb: 46, 196, 182;
+  --bs-emphasis-color: var(--kivi-ink);
+  --bs-emphasis-color-rgb: 238, 243, 234;
   --bs-secondary-color: var(--kivi-muted);
   --primary-color: #eef3ea;
   --secondary-color: #2ec4b6;
@@ -1156,6 +1173,26 @@ html[data-theme='dark'] .table > thead.table-light th {
   color: var(--kivi-muted);
 }
 
+/* Pin hover/active cells to ink. Table variants (warning, light) reset
+   --bs-table-hover-color to black; without this, a hovered or КЧ row
+   on Shifts/Classes/etc. goes black-on-dark again. */
+html[data-theme='dark'] .table-hover > tbody > tr:hover > * {
+  color: var(--kivi-ink);
+  --bs-table-color-state: var(--kivi-ink);
+  --bs-table-bg-state: color-mix(in srgb, var(--kivi-primary) 18%, transparent);
+}
+
+html[data-theme='dark'] .table-warning {
+  --bs-table-color: var(--kivi-ink);
+  --bs-table-bg: color-mix(in srgb, var(--kivi-accent) 22%, var(--kivi-surface));
+  --bs-table-border-color: var(--kivi-line);
+  --bs-table-striped-color: var(--kivi-ink);
+  --bs-table-hover-color: var(--kivi-ink);
+  --bs-table-hover-bg: color-mix(in srgb, var(--kivi-accent) 30%, var(--kivi-surface));
+  --bs-table-active-color: var(--kivi-ink);
+  color: var(--kivi-ink);
+}
+
 html[data-theme='dark'] .app-shell {
   --bs-body-bg: #0e1512;
   --bs-body-color: var(--kivi-ink);
@@ -1178,36 +1215,100 @@ html[data-theme='dark'] .app-shell .form-select:focus {
   box-shadow: 0 0 0 0.2rem rgba(46, 196, 182, 0.28);
 }
 
-/* Native file picker: Bootstrap paints ::file-selector-button with
-   --bs-body-color on --bs-tertiary-bg. Dark theme sets only the text
-   token, so the button stayed pale gray with cream type.
-   Keep the two pseudo-elements in separate rules: some engines drop
-   the whole declaration if one selector is unknown. */
-html[data-theme='dark'] .app-shell .form-control[type='file']::file-selector-button {
-  color: var(--kivi-ink);
-  background-color: #1c2a24;
-  border-inline-end-color: var(--kivi-line);
+/* Windows Chrome in dark color-scheme paints a white Choose Files chip
+   and ignores background/color on the pseudo. Hide the native chip
+   (display:none is honoured) and paint the remaining bar ourselves.
+   Two pseudo rules: unknown selectors must not drop the other. */
+input.form-control[type='file'] {
+  cursor: pointer;
+  font-weight: 650;
+  color: #f4fffd;
+  background-color: #0e5c57;
+  border-color: #0e5c57;
 }
 
-html[data-theme='dark'] .app-shell .form-control[type='file']::-webkit-file-upload-button {
-  color: var(--kivi-ink);
-  background-color: #1c2a24;
-  border-inline-end-color: var(--kivi-line);
+input.form-control[type='file']:hover:not(:disabled) {
+  color: #f4fffd;
+  background-color: #147f78;
+  border-color: #147f78;
 }
 
-html[data-theme='dark'] .app-shell .form-control[type='file']:hover:not(:disabled)::file-selector-button {
-  background-color: #24302a;
-  color: var(--kivi-ink);
+input.form-control[type='file']::file-selector-button {
+  display: none !important;
 }
 
-html[data-theme='dark'] .app-shell .form-control[type='file']:hover:not(:disabled)::-webkit-file-upload-button {
-  background-color: #24302a;
-  color: var(--kivi-ink);
+input.form-control[type='file']::-webkit-file-upload-button {
+  display: none !important;
+}
+
+html[data-theme='dark'] .app-shell input.form-control[type='file'],
+html[data-theme='dark'] .app-shell input.form-control[type='file']:focus {
+  color: #f4fffd;
+  background-color: #0e5c57;
+  border-color: #0e5c57;
+}
+
+html[data-theme='dark'] .app-shell input.form-control[type='file']:hover:not(:disabled),
+html[data-theme='dark'] .app-shell input.form-control[type='file']:hover:not(:disabled):focus {
+  color: #f4fffd;
+  background-color: #147f78;
+  border-color: #147f78;
+}
+
+html[data-theme='dark'] .app-shell input.form-control[type='file']::file-selector-button {
+  display: none !important;
+}
+
+html[data-theme='dark'] .app-shell input.form-control[type='file']::-webkit-file-upload-button {
+  display: none !important;
 }
 
 html[data-theme='dark'] .modal-content {
-  background: var(--kivi-surface);
+  background: #3d524a;
   color: var(--kivi-ink);
+  border: 1px solid rgba(238, 243, 234, 0.2);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  --bs-body-bg: #42554d;
+  --bs-body-color: var(--kivi-ink);
+  --bs-border-color: rgba(238, 243, 234, 0.22);
+}
+
+html[data-theme='dark'] .modal-header,
+html[data-theme='dark'] .modal-footer {
+  background: #465c54;
+  border-color: rgba(238, 243, 234, 0.14);
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .modal-title {
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .modal-content .btn-close {
+  filter: invert(1) grayscale(1) brightness(1.4);
+}
+
+html[data-theme='dark'] .modal-content .form-label {
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .modal-content .form-control,
+html[data-theme='dark'] .modal-content .form-select {
+  background-color: #42554d;
+  color: var(--kivi-ink);
+  border-color: rgba(238, 243, 234, 0.28);
+}
+
+html[data-theme='dark'] .modal-content .form-control:focus,
+html[data-theme='dark'] .modal-content .form-select:focus {
+  background-color: #42554d;
+  color: var(--kivi-ink);
+  border-color: var(--kivi-primary);
+  box-shadow: 0 0 0 0.2rem rgba(46, 196, 182, 0.28);
+}
+
+html[data-theme='dark'] .modal-content .form-control::placeholder {
+  color: color-mix(in srgb, var(--kivi-ink) 45%, transparent);
 }
 
 html[data-theme='dark'] .overlay-scroll-bar {

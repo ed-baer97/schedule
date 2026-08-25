@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   batchAssignShift,
   createSchoolClass,
@@ -10,7 +10,46 @@ import {
 } from '../api/schoolClasses'
 import { listClassrooms } from '../api/classrooms'
 import { listShifts } from '../api/shifts'
+import { listTeachers } from '../api/teachers'
 import { ModalPortal } from '../components/ModalPortal'
+import { PageHeader } from '../components/PageHeader'
+
+type ParallelGroup = {
+  key: string
+  grade: number
+  items: SchoolClass[]
+}
+
+function groupByParallel(rows: SchoolClass[]): ParallelGroup[] {
+  const buckets = new Map<number, SchoolClass[]>()
+  for (const row of rows) {
+    const grade = row.grade || 1
+    const list = buckets.get(grade)
+    if (list) list.push(row)
+    else buckets.set(grade, [row])
+  }
+  return [...buckets.keys()]
+    .sort((a, b) => a - b)
+    .map((grade) => ({
+      key: String(grade),
+      grade,
+      items: (buckets.get(grade) ?? []).slice().sort((a, b) =>
+        a.name.localeCompare(b.name, 'ru', { numeric: true }),
+      ),
+    }))
+}
+
+function parallelTitle(grade: number) {
+  return `${grade} классы`
+}
+
+function classesWord(n: number) {
+  const n10 = n % 10
+  const n100 = n % 100
+  if (n10 === 1 && n100 !== 11) return 'класс'
+  if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return 'класса'
+  return 'классов'
+}
 
 export function SchoolClassesPage() {
   const qc = useQueryClient()
@@ -18,11 +57,14 @@ export function SchoolClassesPage() {
   const [selected, setSelected] = useState<Record<number, boolean>>({})
   const [batchShiftId, setBatchShiftId] = useState<string>('')
   const [editingId, setEditingId] = useState<number | 'new' | null>(null)
+  const [openKey, setOpenKey] = useState<string | null>(null)
+  const openedOnce = useRef(false)
   const [form, setForm] = useState({
     name: '',
     school_level: 'elementary',
     shift_id: '',
     home_classroom_id: '',
+    homeroom_teacher_id: '',
   })
 
   const classesQ = useQuery({
@@ -37,6 +79,10 @@ export function SchoolClassesPage() {
     queryKey: ['classrooms'],
     queryFn: listClassrooms,
   })
+  const teachersQ = useQuery({
+    queryKey: ['teachers'],
+    queryFn: listTeachers,
+  })
 
   const saveM = useMutation({
     mutationFn: async () => {
@@ -45,6 +91,7 @@ export function SchoolClassesPage() {
         school_level: form.school_level,
         shift_id: form.shift_id === '' ? null : Number(form.shift_id),
         home_classroom_id: form.home_classroom_id === '' ? null : Number(form.home_classroom_id),
+        homeroom_teacher_id: form.homeroom_teacher_id === '' ? null : Number(form.homeroom_teacher_id),
       }
       if (!payload.name) throw new Error('Укажите название класса')
       if (editingId === 'new') {
@@ -92,8 +139,26 @@ export function SchoolClassesPage() {
     return () => clearTimeout(t)
   }, [msg])
 
+  const classes = classesQ.data ?? []
+  const shifts = shiftsQ.data ?? []
+  const rooms = roomsQ.data ?? []
+  const teachers = teachersQ.data ?? []
+  const groups = useMemo(() => groupByParallel(classes), [classes])
+
+  useEffect(() => {
+    if (openedOnce.current || groups.length === 0) return
+    openedOnce.current = true
+    setOpenKey(groups[0].key)
+  }, [groups])
+
   function openNew() {
-    setForm({ name: '', school_level: 'elementary', shift_id: '', home_classroom_id: '' })
+    setForm({
+      name: '',
+      school_level: 'elementary',
+      shift_id: '',
+      home_classroom_id: '',
+      homeroom_teacher_id: '',
+    })
     setEditingId('new')
   }
 
@@ -103,6 +168,7 @@ export function SchoolClassesPage() {
       school_level: c.school_level,
       shift_id: c.shift_id === null ? '' : String(c.shift_id),
       home_classroom_id: c.home_classroom_id === null ? '' : String(c.home_classroom_id),
+      homeroom_teacher_id: c.homeroom_teacher_id === null ? '' : String(c.homeroom_teacher_id),
     })
     setEditingId(c.id)
   }
@@ -114,19 +180,23 @@ export function SchoolClassesPage() {
   if (classesQ.isLoading || shiftsQ.isLoading || roomsQ.isLoading) return <p>Загрузка…</p>
   if (classesQ.isError) return <p className="text-danger">{(classesQ.error as Error).message}</p>
 
-  const classes = classesQ.data ?? []
-  const shifts = shiftsQ.data ?? []
-  const rooms = roomsQ.data ?? []
-
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <h1 className="h3 mb-0">Классы</h1>
-        <button type="button" className="btn btn-primary" onClick={openNew}>
-          Добавить
-        </button>
-      </div>
-      {msg && <div className="alert alert-info py-2">{msg}</div>}
+      <PageHeader
+        title="Классы"
+        subtitle="Сгруппированы по классам"
+        actions={
+          <button type="button" className="btn btn-primary" onClick={openNew}>
+            <i className="bi bi-plus-lg me-1" />
+            Добавить
+          </button>
+        }
+      />
+      {msg && (
+        <div className="alert alert-info py-2" role="status">
+          {msg}
+        </div>
+      )}
 
       <div className="card shadow-sm mb-3">
         <div className="card-body row g-2 align-items-end">
@@ -149,47 +219,85 @@ export function SchoolClassesPage() {
         </div>
       </div>
 
-      <div className="table-responsive card shadow-sm">
-        <table className="table table-hover mb-0">
-          <thead className="table-light">
-            <tr>
-              <th style={{ width: 40 }} />
-              <th>Класс</th>
-              <th>Уровень</th>
-              <th>Смена</th>
-              <th>Классная</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {classes.map((c) => (
-              <tr key={c.id}>
-                <td>
-                  <input type="checkbox" checked={!!selected[c.id]} onChange={() => toggle(c.id)} />
-                </td>
-                <td>{c.name}</td>
-                <td>{c.school_level_display}</td>
-                <td>{c.shift?.name ?? '—'}</td>
-                <td>{c.home_classroom?.display_name ?? '—'}</td>
-                <td className="text-end text-nowrap">
-                  <button type="button" className="btn btn-sm btn-outline-secondary me-1" onClick={() => openEdit(c)}>
-                    Изменить
-                  </button>
+      {groups.length === 0 ? (
+        <div className="card shadow-sm">
+          <div className="card-body text-muted">Классов пока нет — добавьте первый.</div>
+        </div>
+      ) : (
+        <div className="accordion classrooms-accordion" id="classes-by-parallel">
+          {groups.map((group) => {
+            const open = openKey === group.key
+            return (
+              <div className="accordion-item" key={group.key}>
+                <h2 className="accordion-header">
                   <button
+                    className={`accordion-button ${open ? '' : 'collapsed'}`}
                     type="button"
-                    className="btn btn-sm btn-outline-danger"
-                    onClick={() => {
-                      if (confirm(`Удалить класс «${c.name}»?`)) delM.mutate(c.id)
-                    }}
+                    aria-expanded={open}
+                    onClick={() => setOpenKey(open ? null : group.key)}
                   >
-                    Удалить
+                    <span className="me-2">{parallelTitle(group.grade)}</span>
+                    <span className="badge rounded-pill classrooms-floor-count">
+                      {group.items.length} {classesWord(group.items.length)}
+                    </span>
                   </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                </h2>
+                <div className={`accordion-collapse collapse ${open ? 'show' : ''}`}>
+                  <div className="accordion-body p-0">
+                    <div className="table-responsive">
+                      <table className="table table-hover mb-0">
+                        <thead className="table-light">
+                          <tr>
+                            <th style={{ width: 40 }} />
+                            <th>Класс</th>
+                            <th>Уровень</th>
+                            <th>Смена</th>
+                            <th>Классный руководитель</th>
+                            <th>Кабинет</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.items.map((c) => (
+                            <tr key={c.id}>
+                              <td>
+                                <input type="checkbox" checked={!!selected[c.id]} onChange={() => toggle(c.id)} />
+                              </td>
+                              <td>{c.name}</td>
+                              <td>{c.school_level_display}</td>
+                              <td>{c.shift?.name ?? '—'}</td>
+                              <td>{c.homeroom_teacher?.full_name ?? '—'}</td>
+                              <td>{c.home_classroom?.display_name ?? '—'}</td>
+                              <td className="text-end text-nowrap">
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-secondary me-1"
+                                  onClick={() => openEdit(c)}
+                                >
+                                  Изменить
+                                </button>
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-danger"
+                                  onClick={() => {
+                                    if (confirm(`Удалить класс «${c.name}»?`)) delM.mutate(c.id)
+                                  }}
+                                >
+                                  Удалить
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {editingId !== null && (
         <ModalPortal>
@@ -232,7 +340,22 @@ export function SchoolClassesPage() {
                   </select>
                 </div>
                 <div className="mb-2">
-                  <label className="form-label">Классная</label>
+                  <label className="form-label">Классный руководитель</label>
+                  <select
+                    className="form-select"
+                    value={form.homeroom_teacher_id}
+                    onChange={(e) => setForm((f) => ({ ...f, homeroom_teacher_id: e.target.value }))}
+                  >
+                    <option value="">—</option>
+                    {teachers.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mb-2">
+                  <label className="form-label">Кабинет</label>
                   <select
                     className="form-select"
                     value={form.home_classroom_id}

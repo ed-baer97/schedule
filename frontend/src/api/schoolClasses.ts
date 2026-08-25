@@ -8,8 +8,10 @@ export type SchoolClass = {
   school_level_display: string
   shift_id: number | null
   home_classroom_id: number | null
+  homeroom_teacher_id: number | null
   shift: { id: number; name: string } | null
   home_classroom: { display_name: string } | null
+  homeroom_teacher: { id: number; full_name: string } | null
 }
 
 export type SchoolClassBrief = Pick<SchoolClass, 'id' | 'name' | 'school_level'>
@@ -19,6 +21,7 @@ export type SchoolClassPayload = {
   school_level: string
   shift_id: number | null
   home_classroom_id: number | null
+  homeroom_teacher_id: number | null
 }
 
 export function listSchoolClasses() {

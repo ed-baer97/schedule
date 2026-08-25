@@ -135,8 +135,10 @@ class SchoolClassData:
     shift_id: int | None
     students_count: int | None
     home_classroom_id: int | None
+    homeroom_teacher_id: int | None
     shift: ShiftBriefNestedData | None
     home_classroom: ClassroomBriefData | None
+    homeroom_teacher: TeacherBriefData | None
 
 
 def classroom_brief(c) -> ClassroomBriefData:
@@ -271,6 +273,7 @@ def school_class_data(sc) -> SchoolClassData:
         shift_id=sc.shift_id,
         students_count=sc.students_count,
         home_classroom_id=sc.home_classroom_id,
+        homeroom_teacher_id=sc.homeroom_teacher_id,
         shift=(
             ShiftBriefNestedData(
                 id=sc.shift.id, name=sc.shift.name, school_level=sc.shift.school_level
@@ -280,5 +283,8 @@ def school_class_data(sc) -> SchoolClassData:
         ),
         home_classroom=(
             classroom_brief(sc.home_classroom) if sc.home_classroom else None
+        ),
+        homeroom_teacher=(
+            teacher_brief(sc.homeroom_teacher) if sc.homeroom_teacher else None
         ),
     )

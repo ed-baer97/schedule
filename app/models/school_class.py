@@ -17,10 +17,12 @@ class SchoolClass(Base):
     shift_id = Column(Integer, ForeignKey("shifts.id"))
     students_count = Column(Integer)
     home_classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    homeroom_teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
 
     school = relationship("School")
     shift = relationship("Shift", back_populates="classes")
     home_classroom = relationship("Classroom", foreign_keys=[home_classroom_id])
+    homeroom_teacher = relationship("Teacher", foreign_keys=[homeroom_teacher_id])
     assignments = relationship("TeachingAssignment", back_populates="school_class", lazy="dynamic")
     schedule_cells = relationship("ScheduleCell", back_populates="school_class", lazy="dynamic")
 

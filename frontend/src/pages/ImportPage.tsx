@@ -96,25 +96,19 @@ export function ImportPage() {
                 disabled={hoursPending}
               />
 
-              <label className="excel-file-pick mb-2">
-                <input
-                  type="file"
-                  className="visually-hidden"
-                  accept=".xlsx,.xls"
-                  multiple
-                  onChange={(e) => {
-                    const list = e.target.files
-                    if (!list?.length) return
-                    void uploadSubjectHours(list)
-                    e.target.value = ''
-                  }}
-                  disabled={hoursPending}
-                />
-                <span className="btn btn-primary">
-                  <i className="bi bi-file-earmark-excel me-2" aria-hidden />
-                  Выбрать файлы Excel
-                </span>
-              </label>
+              <input
+                type="file"
+                className="form-control mb-2"
+                accept=".xlsx,.xls"
+                multiple
+                onChange={(e) => {
+                  const list = e.target.files
+                  if (!list?.length) return
+                  void uploadSubjectHours(list)
+                  e.target.value = ''
+                }}
+                disabled={hoursPending}
+              />
 
               {hoursPending && <div className="small text-muted">Загрузка…</div>}
               {hoursFlash && (

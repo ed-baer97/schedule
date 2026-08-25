@@ -1,7 +1,7 @@
 """School class API schemas."""
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.schemas.common import ClassroomBrief
+from backend.schemas.common import ClassroomBrief, TeacherBrief
 
 
 class ShiftBrief(BaseModel):
@@ -23,8 +23,10 @@ class SchoolClassOut(BaseModel):
     shift_id: int | None = None
     students_count: int | None = None
     home_classroom_id: int | None = None
+    homeroom_teacher_id: int | None = None
     shift: ShiftBrief | None = None
     home_classroom: ClassroomBrief | None = None
+    homeroom_teacher: TeacherBrief | None = None
 
 
 class SchoolClassCreate(BaseModel):
@@ -32,6 +34,7 @@ class SchoolClassCreate(BaseModel):
     school_level: str = Field(..., pattern="^(elementary|secondary)$")
     shift_id: int | None = None
     home_classroom_id: int | None = None
+    homeroom_teacher_id: int | None = None
     students_count: int | None = None
 
 
@@ -40,6 +43,7 @@ class SchoolClassUpdate(BaseModel):
     school_level: str | None = Field(None, pattern="^(elementary|secondary)$")
     shift_id: int | None = None
     home_classroom_id: int | None = None
+    homeroom_teacher_id: int | None = None
     students_count: int | None = None
 
 

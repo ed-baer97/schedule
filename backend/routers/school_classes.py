@@ -64,6 +64,7 @@ def create_school_class(
         school_level=body.school_level,
         shift_id=body.shift_id,
         home_classroom_id=body.home_classroom_id,
+        homeroom_teacher_id=body.homeroom_teacher_id,
         students_count=body.students_count,
     )
     return SchoolClassOut.model_validate(asdict(c))
@@ -83,6 +84,7 @@ def update_school_class(
         school_level=data.get("school_level"),
         shift_id=data.get("shift_id"),
         home_classroom_id=data.get("home_classroom_id"),
+        homeroom_teacher_id=data.get("homeroom_teacher_id"),
         students_count=data.get("students_count"),
         fields_set=frozenset(data.keys()),
     )
