@@ -14,6 +14,7 @@ import {
   type ScheduleCell as CellOut,
 } from '../api/schedule'
 import type { SchoolLevel } from '../domain/schoolLevel'
+import { assignmentCanJoinSlot, slotAcceptsAnotherLesson } from '../domain/scheduleRules'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
@@ -395,6 +396,16 @@ export function SchedulePage() {
     return buildTeacherHoverCss(keys)
   }, [gridQ.data])
 
+  const occupiedForModal = useMemo(() => {
+    if (!slot || !gridQ.data) return [] as CellOut[]
+    return gridQ.data.cells.filter(
+      (c) =>
+        c.class_id === slot.class_id &&
+        c.day_of_week === slot.day &&
+        c.lesson_number === slot.lesson,
+    )
+  }, [slot, gridQ.data])
+
   const addM = useMutation({
     mutationFn: async (p: {
       class_id: number
@@ -689,12 +700,20 @@ export function SchedulePage() {
                       {grid.classes.map((c) => {
                         const key = `${c.id}:${row.day}:${lesson}`
                         const cells = cellsBySlot.get(key) ?? []
+                        const canAdd = slotAcceptsAnotherLesson(cells)
+                        const openAdd = () =>
+                          setSlot({
+                            class_id: c.id,
+                            day: row.day,
+                            lesson,
+                            class_name: c.name,
+                          })
                         return (
                           <td
                             key={c.id}
                             id={slotAnchor(c.id, row.day, lesson)}
                             className="p-1 align-top"
-                            style={{ minWidth: 130, cursor: cells.length === 0 ? 'pointer' : 'default' }}
+                            style={{ minWidth: 130, cursor: canAdd ? 'pointer' : 'default' }}
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) =>
                               onDropSlot(e, {
@@ -704,83 +723,93 @@ export function SchedulePage() {
                               })
                             }
                             onClick={(e) => {
-                              if (cells.length > 0) return
-                              if ((e.target as HTMLElement).closest('button')) return
-                              setSlot({
-                                class_id: c.id,
-                                day: row.day,
-                                lesson,
-                                class_name: c.name,
-                              })
+                              if ((e.target as HTMLElement).closest('button, .lesson-card')) return
+                              if (!canAdd) return
+                              openAdd()
                             }}
                           >
                             {cells.length === 0 ? (
                               <div className="text-muted text-center small py-2">+</div>
                             ) : (
-                              cells.map((cell, i) => (
-                                <div
-                                  key={cell.id}
-                                  draggable
-                                  data-teacher-key={teacherHoverKey(cell) || undefined}
-                                  onDragStart={(e) => {
-                                    applyTeacherHover(
-                                      e.currentTarget.closest('.schedule-grid-table'),
-                                      null,
-                                    )
-                                    onDragStartCell(e, cell)
-                                  }}
-                                  className="lesson-card rounded mb-1 position-relative"
-                                  style={{
-                                    ['--lesson-color' as string]: cell.subject_color,
-                                  }}
-                                >
-                                  {i > 0 && <hr className="my-1" />}
-                                  <div className="fw-semibold lesson-subject">
-                                    {cell.subject_name}
-                                    {cell.group_number != null && (
-                                      <span className="badge schedule-group-badge ms-1">
-                                        гр.{cell.group_number}
-                                      </span>
+                              <>
+                                {cells.map((cell, i) => (
+                                  <div
+                                    key={cell.id}
+                                    draggable
+                                    data-teacher-key={teacherHoverKey(cell) || undefined}
+                                    onDragStart={(e) => {
+                                      applyTeacherHover(
+                                        e.currentTarget.closest('.schedule-grid-table'),
+                                        null,
+                                      )
+                                      onDragStartCell(e, cell)
+                                    }}
+                                    className="lesson-card rounded mb-1 position-relative"
+                                    style={{
+                                      ['--lesson-color' as string]: cell.subject_color,
+                                    }}
+                                  >
+                                    {i > 0 && <hr className="my-1" />}
+                                    <div className="fw-semibold lesson-subject">
+                                      {cell.subject_name}
+                                      {cell.group_number != null && (
+                                        <span className="badge schedule-group-badge ms-1">
+                                          гр.{cell.group_number}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="small teacher-name">{cell.teacher_name ?? '?'}</div>
+                                    {cell.classroom_name && (
+                                      <div className="small text-muted">каб. {cell.classroom_name}</div>
                                     )}
+                                    <div className="lesson-card-actions">
+                                      <button
+                                        type="button"
+                                        className="lesson-card-action"
+                                        title="Почему этот слот"
+                                        onPointerDown={suppressCardDrag}
+                                        onClick={(ev) => {
+                                          ev.stopPropagation()
+                                          setWhyCell(cell)
+                                        }}
+                                      >
+                                        ?
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="lesson-card-action is-danger"
+                                        title="Удалить"
+                                        onPointerDown={suppressCardDrag}
+                                        onClick={(ev) => {
+                                          ev.stopPropagation()
+                                          if (confirm('Удалить урок?'))
+                                            delM.mutate({
+                                              cell_id: cell.id,
+                                              class_id: cell.class_id,
+                                              day: cell.day_of_week,
+                                              lesson: cell.lesson_number,
+                                            })
+                                        }}
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
                                   </div>
-                                  <div className="small teacher-name">{cell.teacher_name ?? '?'}</div>
-                                  {cell.classroom_name && (
-                                    <div className="small text-muted">каб. {cell.classroom_name}</div>
-                                  )}
-                                  <div className="lesson-card-actions">
-                                    <button
-                                      type="button"
-                                      className="lesson-card-action"
-                                      title="Почему этот слот"
-                                      onPointerDown={suppressCardDrag}
-                                      onClick={(ev) => {
-                                        ev.stopPropagation()
-                                        setWhyCell(cell)
-                                      }}
-                                    >
-                                      ?
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="lesson-card-action is-danger"
-                                      title="Удалить"
-                                      onPointerDown={suppressCardDrag}
-                                      onClick={(ev) => {
-                                        ev.stopPropagation()
-                                        if (confirm('Удалить урок?'))
-                                          delM.mutate({
-                                            cell_id: cell.id,
-                                            class_id: cell.class_id,
-                                            day: cell.day_of_week,
-                                            lesson: cell.lesson_number,
-                                          })
-                                      }}
-                                    >
-                                      ×
-                                    </button>
-                                  </div>
-                                </div>
-                              ))
+                                ))}
+                                {canAdd && (
+                                  <button
+                                    type="button"
+                                    className="slot-add-subgroup"
+                                    title="Добавить вторую подгруппу"
+                                    onClick={(ev) => {
+                                      ev.stopPropagation()
+                                      openAdd()
+                                    }}
+                                  >
+                                    +
+                                  </button>
+                                )}
+                              </>
                             )}
                           </td>
                         )
@@ -797,6 +826,7 @@ export function SchedulePage() {
       {slot && (
         <AddLessonModal
           slot={slot}
+          occupied={occupiedForModal}
           dayNames={grid.day_names}
           error={addM.isError ? extractApiError(addM.error) : null}
           onClose={() => {
@@ -825,14 +855,19 @@ export function SchedulePage() {
 
 function AddLessonModal(props: {
   slot: SlotKey
+  occupied: CellOut[]
   dayNames: string[]
   error: string | null
   onClose: () => void
   onSubmit: (assignment_id: number, classroom_id: number | null) => void
   submitting: boolean
 }) {
-  const { slot, dayNames, error, onClose, onSubmit, submitting } = props
-  const [subjectName, setSubjectName] = useState<string>('')
+  const { slot, occupied, dayNames, error, onClose, onSubmit, submitting } = props
+  const occupiedSubject =
+    occupied.length > 0 && occupied.every((c) => c.subject_name === occupied[0].subject_name)
+      ? occupied[0].subject_name
+      : ''
+  const [subjectName, setSubjectName] = useState<string>(occupiedSubject)
   const [assignmentId, setAssignmentId] = useState<number | ''>('')
   const [classroomId, setClassroomId] = useState<number | ''>('')
 
@@ -841,18 +876,22 @@ function AddLessonModal(props: {
     queryFn: () => fetchAssignmentsForClass(slot.class_id),
   })
 
+  const compatibleAssignments = useMemo(
+    () => q.data?.assignments.filter((a) => assignmentCanJoinSlot(a, occupied)) ?? [],
+    [q.data, occupied],
+  )
+
   const subjects = useMemo(() => {
-    if (!q.data) return [] as { name: string; color: string }[]
     const m = new Map<string, string>()
-    for (const a of q.data.assignments) {
+    for (const a of compatibleAssignments) {
       if (!m.has(a.subject_name)) m.set(a.subject_name, a.subject_color)
     }
     return [...m.entries()].map(([name, color]) => ({ name, color }))
-  }, [q.data])
+  }, [compatibleAssignments])
 
   const filteredAssignments = useMemo(
-    () => q.data?.assignments.filter((a) => a.subject_name === subjectName) ?? [],
-    [q.data, subjectName],
+    () => compatibleAssignments.filter((a) => a.subject_name === subjectName),
+    [compatibleAssignments, subjectName],
   )
 
   useEffect(() => {
@@ -874,7 +913,9 @@ function AddLessonModal(props: {
       <div className="modal-dialog">
         <div className="modal-content">
           <div className="modal-header">
-            <h5 className="modal-title">Добавить урок</h5>
+            <h5 className="modal-title">
+              {occupied.length > 0 ? 'Добавить подгруппу' : 'Добавить урок'}
+            </h5>
             <button type="button" className="btn-close" aria-label="Закрыть" onClick={onClose} />
           </div>
           <div className="modal-body">
@@ -892,7 +933,13 @@ function AddLessonModal(props: {
             {q.data && q.data.assignments.length === 0 && (
               <div className="text-muted">Все часы для этого класса распределены.</div>
             )}
-            {q.data && q.data.assignments.length > 0 && (
+            {q.data && q.data.assignments.length > 0 && compatibleAssignments.length === 0 && (
+              <div className="text-muted">
+                В этой ячейке уже стоит подгруппа. Можно добавить только другую группу того же
+                предмета — если у неё ещё есть нерасставленные часы.
+              </div>
+            )}
+            {q.data && compatibleAssignments.length > 0 && (
               <>
                 <div className="mb-3">
                   <label className="form-label fw-bold">Предмет</label>
@@ -1007,8 +1054,8 @@ function WhyPanel(props: {
       }),
   })
   return (
-    <div className="border rounded p-2 bg-light small">
-      <div className="fw-semibold mb-1">Почему</div>
+    <div className="why-panel border rounded p-2 small">
+      <div className="why-panel-title fw-semibold mb-1">Почему</div>
       {q.isLoading && <div className="text-muted">Проверяем слот…</div>}
       {q.isError && <div className="text-danger">{(q.error as Error).message}</div>}
       {q.data && (
@@ -1021,8 +1068,8 @@ function WhyPanel(props: {
           )}
           {q.data.alternatives.length > 0 && (
             <div className="mt-2">
-              <div className="text-muted">Другие свободные слоты:</div>
-              <ul className="mb-0 mt-1 ps-3">
+              <div className="why-panel-muted">Другие свободные слоты:</div>
+              <ul className="why-panel-list mb-0 mt-1 ps-3">
                 {q.data.alternatives.map((a) => (
                   <li key={`${a.day_of_week}-${a.lesson_number}`}>{a.label}</li>
                 ))}

@@ -731,6 +731,29 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   color: var(--kivi-muted);
 }
 
+.slot-add-subgroup {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  padding: 4px 0;
+  border: 1px dashed var(--kivi-line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--kivi-muted);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.slot-add-subgroup:hover,
+.slot-add-subgroup:focus-visible {
+  color: var(--kivi-primary-deep, var(--kivi-primary));
+  border-color: var(--kivi-primary);
+  background: color-mix(in srgb, var(--kivi-primary) 10%, transparent);
+  outline: none;
+}
+
 .schedule-group-badge {
   background: color-mix(in srgb, var(--kivi-accent) 22%, var(--kivi-surface));
   color: var(--kivi-ink);
@@ -828,6 +851,44 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 /* ——— Modals ——— */
 .modal-backdrop-custom {
   background: rgba(15, 23, 42, 0.45);
+}
+
+/* Why panel: Bootstrap .bg-light stays #f8f9fa while modal-content
+   in dark theme paints cream --kivi-ink, so «Почему» and the slot
+   list vanish. Tokens keep both themes readable. */
+.why-panel {
+  background: color-mix(in srgb, var(--kivi-bg) 55%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  border-color: var(--kivi-line) !important;
+}
+
+.why-panel-title,
+.why-panel-list {
+  color: var(--kivi-ink);
+}
+
+.why-panel-muted,
+.why-panel .text-muted {
+  color: color-mix(in srgb, var(--kivi-ink) 78%, var(--kivi-muted)) !important;
+}
+
+html[data-theme='dark'] .bg-light {
+  background-color: color-mix(in srgb, var(--kivi-bg) 35%, var(--kivi-surface)) !important;
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .modal-content .text-muted {
+  color: color-mix(in srgb, var(--kivi-ink) 72%, var(--kivi-muted)) !important;
+}
+
+html[data-theme='dark'] .why-panel .text-success,
+html[data-theme='dark'] .modal-content .text-success {
+  color: var(--kivi-primary) !important;
+}
+
+html[data-theme='dark'] .why-panel .text-danger,
+html[data-theme='dark'] .modal-content .text-danger {
+  color: var(--kivi-coral) !important;
 }
 
 body > .modal {
