@@ -15,9 +15,9 @@ class ClassroomOut(BaseModel):
     floor: int | None = None
     building: str | None = None
     display_name: str
-    subject_id: int | None = None
+    subject_ids: list[int] = []
     is_exclusive: bool = False
-    subject: SubjectBrief | None = None
+    subjects: list[SubjectBrief] = []
     teachers: list[TeacherBrief] = []
 
 
@@ -28,13 +28,13 @@ class ClassroomCreate(BaseModel):
     classes_capacity: int = 1
     floor: int | None = None
     building: str | None = None
-    subject_id: int | None = None
+    subject_ids: list[int] = []
     is_exclusive: bool = False
     teacher_ids: list[int] = []
 
     @model_validator(mode="after")
     def exclusive_requires_subject(self) -> "ClassroomCreate":
-        if self.is_exclusive and self.subject_id is None:
+        if self.is_exclusive and not self.subject_ids:
             raise ValueError("Фиксированный кабинет должен иметь предмет")
         return self
 
@@ -46,6 +46,6 @@ class ClassroomUpdate(BaseModel):
     classes_capacity: int | None = None
     floor: int | None = None
     building: str | None = None
-    subject_id: int | None = None
+    subject_ids: list[int] | None = None
     is_exclusive: bool | None = None
     teacher_ids: list[int] | None = None

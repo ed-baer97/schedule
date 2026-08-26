@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, joinedload, selectinload
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import Classroom, Subject, Teacher
 from app.services.dto import ClassroomData, classroom_data
@@ -19,7 +19,7 @@ class ClassroomService:
         stmt = (
             select(Classroom)
             .options(
-                joinedload(Classroom.subject),
+                selectinload(Classroom.subjects),
                 selectinload(Classroom.teachers),
             )
             .where(
@@ -34,15 +34,36 @@ class ClassroomService:
             raise NotFoundError("Classroom not found")
         return row
 
+    def _normalize_subject_ids(self, subject_ids: list[int] | None) -> list[int]:
+        if not subject_ids:
+            return []
+        return list(dict.fromkeys(int(sid) for sid in subject_ids))
+
     def _validate_subject_fields(
-        self, subject_id: int | None, is_exclusive: bool
+        self, subject_ids: list[int], is_exclusive: bool
     ) -> None:
-        if is_exclusive and subject_id is None:
+        if is_exclusive and not subject_ids:
             raise BadRequestError(
                 "Фиксированный кабинет должен быть привязан к предмету"
             )
-        if subject_id is not None:
-            require_owned(self.db, Subject, subject_id, self.school_id)
+        for sid in subject_ids:
+            require_owned(self.db, Subject, sid, self.school_id)
+
+    def _sync_subjects(self, classroom: Classroom, subject_ids: list[int]) -> None:
+        wanted = self._normalize_subject_ids(subject_ids)
+        if not wanted:
+            classroom.subjects = []
+            return
+        rows = list(
+            self.db.scalars(
+                select(Subject).where(
+                    Subject.school_id == self.school_id,
+                    Subject.id.in_(wanted),
+                )
+            ).all()
+        )
+        by_id = {s.id: s for s in rows}
+        classroom.subjects = [by_id[sid] for sid in wanted if sid in by_id]
 
     def _sync_teachers(self, classroom_id: int, teacher_ids: list[int]) -> None:
         wanted = list(dict.fromkeys(int(tid) for tid in teacher_ids))
@@ -75,7 +96,7 @@ class ClassroomService:
         stmt = (
             select(Classroom)
             .options(
-                joinedload(Classroom.subject),
+                selectinload(Classroom.subjects),
                 selectinload(Classroom.teachers),
             )
             .where(Classroom.school_id == self.school_id)
@@ -98,12 +119,13 @@ class ClassroomService:
         classes_capacity: int = 1,
         floor: int | None = None,
         building: str | None = None,
-        subject_id: int | None = None,
+        subject_ids: list[int] | None = None,
         is_exclusive: bool = False,
         teacher_ids: list[int] | None = None,
         commit: bool = True,
     ) -> ClassroomData | Classroom:
-        self._validate_subject_fields(subject_id, is_exclusive)
+        ids = self._normalize_subject_ids(subject_ids)
+        self._validate_subject_fields(ids, is_exclusive)
         c = Classroom(
             school_id=self.school_id,
             number=number.strip(),
@@ -112,11 +134,11 @@ class ClassroomService:
             classes_capacity=classes_capacity or 1,
             floor=floor,
             building=(building or "").strip() or None,
-            subject_id=subject_id,
-            is_exclusive=bool(is_exclusive) if subject_id else False,
+            is_exclusive=bool(is_exclusive) if ids else False,
         )
         self.db.add(c)
         self.db.flush()
+        self._sync_subjects(c, ids)
         if teacher_ids:
             self._sync_teachers(c.id, teacher_ids)
         if commit:
@@ -168,7 +190,7 @@ class ClassroomService:
         classes_capacity: int | None = None,
         floor: int | None = None,
         building: str | None = None,
-        subject_id: int | None = None,
+        subject_ids: list[int] | None = None,
         is_exclusive: bool | None = None,
         teacher_ids: list[int] | None = None,
         fields_set: frozenset[str] | None = None,
@@ -189,18 +211,18 @@ class ClassroomService:
         if "building" in fields_set:
             c.building = (building or "").strip() or None
 
-        new_subject_id = c.subject_id
+        new_ids = [s.id for s in (c.subjects or [])]
         new_exclusive = bool(c.is_exclusive)
-        if "subject_id" in fields_set:
-            new_subject_id = subject_id
+        if "subject_ids" in fields_set:
+            new_ids = self._normalize_subject_ids(subject_ids)
         if "is_exclusive" in fields_set and is_exclusive is not None:
             new_exclusive = bool(is_exclusive)
-        if new_subject_id is None:
+        if not new_ids:
             new_exclusive = False
-        self._validate_subject_fields(new_subject_id, new_exclusive)
-        if "subject_id" in fields_set:
-            c.subject_id = new_subject_id
-        if "is_exclusive" in fields_set or "subject_id" in fields_set:
+        self._validate_subject_fields(new_ids, new_exclusive)
+        if "subject_ids" in fields_set:
+            self._sync_subjects(c, new_ids)
+        if "is_exclusive" in fields_set or "subject_ids" in fields_set:
             c.is_exclusive = new_exclusive
 
         if "teacher_ids" in fields_set and teacher_ids is not None:

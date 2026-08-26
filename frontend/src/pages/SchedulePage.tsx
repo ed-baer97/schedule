@@ -908,7 +908,7 @@ function AddLessonModal(props: {
     if (!selectedAssignment) return rooms
     return rooms.filter((c) =>
       roomAllowsSubject(
-        { id: c.id, subject_id: c.subject_id ?? null, is_exclusive: Boolean(c.is_exclusive) },
+        { id: c.id, subject_ids: c.subject_ids ?? [], is_exclusive: Boolean(c.is_exclusive) },
         {
           subject_id: selectedAssignment.subject_id,
           requires_fixed_classroom: Boolean(selectedAssignment.requires_fixed_classroom),

@@ -47,7 +47,7 @@ def create_classroom(
         classes_capacity=body.classes_capacity,
         floor=body.floor,
         building=body.building,
-        subject_id=body.subject_id,
+        subject_ids=body.subject_ids,
         is_exclusive=body.is_exclusive,
         teacher_ids=body.teacher_ids,
     )
@@ -70,7 +70,7 @@ def update_classroom(
         classes_capacity=data.get("classes_capacity"),
         floor=data.get("floor"),
         building=data.get("building"),
-        subject_id=data.get("subject_id"),
+        subject_ids=data.get("subject_ids"),
         is_exclusive=data.get("is_exclusive"),
         teacher_ids=data.get("teacher_ids"),
         fields_set=frozenset(data.keys()),

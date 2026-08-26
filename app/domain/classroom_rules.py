@@ -14,8 +14,8 @@ COST_PREFERRED_BONUS = -5
 @dataclass(frozen=True)
 class ClassroomFact:
     id: int
-    subject_id: int | None
-    is_exclusive: bool
+    subject_ids: frozenset[int] = frozenset()
+    is_exclusive: bool = False
     classes_capacity: int = 1
 
 
@@ -33,6 +33,10 @@ class PlacementContext:
     force_teacher_home: bool = False
 
 
+def room_has_subject(room: ClassroomFact, subject_id: int) -> bool:
+    return subject_id in room.subject_ids
+
+
 def room_allows_subject(
     room: ClassroomFact,
     *,
@@ -43,15 +47,15 @@ def room_allows_subject(
     Hard rule: can this subject be placed in this classroom?
 
     - Fixed subject → only rooms tagged with that subject.
-    - Exclusive room → only its subject.
+    - Exclusive room → only its tagged subjects.
     - Subject-tagged non-exclusive → any non-fixed subject.
     - Untagged (general) room → any non-fixed subject.
     """
     if requires_fixed_classroom:
-        return room.subject_id == subject_id
+        return room_has_subject(room, subject_id)
 
     if room.is_exclusive:
-        return room.subject_id == subject_id
+        return room_has_subject(room, subject_id)
 
     # Non-fixed subject: general rooms and non-exclusive subject rooms OK.
     return True
@@ -79,7 +83,7 @@ def room_denial_message(
             f"нельзя ставить в {room_display_name}"
         )
     if room.is_exclusive:
-        subj = room_subject_name or "своего предмета"
+        subj = room_subject_name or "своих предметов"
         return f"Кабинет {room_display_name} только для {subj}"
     return f"Кабинет {room_display_name} недоступен для «{subject_name}»"
 
@@ -92,9 +96,9 @@ def placement_cost(
     Soft cost for placing ctx into room. None = forbidden.
 
     Priority (lower cost better):
-    1. Teacher home + room's subject matches assignment subject → 0
+    1. Teacher home + room is tagged with assignment subject → 0
     2. Same subject as room (other teacher) → low
-    3. General / other non-exclusive subject room → medium
+    3. General (empty tags) / other non-exclusive subject room → medium
     """
     if not room_allows_subject(
         room,
@@ -112,12 +116,12 @@ def placement_cost(
         return max(0, cost)
 
     # Non-fixed subject
-    if room.subject_id == ctx.subject_id:
+    if room_has_subject(room, ctx.subject_id):
         if ctx.teacher_home_classroom_id == room.id:
             cost = COST_OWNER_SUBJECT
         else:
             cost = COST_SAME_SUBJECT
-    elif room.subject_id is None:
+    elif not room.subject_ids:
         cost = COST_GENERAL
         # Prefer home room from classroom_mode when scoring general rooms
         if (

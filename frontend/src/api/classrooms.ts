@@ -5,6 +5,12 @@ export type ClassroomTeacher = {
   full_name: string
 }
 
+export type ClassroomSubject = {
+  id: number
+  name: string
+  display_color: string
+}
+
 export type Classroom = {
   id: number
   number: string
@@ -13,9 +19,9 @@ export type Classroom = {
   building: string | null
   classes_capacity: number | null
   display_name: string
-  subject_id: number | null
+  subject_ids: number[]
   is_exclusive: boolean
-  subject: { id: number; name: string; display_color: string } | null
+  subjects: ClassroomSubject[]
   teachers: ClassroomTeacher[]
 }
 
@@ -27,7 +33,7 @@ export type ClassroomPayload = {
   floor: number | null
   building: string | null
   classes_capacity: number
-  subject_id: number | null
+  subject_ids: number[]
   is_exclusive: boolean
   teacher_ids: number[]
 }

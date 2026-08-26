@@ -20,11 +20,12 @@ _CORE_TABLES = frozenset(
         "shifts",
         "subjects",
         "teaching_assignments",
+        "classroom_subjects",
     }
 )
 
 _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
-    "classrooms": frozenset({"classes_capacity", "subject_id", "is_exclusive"}),
+    "classrooms": frozenset({"classes_capacity", "is_exclusive"}),
     "shifts": frozenset(
         {"working_days", "max_lessons_per_day", "class_hour_day", "class_hour_start", "class_hour_end"}
     ),

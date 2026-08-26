@@ -1,8 +1,26 @@
 """Classroom model."""
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table
 from sqlalchemy.orm import relationship
 
 from app.db import Base
+
+
+classroom_subjects = Table(
+    "classroom_subjects",
+    Base.metadata,
+    Column(
+        "classroom_id",
+        Integer,
+        ForeignKey("classrooms.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "subject_id",
+        Integer,
+        ForeignKey("subjects.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
 
 
 class Classroom(Base):
@@ -16,11 +34,15 @@ class Classroom(Base):
     classes_capacity = Column(Integer, default=1)
     floor = Column(Integer)
     building = Column(String(50))
-    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=True, index=True)
     is_exclusive = Column(Boolean, default=False, nullable=False)
 
     school = relationship("School")
-    subject = relationship("Subject", foreign_keys=[subject_id], lazy="select")
+    subjects = relationship(
+        "Subject",
+        secondary=classroom_subjects,
+        back_populates="classrooms",
+        lazy="selectin",
+    )
     teachers = relationship(
         "Teacher",
         back_populates="home_classroom",

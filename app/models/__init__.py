@@ -1,5 +1,5 @@
 """Database models"""
-from app.models.classroom import Classroom
+from app.models.classroom import Classroom, classroom_subjects
 from app.models.job import Job
 from app.models.schedule_cell import ScheduleCell
 from app.models.schedule_settings import ScheduleSettings
@@ -19,6 +19,7 @@ __all__ = [
     "Job",
     "Teacher",
     "Classroom",
+    "classroom_subjects",
     "Shift",
     "ShiftLessonTime",
     "SchoolClass",

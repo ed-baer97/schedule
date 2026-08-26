@@ -42,8 +42,8 @@ class Subject(Base):
     assignments = relationship("TeachingAssignment", back_populates="subject", lazy="dynamic")
     classrooms = relationship(
         "Classroom",
-        foreign_keys="Classroom.subject_id",
-        back_populates="subject",
+        secondary="classroom_subjects",
+        back_populates="subjects",
         lazy="select",
     )
 

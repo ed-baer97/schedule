@@ -100,7 +100,7 @@ class ClassroomChoiceOut(BaseModel):
     number: str
     name: str | None = None
     display_name: str
-    subject_id: int | None = None
+    subject_ids: list[int] = []
     is_exclusive: bool = False
 
 

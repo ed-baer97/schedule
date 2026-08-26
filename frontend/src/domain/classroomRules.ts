@@ -2,8 +2,12 @@
 
 export type ClassroomFact = {
   id: number
-  subject_id: number | null
+  subject_ids: number[]
   is_exclusive: boolean
+}
+
+export function roomHasSubject(room: ClassroomFact, subjectId: number): boolean {
+  return room.subject_ids.includes(subjectId)
 }
 
 export function roomAllowsSubject(
@@ -11,10 +15,10 @@ export function roomAllowsSubject(
   opts: { subject_id: number; requires_fixed_classroom: boolean },
 ): boolean {
   if (opts.requires_fixed_classroom) {
-    return room.subject_id === opts.subject_id
+    return roomHasSubject(room, opts.subject_id)
   }
   if (room.is_exclusive) {
-    return room.subject_id === opts.subject_id
+    return roomHasSubject(room, opts.subject_id)
   }
   return true
 }
