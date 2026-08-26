@@ -44,11 +44,12 @@ def get_job(
 @router.post("/{job_id}/cancel", response_model=JobOut)
 def cancel_job(
     job_id: int,
+    force: bool = False,
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
     _: User = Depends(get_current_user),
 ) -> JobOut:
-    data = JobService(db, school.id).cancel(job_id)
+    data = JobService(db, school.id).cancel(job_id, force=force)
     return JobOut(
         id=data.id,
         kind=data.kind,

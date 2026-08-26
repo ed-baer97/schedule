@@ -1,4 +1,4 @@
-import { apiJson } from './client'
+import { apiJson, extractApiError } from './client'
 import type { ShiftBrief } from './shifts'
 import type { SchoolLevel } from '../domain/schoolLevel'
 
@@ -181,8 +181,18 @@ export function getJob(jobId: number) {
   return apiJson<JobOut>(`/api/jobs/${jobId}`)
 }
 
-export function cancelJob(jobId: number) {
-  return apiJson<JobOut>(`/api/jobs/${jobId}/cancel`, { method: 'POST' })
+export function cancelJob(jobId: number, force = false) {
+  const q = force ? '?force=true' : ''
+  return apiJson<JobOut>(`/api/jobs/${jobId}/cancel${q}`, { method: 'POST' })
+}
+
+/** Parse «задача #N» from a 409 conflict body. */
+export function stuckJobIdFromError(err: unknown): number | null {
+  const msg = extractApiError(err)
+  const m = msg.match(/задача #(\d+)/i)
+  if (!m) return null
+  const id = Number(m[1])
+  return Number.isFinite(id) ? id : null
 }
 
 export type AutoAllPayload = {

@@ -9,6 +9,7 @@ import {
   enqueueRepair,
   fetchAutoPageData,
   runJobAndPoll,
+  stuckJobIdFromError,
   updateScheduleSettings,
   type JobOut,
   type ScheduleSettings,
@@ -46,6 +47,7 @@ export function AutoSchedulerPage() {
   )
   const [log, setLog] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [stuckJobId, setStuckJobId] = useState<number | null>(null)
   const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
 
@@ -102,6 +104,7 @@ export function AutoSchedulerPage() {
 
   function resetState() {
     setError(null)
+    setStuckJobId(null)
     setProgress({ current: 0, total: 0, message: '' })
     setLog([])
     setStopping(false)
@@ -159,7 +162,8 @@ export function AutoSchedulerPage() {
       handleJobResult(job)
       await qc.invalidateQueries({ queryKey: ['schedule'] })
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(extractApiError(e))
+      setStuckJobId(stuckJobIdFromError(e))
     } finally {
       setRunning(false)
       setStopping(false)
@@ -189,7 +193,8 @@ export function AutoSchedulerPage() {
       handleJobResult(job)
       await qc.invalidateQueries({ queryKey: ['schedule'] })
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(extractApiError(e))
+      setStuckJobId(stuckJobIdFromError(e))
     } finally {
       setRunning(false)
       setStopping(false)
@@ -224,7 +229,8 @@ export function AutoSchedulerPage() {
       handleJobResult(job)
       await qc.invalidateQueries({ queryKey: ['schedule'] })
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(extractApiError(e))
+      setStuckJobId(stuckJobIdFromError(e))
     } finally {
       setRunning(false)
       setStopping(false)
@@ -241,6 +247,21 @@ export function AutoSchedulerPage() {
     } catch (e) {
       setStopping(false)
       setError(e instanceof Error ? e.message : String(e))
+    }
+  }
+
+  async function resetStuckJob() {
+    if (stuckJobId == null) return
+    setStopping(true)
+    try {
+      await cancelJob(stuckJobId, true)
+      appendLog(`Задача #${stuckJobId} сброшена. Можно запускать заново.`)
+      setError(null)
+      setStuckJobId(null)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -454,7 +475,21 @@ export function AutoSchedulerPage() {
           {progress.message && (
             <div className="small text-muted mb-2">{progress.message}</div>
           )}
-          {error && <div className="alert alert-danger py-2">{error}</div>}
+          {error && (
+            <div className="alert alert-danger py-2">
+              <div>{error}</div>
+              {stuckJobId != null && (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-outline-danger mt-2"
+                  disabled={stopping}
+                  onClick={() => void resetStuckJob()}
+                >
+                  Сбросить задачу #{stuckJobId}
+                </button>
+              )}
+            </div>
+          )}
           <div
             ref={logRef}
             className="border rounded p-2 small bg-light"

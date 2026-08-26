@@ -1,6 +1,7 @@
 """FastAPI entrypoint."""
 from contextlib import asynccontextmanager
 from pathlib import Path
+import logging
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
 from app.services.errors import ServiceError
+from app.services.job_service import abandon_in_process_jobs
 from backend.bootstrap import bootstrap_admin, ensure_default_school
 from backend.database import ensure_database
 from backend.deps import SessionLocal, engine
@@ -34,6 +36,7 @@ from backend.routers import (
 )
 
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -43,6 +46,13 @@ async def lifespan(_app: FastAPI):
     try:
         ensure_default_school(db)
         bootstrap_admin(db)
+        try:
+            n = abandon_in_process_jobs(db)
+            if n:
+                logger.info("Abandoned %s leftover in-process job(s)", n)
+        except Exception:
+            logger.exception("Could not abandon leftover jobs")
+            db.rollback()
     finally:
         db.close()
     yield

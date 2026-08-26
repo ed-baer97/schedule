@@ -86,6 +86,12 @@ def _make_should_stop(job_id: int):
             job = db.get(Job, job_id)
             last["v"] = job is not None and job.status in (JOB_CANCELLING, JOB_CANCELLED)
             last["t"] = now
+            if job is not None and job.status not in JOB_TERMINAL_STATUSES:
+                job.updated_at = _utc_now()
+                try:
+                    db.commit()
+                except Exception:
+                    db.rollback()
             return bool(last["v"])
         except Exception:
             return False
