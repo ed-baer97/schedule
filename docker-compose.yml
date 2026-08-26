@@ -47,6 +47,18 @@ services:
       SOLVER_NUM_WORKERS: ${SOLVER_NUM_WORKERS:-2}
     expose:
       - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 40s
     mem_limit: 512m
     logging: *default-logging
 
@@ -54,7 +66,8 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       - "${HTTP_PORT:-80}:80"
     volumes:

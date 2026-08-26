@@ -23,7 +23,7 @@ docker compose --profile queue up -d
 - Не делать `docker compose down -v` — сотрётся volume Postgres
 - `.env` и токен туннеля в git не класть
 - Обновление: `git pull && docker compose --profile queue up -d --build --force-recreate`
-- После `--build` без `--force-recreate` возможен 502: nginx держит IP старого `api`
+- 502: не дергайте nginx, пока он `Restarting`. Сначала `docker compose --profile queue ps` и `logs api --tail 80`. Если `api` Up — `docker compose --profile queue up -d --force-recreate --no-deps nginx`, затем `curl -sS http://127.0.0.1/api/health`
 - Worker: `SOLVER_NUM_WORKERS=2` (контейнер 1.5 CPU). «Заполнить всё» — CP-SAT на одну смену, не лесенка по всем учителям.
 
 ## Бэкап
