@@ -1,4 +1,4 @@
-import { apiJson, extractApiError } from './client'
+import { apiJson, extractApiError, ApiError } from './client'
 import type { ShiftBrief } from './shifts'
 import type { SchoolLevel } from '../domain/schoolLevel'
 
@@ -181,6 +181,10 @@ export function getJob(jobId: number) {
   return apiJson<JobOut>(`/api/jobs/${jobId}`)
 }
 
+export function fetchActiveJob() {
+  return apiJson<{ job: JobOut | null }>('/api/jobs/active').then((r) => r.job)
+}
+
 export function cancelJob(jobId: number, force = false) {
   const q = force ? '?force=true' : ''
   return apiJson<JobOut>(`/api/jobs/${jobId}/cancel${q}`, { method: 'POST' })
@@ -188,6 +192,18 @@ export function cancelJob(jobId: number, force = false) {
 
 /** Parse «задача #N» from a 409 conflict body. */
 export function stuckJobIdFromError(err: unknown): number | null {
+  if (err instanceof ApiError) {
+    try {
+      const data = JSON.parse(err.body) as { detail?: unknown }
+      const detail = data.detail
+      if (detail && typeof detail === 'object') {
+        const id = (detail as { job_id?: unknown }).job_id
+        if (typeof id === 'number' && Number.isFinite(id)) return id
+      }
+    } catch {
+      /* not JSON */
+    }
+  }
   const msg = extractApiError(err)
   const m = msg.match(/задача #(\d+)/i)
   if (!m) return null
@@ -264,18 +280,27 @@ export function enqueueRepair(payload: RepairPayload) {
   })
 }
 
-export async function runJobAndPoll(
-  start: () => Promise<{ job_id: number }>,
+export class JobPollAborted extends Error {
+  constructor() {
+    super('aborted')
+    this.name = 'JobPollAborted'
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new JobPollAborted()
+}
+
+export async function pollJob(
+  jobId: number,
   onProgress: (p: { current: number; total: number; message: string }) => void,
   onLog: (line: string) => void,
-  onStarted?: (jobId: number) => void,
+  signal?: AbortSignal,
 ): Promise<JobOut> {
-  const started = await start()
-  onStarted?.(started.job_id)
-  onLog(`Задача #${started.job_id} поставлена в очередь`)
   for (;;) {
-    await new Promise((r) => setTimeout(r, 1000))
-    const job = await getJob(started.job_id)
+    throwIfAborted(signal)
+    const job = await getJob(jobId)
+    throwIfAborted(signal)
     const prog = job.progress || {}
     onProgress({
       current: Number(prog.current || 0),
@@ -292,5 +317,35 @@ export async function runJobAndPoll(
     ) {
       return job
     }
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        window.clearTimeout(t)
+        reject(new JobPollAborted())
+      }
+      const t = window.setTimeout(() => {
+        signal?.removeEventListener('abort', onAbort)
+        resolve()
+      }, 1000)
+      if (!signal) return
+      if (signal.aborted) {
+        window.clearTimeout(t)
+        reject(new JobPollAborted())
+        return
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    })
   }
+}
+
+export async function runJobAndPoll(
+  start: () => Promise<{ job_id: number }>,
+  onProgress: (p: { current: number; total: number; message: string }) => void,
+  onLog: (line: string) => void,
+  onStarted?: (jobId: number) => void,
+  signal?: AbortSignal,
+): Promise<JobOut> {
+  const started = await start()
+  onStarted?.(started.job_id)
+  onLog(`Задача #${started.job_id} поставлена в очередь`)
+  return pollJob(started.job_id, onProgress, onLog, signal)
 }

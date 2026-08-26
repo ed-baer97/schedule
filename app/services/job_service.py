@@ -122,8 +122,7 @@ class JobService:
         self.db = db
         self.school_id = school_id
 
-    def get(self, job_id: int) -> JobStatusData:
-        job = require_owned(self.db, Job, job_id, self.school_id)
+    def _to_status(self, job: Job) -> JobStatusData:
         return JobStatusData(
             id=job.id,
             kind=job.kind,
@@ -132,6 +131,27 @@ class JobService:
             result=_parse_json(job.result),
             error=job.error,
         )
+
+    def get(self, job_id: int) -> JobStatusData:
+        job = require_owned(self.db, Job, job_id, self.school_id)
+        return self._to_status(job)
+
+    def get_active(self) -> JobStatusData | None:
+        """Current pending/running/cancelling job for this school, if any.
+
+        Dead workers are marked failed first so a leftover row does not
+        look like a live run after the user left the page.
+        """
+        self._abandon_dead_active()
+        job = self.db.scalars(
+            select(Job).where(
+                Job.school_id == self.school_id,
+                Job.status.in_(JOB_ACTIVE_STATUSES),
+            )
+        ).first()
+        if job is None:
+            return None
+        return self._to_status(job)
 
     def enqueue_auto(
         self,

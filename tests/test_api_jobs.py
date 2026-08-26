@@ -212,6 +212,59 @@ def test_abandon_in_process_jobs_skips_celery() -> None:
         assert session.get(Job, celery_id).status == "running"
 
 
+def test_get_active_empty() -> None:
+    r = client.get("/api/jobs/active")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"job": None}
+
+
+def test_get_active_running() -> None:
+    with SessionLocal() as session:
+        job = Job(
+            school_id=TEST_SCHOOL_ID,
+            kind="auto_all",
+            status="running",
+            celery_task_id="celery-alive",
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    r = client.get("/api/jobs/active")
+    assert r.status_code == 200, r.text
+    body = r.json()["job"]
+    assert body is not None
+    assert body["id"] == job_id
+    assert body["status"] == "running"
+    assert body["kind"] == "auto_all"
+
+
+def test_get_active_abandons_dead_in_process() -> None:
+    with SessionLocal() as session:
+        job = Job(school_id=TEST_SCHOOL_ID, kind="auto_all", status="running")
+        session.add(job)
+        session.commit()
+        stuck_id = job.id
+
+    r = client.get("/api/jobs/active")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"job": None}
+
+    got = client.get(f"/api/jobs/{stuck_id}")
+    assert got.json()["status"] == "failed"
+    assert "прерван" in (got.json()["error"] or "")
+
+
+def test_get_active_skips_done() -> None:
+    with SessionLocal() as session:
+        session.add(Job(school_id=TEST_SCHOOL_ID, kind="repair", status="done"))
+        session.commit()
+
+    r = client.get("/api/jobs/active")
+    assert r.status_code == 200
+    assert r.json() == {"job": None}
+
+
 def test_enqueue_abandons_stale_celery_job() -> None:
     from datetime import datetime, timedelta, timezone
 

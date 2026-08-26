@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query'
-import type { ReactNode } from 'react'
-import { Link, NavLink, Outlet } from 'react-router-dom'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import { apiJson } from '../api/client'
+import { cancelJob, fetchActiveJob } from '../api/schedule'
 import { useAuth } from '../auth/AuthContext'
 import { AtmosphereBg } from '../components/AtmosphereBg'
 import { BrandMark } from '../components/BrandMark'
@@ -80,6 +81,63 @@ function ApiHealthBanner() {
   )
 }
 
+function ActiveJobBanner() {
+  const loc = useLocation()
+  const qc = useQueryClient()
+  const prevId = useRef<number | null>(null)
+  const [stopping, setStopping] = useState(false)
+  const q = useQuery({
+    queryKey: ['jobs', 'active'],
+    queryFn: fetchActiveJob,
+    refetchInterval: (query) => (query.state.data ? 2000 : false),
+    retry: false,
+  })
+  const job = q.data ?? null
+
+  useEffect(() => {
+    const id = job?.id ?? null
+    if (prevId.current != null && id == null) {
+      void qc.invalidateQueries({ queryKey: ['schedule'] })
+    }
+    prevId.current = id
+  }, [job?.id, qc])
+
+  if (!job) return null
+  if (loc.pathname.startsWith('/schedule/auto')) return null
+
+  const msg = job.progress?.message
+  return (
+    <div className="app-health-banner alert alert-info rounded-0 mb-0 py-2 px-3 d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <span>
+        <strong>Автосоставление выполняется</strong>
+        {' '}
+        (задача #{job.id}
+        {job.status === 'cancelling' ? ', останавливается' : ''}).
+        Процесс идёт на сервере
+        {msg ? `: ${msg}` : ''}.
+      </span>
+      <span className="d-flex gap-2">
+        <Link className="btn btn-sm btn-outline-dark" to="/schedule/auto">
+          Открыть прогресс
+        </Link>
+        <button
+          type="button"
+          className="btn btn-sm btn-outline-danger"
+          disabled={stopping}
+          onClick={() => {
+            setStopping(true)
+            void cancelJob(job.id)
+              .then(() => qc.invalidateQueries({ queryKey: ['jobs'] }))
+              .finally(() => setStopping(false))
+          }}
+        >
+          Остановить
+        </button>
+      </span>
+    </div>
+  )
+}
+
 const NAV = [
   { type: 'link' as const, to: '/', icon: 'bi-house', label: 'Главная' },
   { type: 'section' as const, label: 'Справочники' },
@@ -131,6 +189,7 @@ export function AppLayout() {
         </div>
       </nav>
       <ApiHealthBanner />
+      <ActiveJobBanner />
       <div className="app-body">
         <aside className="app-sidebar">
           <nav className="nav flex-column sidebar-nav">

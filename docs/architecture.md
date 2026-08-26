@@ -101,7 +101,7 @@ schedule/
 |---------|------------|
 | `/api/auth` | login, logout, me, accept-invite |
 | `/api/admin` | школы, админы школ, инвайты |
-| `/api/jobs/{id}` | статус фоновой задачи; `POST …/cancel` — остановить pending/running (`?force=true` — сразу cancelled) |
+| `/api/jobs/{id}` | статус фоновой задачи; `GET /api/jobs/active` — текущая pending/running/cancelling для школы; `POST …/cancel` — остановить (`?force=true` — сразу cancelled) |
 | `/api/dashboard` | сводка |
 | `/api/teachers`, `/classrooms`, `/school-classes`, `/shifts`, `/subjects` | CRUD |
 | `/api/workload`, `/assignments` | нагрузка и назначения |
@@ -111,7 +111,7 @@ schedule/
 
 OpenAPI: http://127.0.0.1:8000/docs
 
-Автосоставление: есть Redis — Celery worker; нет — фоновый поток в процессе API (Windows без Docker). Одна активная задача на школу (иначе `409`), включая статус `cancelling`. Прерванный процесс (reload/Ctrl+C) оставляет строку Job — при старте API такие in-process задачи сбрасываются в `failed`; при постановке новой мёртвый воркер тоже сбрасывается. Остановка: `POST /api/jobs/{id}/cancel` (pending сразу `cancelled`; running с живым Celery — `cancelling`, CP-SAT `StopSearch`; `?force=true` или повторный cancel / мёртвый поток — сразу `cancelled`, без записи сетки).
+Автосоставление: есть Redis — Celery worker; нет — фоновый поток в процессе API (Windows без Docker). Одна активная задача на школу (иначе `409`), включая статус `cancelling`. Уход со страницы UI не останавливает worker: `GET /api/jobs/active` позволяет снова показать прогресс. Прерванный процесс (reload/Ctrl+C) оставляет строку Job — при старте API такие in-process задачи сбрасываются в `failed`; при постановке новой мёртвый воркер тоже сбрасывается. Остановка: `POST /api/jobs/{id}/cancel` (pending сразу `cancelled`; running с живым Celery — `cancelling`, CP-SAT `StopSearch`; `?force=true` или повторный cancel / мёртвый поток — сразу `cancelled`, без записи сетки).
 
 ## Страницы UI (`frontend/src/pages/`)
 

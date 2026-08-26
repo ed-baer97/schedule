@@ -7,8 +7,10 @@ import {
   enqueueAutoAll,
   enqueueAutoByTeacher,
   enqueueRepair,
+  fetchActiveJob,
   fetchAutoPageData,
-  runJobAndPoll,
+  JobPollAborted,
+  pollJob,
   stuckJobIdFromError,
   updateScheduleSettings,
   type JobOut,
@@ -50,10 +52,18 @@ export function AutoSchedulerPage() {
   const [stuckJobId, setStuckJobId] = useState<number | null>(null)
   const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
   const logRef = useRef<HTMLDivElement | null>(null)
+  const pollAbortRef = useRef<AbortController | null>(null)
+  const attachedJobIdRef = useRef<number | null>(null)
 
   const q = useQuery({
     queryKey: ['schedule', 'auto', 'page-data'],
     queryFn: fetchAutoPageData,
+  })
+
+  const activeQ = useQuery({
+    queryKey: ['jobs', 'active'],
+    queryFn: fetchActiveJob,
+    retry: false,
   })
 
   useEffect(() => {
@@ -102,6 +112,11 @@ export function AutoSchedulerPage() {
     })
   }
 
+  function stopPolling() {
+    pollAbortRef.current?.abort()
+    pollAbortRef.current = null
+  }
+
   function resetState() {
     setError(null)
     setStuckJobId(null)
@@ -138,37 +153,97 @@ export function AutoSchedulerPage() {
     if (status) appendLog(`CP-SAT status: ${status}`)
   }
 
+  async function attachToJob(jobId: number, opts?: { resume?: boolean }) {
+    if (
+      attachedJobIdRef.current === jobId &&
+      pollAbortRef.current &&
+      !pollAbortRef.current.signal.aborted
+    ) {
+      return
+    }
+    stopPolling()
+    const ac = new AbortController()
+    pollAbortRef.current = ac
+    attachedJobIdRef.current = jobId
+    setError(null)
+    setStuckJobId(null)
+    setRunning(true)
+    setActiveJobId(jobId)
+    setStopping(false)
+    if (opts?.resume) {
+      appendLog(`Задача #${jobId} продолжается на сервере`)
+    }
+    try {
+      const job = await pollJob(jobId, (p) => setProgress(p), appendLog, ac.signal)
+      if (ac.signal.aborted) return
+      handleJobResult(job)
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
+      await qc.invalidateQueries({ queryKey: ['jobs'] })
+    } catch (e) {
+      if (e instanceof JobPollAborted || ac.signal.aborted) return
+      setError(extractApiError(e))
+      setStuckJobId(stuckJobIdFromError(e))
+    } finally {
+      if (!ac.signal.aborted) {
+        setRunning(false)
+        setStopping(false)
+        setActiveJobId(null)
+        attachedJobIdRef.current = null
+      }
+    }
+  }
+
+  async function startJob(start: () => Promise<{ job_id: number }>) {
+    resetState()
+    setRunning(true)
+    try {
+      const started = await start()
+      appendLog(`Задача #${started.job_id} поставлена в очередь`)
+      void qc.invalidateQueries({ queryKey: ['jobs', 'active'] })
+      await attachToJob(started.job_id)
+    } catch (e) {
+      const existing = stuckJobIdFromError(e)
+      if (existing != null) {
+        appendLog(`Задача #${existing} уже выполняется на сервере — показываю прогресс.`)
+        void qc.invalidateQueries({ queryKey: ['jobs', 'active'] })
+        await attachToJob(existing)
+        return
+      }
+      setError(extractApiError(e))
+      setStuckJobId(null)
+      setRunning(false)
+      setStopping(false)
+      setActiveJobId(null)
+    }
+  }
+
+  useEffect(() => {
+    return () => stopPolling()
+  }, [])
+
+  useEffect(() => {
+    const job = activeQ.data
+    if (job == null) return
+    if (attachedJobIdRef.current === job.id) return
+    void attachToJob(job.id, { resume: true })
+    // attachToJob is recreated each render; resume only when the active id changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeQ.data?.id])
+
   async function runAll() {
     if (shiftId === '') {
       setError('Выберите смену')
       return
     }
-    resetState()
-    setRunning(true)
-    try {
-      const job = await runJobAndPoll(
-        () =>
-          enqueueAutoAll({
-            school_level: level,
-            shift_id: Number(shiftId),
-            time_limit_sec: timeLimit,
-            random_seed: seed,
-            diagnose,
-          }),
-        (p) => setProgress(p),
-        appendLog,
-        (id) => setActiveJobId(id),
-      )
-      handleJobResult(job)
-      await qc.invalidateQueries({ queryKey: ['schedule'] })
-    } catch (e) {
-      setError(extractApiError(e))
-      setStuckJobId(stuckJobIdFromError(e))
-    } finally {
-      setRunning(false)
-      setStopping(false)
-      setActiveJobId(null)
-    }
+    await startJob(() =>
+      enqueueAutoAll({
+        school_level: level,
+        shift_id: Number(shiftId),
+        time_limit_sec: timeLimit,
+        random_seed: seed,
+        diagnose,
+      }),
+    )
   }
 
   async function runTeacher() {
@@ -176,30 +251,13 @@ export function AutoSchedulerPage() {
       setError('Выберите учителя')
       return
     }
-    resetState()
-    setRunning(true)
-    try {
-      const job = await runJobAndPoll(
-        () =>
-          enqueueAutoByTeacher({
-            teacher_id: Number(teacherId),
-            school_level: level,
-            diagnose,
-          }),
-        (p) => setProgress(p),
-        appendLog,
-        (id) => setActiveJobId(id),
-      )
-      handleJobResult(job)
-      await qc.invalidateQueries({ queryKey: ['schedule'] })
-    } catch (e) {
-      setError(extractApiError(e))
-      setStuckJobId(stuckJobIdFromError(e))
-    } finally {
-      setRunning(false)
-      setStopping(false)
-      setActiveJobId(null)
-    }
+    await startJob(() =>
+      enqueueAutoByTeacher({
+        teacher_id: Number(teacherId),
+        school_level: level,
+        diagnose,
+      }),
+    )
   }
 
   async function doClear(filter: { school_level?: string; class_id?: number; teacher_id?: number }) {
@@ -217,25 +275,7 @@ export function AutoSchedulerPage() {
   }
 
   async function runRepair() {
-    resetState()
-    setRunning(true)
-    try {
-      const job = await runJobAndPoll(
-        () => enqueueRepair({ school_level: level }),
-        (p) => setProgress(p),
-        appendLog,
-        (id) => setActiveJobId(id),
-      )
-      handleJobResult(job)
-      await qc.invalidateQueries({ queryKey: ['schedule'] })
-    } catch (e) {
-      setError(extractApiError(e))
-      setStuckJobId(stuckJobIdFromError(e))
-    } finally {
-      setRunning(false)
-      setStopping(false)
-      setActiveJobId(null)
-    }
+    await startJob(() => enqueueRepair({ school_level: level }))
   }
 
   async function stopRunning() {
@@ -256,6 +296,7 @@ export function AutoSchedulerPage() {
     try {
       await cancelJob(stuckJobId, true)
       appendLog(`Задача #${stuckJobId} сброшена. Можно запускать заново.`)
+      await qc.invalidateQueries({ queryKey: ['jobs'] })
       setError(null)
       setStuckJobId(null)
     } catch (e) {
@@ -448,7 +489,7 @@ export function AutoSchedulerPage() {
           <div className="d-flex align-items-center gap-2">
             {running && (
               <span className="text-muted small">
-                {stopping ? 'останавливается…' : 'выполняется…'}
+                {stopping ? 'останавливается…' : 'выполняется на сервере…'}
               </span>
             )}
             {running && (
@@ -474,6 +515,11 @@ export function AutoSchedulerPage() {
           </div>
           {progress.message && (
             <div className="small text-muted mb-2">{progress.message}</div>
+          )}
+          {running && (
+            <div className="small text-muted mb-2">
+              Можно открыть другую страницу — расчёт продолжится. Вернитесь сюда, чтобы увидеть прогресс.
+            </div>
           )}
           {error && (
             <div className="alert alert-danger py-2">
