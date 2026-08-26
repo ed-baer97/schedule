@@ -21,7 +21,7 @@ RUSSIAN = 3
 def _room(rid: int, subject_id: int | None = None, exclusive: bool = False) -> ClassroomFact:
     return ClassroomFact(
         id=rid,
-        subject_id=subject_id,
+        subject_ids=frozenset() if subject_id is None else frozenset({subject_id}),
         is_exclusive=exclusive,
         classes_capacity=1,
     )
@@ -146,3 +146,31 @@ def test_force_teacher_home_ignored_for_fixed_subject():
     )
     ranked = candidate_rooms_for([lab, home], ctx)
     assert ranked == [(32, COST_SAME_SUBJECT)]
+
+
+def test_exclusive_room_allows_any_tagged_subject():
+    cluster = ClassroomFact(
+        id=12,
+        subject_ids=frozenset({MATH, 4, 5}),
+        is_exclusive=True,
+        classes_capacity=1,
+    )
+    assert room_allows_subject(cluster, subject_id=MATH, requires_fixed_classroom=False)
+    assert room_allows_subject(cluster, subject_id=4, requires_fixed_classroom=False)
+    assert room_allows_subject(cluster, subject_id=5, requires_fixed_classroom=False)
+    assert not room_allows_subject(
+        cluster, subject_id=RUSSIAN, requires_fixed_classroom=False
+    )
+
+
+def test_multi_subject_room_same_subject_cost():
+    room = ClassroomFact(
+        id=43,
+        subject_ids=frozenset({MATH, 4, 5}),
+        is_exclusive=False,
+        classes_capacity=1,
+    )
+    ctx_math = PlacementContext(subject_id=MATH, requires_fixed_classroom=False)
+    ctx_ru = PlacementContext(subject_id=RUSSIAN, requires_fixed_classroom=False)
+    assert placement_cost(room, ctx_math) == COST_SAME_SUBJECT
+    assert placement_cost(room, ctx_ru) == COST_OTHER_SUBJECT

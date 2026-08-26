@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import SchoolClass, Subject, TeachingAssignment
 from app.services.dto import SubjectData, subject_data
@@ -26,7 +26,7 @@ class SubjectService:
     def _load_one(self, subject_id: int) -> Subject:
         stmt = (
             select(Subject)
-            .options(joinedload(Subject.classrooms))
+            .options(selectinload(Subject.classrooms))
             .where(Subject.id == subject_id, Subject.school_id == self.school_id)
         )
         row = self.db.execute(stmt).scalars().unique().one_or_none()
@@ -52,7 +52,7 @@ class SubjectService:
             stmt = (
                 select(Subject)
                 .where(Subject.id.in_(ids), Subject.school_id == self.school_id)
-                .options(joinedload(Subject.classrooms))
+                .options(selectinload(Subject.classrooms))
                 .order_by(Subject.name)
             )
             return [
@@ -62,7 +62,7 @@ class SubjectService:
         stmt = (
             select(Subject)
             .where(Subject.school_id == self.school_id)
-            .options(joinedload(Subject.classrooms))
+            .options(selectinload(Subject.classrooms))
             .order_by(Subject.name)
         )
         return [

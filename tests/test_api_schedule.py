@@ -15,6 +15,7 @@ from app.models import (
     Subject,
     Teacher,
     TeachingAssignment,
+    classroom_subjects,
 )
 from backend.deps import SessionLocal
 from tests.conftest import TEST_SCHOOL_ID
@@ -33,6 +34,7 @@ def _clear_db() -> None:
             Job,
             SchoolClass,
             Shift,
+            classroom_subjects,
             Classroom,
             Subject,
             Teacher,
@@ -816,17 +818,17 @@ def test_fixed_subject_rejects_wrong_classroom() -> None:
         lab = Classroom(
             school_id=TEST_SCHOOL_ID,
             number="32",
-            subject_id=info.id,
             is_exclusive=True,
         )
         math_room = Classroom(
             school_id=TEST_SCHOOL_ID,
             number="43",
-            subject_id=math.id,
             is_exclusive=False,
         )
         session.add_all([lab, math_room])
         session.flush()
+        lab.subjects = [info]
+        math_room.subjects = [math]
         assignment = TeachingAssignment(
             school_id=TEST_SCHOOL_ID,
             subject_id=info.id,

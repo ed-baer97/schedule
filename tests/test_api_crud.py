@@ -12,6 +12,7 @@ from app.models import (
     Shift,
     Teacher,
     TeachingAssignment,
+    classroom_subjects,
 )
 from backend.deps import SessionLocal
 from backend.main import app
@@ -27,6 +28,7 @@ def _clear() -> None:
         session.execute(delete(TeachingAssignment))
         session.execute(delete(SchoolClass))
         session.execute(delete(Teacher))
+        session.execute(delete(classroom_subjects))
         session.execute(delete(Classroom))
         session.execute(delete(Shift))
         session.commit()
@@ -40,7 +42,8 @@ def test_classroom_crud() -> None:
     assert created.status_code == 200, created.text
     cid = created.json()["id"]
     assert created.json()["display_name"]
-    assert created.json()["subject_id"] is None
+    assert created.json()["subject_ids"] == []
+    assert created.json()["subjects"] == []
     assert created.json()["is_exclusive"] is False
     assert created.json()["teachers"] == []
 
@@ -83,15 +86,15 @@ def test_classroom_subject_pool() -> None:
         json={
             "number": "32",
             "name": "Инф",
-            "subject_id": sid,
+            "subject_ids": [sid],
             "is_exclusive": True,
             "classes_capacity": 1,
         },
     )
     assert room.status_code == 200, room.text
-    assert room.json()["subject_id"] == sid
+    assert room.json()["subject_ids"] == [sid]
     assert room.json()["is_exclusive"] is True
-    assert room.json()["subject"]["name"] == "Информатика"
+    assert room.json()["subjects"][0]["name"] == "Информатика"
 
     listed_subj = client.get("/api/subjects/")
     assert listed_subj.status_code == 200
@@ -141,6 +144,49 @@ def test_classroom_multiple_teachers() -> None:
     leftover = client.get(f"/api/classrooms/{other_id}")
     assert leftover.status_code == 200
     assert leftover.json()["teachers"] == []
+
+
+def test_classroom_multiple_subjects() -> None:
+    algebra = client.post("/api/subjects/", json={"name": "Алгебра", "color": "#147f78"})
+    geometry = client.post("/api/subjects/", json={"name": "Геометрия", "color": "#c45a42"})
+    math = client.post("/api/subjects/", json={"name": "Математика", "color": "#c4842e"})
+    rus = client.post("/api/subjects/", json={"name": "Русский язык", "color": "#0e5c57"})
+    assert algebra.status_code == 200, algebra.text
+    assert geometry.status_code == 200, geometry.text
+    assert math.status_code == 200, math.text
+    assert rus.status_code == 200, rus.text
+    a_id, g_id, m_id = algebra.json()["id"], geometry.json()["id"], math.json()["id"]
+
+    room = client.post(
+        "/api/classrooms/",
+        json={
+            "number": "43",
+            "name": "Математика",
+            "subject_ids": [a_id, g_id, m_id],
+            "is_exclusive": False,
+        },
+    )
+    assert room.status_code == 200, room.text
+    names = [s["name"] for s in room.json()["subjects"]]
+    assert names == ["Алгебра", "Геометрия", "Математика"]
+    assert set(room.json()["subject_ids"]) == {a_id, g_id, m_id}
+
+    listed = client.get("/api/subjects/")
+    assert listed.status_code == 200
+    by_id = {s["id"]: s for s in listed.json()}
+    for sid in (a_id, g_id, m_id):
+        assert any(c["id"] == room.json()["id"] for c in by_id[sid]["classrooms"])
+    assert all(
+        c["id"] != room.json()["id"] for c in by_id[rus.json()["id"]]["classrooms"]
+    )
+
+    updated = client.put(
+        f"/api/classrooms/{room.json()['id']}",
+        json={"subject_ids": [a_id, m_id], "is_exclusive": True},
+    )
+    assert updated.status_code == 200, updated.text
+    assert {s["id"] for s in updated.json()["subjects"]} == {a_id, m_id}
+    assert updated.json()["is_exclusive"] is True
 
 
 def test_shift_and_class_crud() -> None:

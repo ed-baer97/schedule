@@ -8,6 +8,7 @@ from app.domain.classroom_rules import (
     rank_candidate_rooms,
     room_allows_subject,
     room_denial_message,
+    room_has_subject,
 )
 from app.domain.days import DAY_NAMES, SHORT_DAY_NAMES, fmt_time, time_range_label
 from app.domain.names import normalize_person_name
@@ -57,6 +58,7 @@ __all__ = [
     "PlacementContext",
     "room_allows_subject",
     "room_denial_message",
+    "room_has_subject",
     "placement_cost",
     "rank_candidate_rooms",
     "candidate_rooms_for",

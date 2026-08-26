@@ -72,7 +72,7 @@ export function ClassroomsPage() {
     floor: '',
     building: '',
     classes_capacity: '1',
-    subject_id: '',
+    subject_ids: [] as number[],
     is_exclusive: false,
     teacher_ids: [] as number[],
   })
@@ -98,12 +98,12 @@ export function ClassroomsPage() {
         floor: form.floor === '' ? null : Number(form.floor),
         building: form.building.trim() || null,
         classes_capacity: Number(form.classes_capacity || 1) || 1,
-        subject_id: form.subject_id === '' ? null : Number(form.subject_id),
-        is_exclusive: form.subject_id === '' ? false : form.is_exclusive,
+        subject_ids: form.subject_ids,
+        is_exclusive: form.subject_ids.length === 0 ? false : form.is_exclusive,
         teacher_ids: form.teacher_ids,
       }
       if (!payload.number) throw new Error('Укажите номер кабинета')
-      if (payload.is_exclusive && payload.subject_id === null) {
+      if (payload.is_exclusive && payload.subject_ids.length === 0) {
         throw new Error('Фиксированный кабинет должен иметь предмет')
       }
       if (editingId === 'new') {
@@ -142,11 +142,6 @@ export function ClassroomsPage() {
   const rows = q.data ?? []
   const subjects = subjectsQ.data ?? []
   const teachers = teachersQ.data ?? []
-  const subjectById = useMemo(() => {
-    const m = new Map<number, Subject>()
-    for (const s of subjects) m.set(s.id, s)
-    return m
-  }, [subjects])
   const groups = useMemo(() => groupByFloor(rows), [rows])
 
   useEffect(() => {
@@ -162,7 +157,7 @@ export function ClassroomsPage() {
       floor: '',
       building: '',
       classes_capacity: '1',
-      subject_id: '',
+      subject_ids: [],
       is_exclusive: false,
       teacher_ids: [],
     })
@@ -176,7 +171,7 @@ export function ClassroomsPage() {
       floor: c.floor === null || c.floor === undefined ? '' : String(c.floor),
       building: c.building ?? '',
       classes_capacity: String(c.classes_capacity ?? 1),
-      subject_id: c.subject_id === null || c.subject_id === undefined ? '' : String(c.subject_id),
+      subject_ids: (c.subjects ?? []).map((s) => s.id),
       is_exclusive: Boolean(c.is_exclusive),
       teacher_ids: (c.teachers ?? []).map((t) => t.id),
     })
@@ -192,19 +187,21 @@ export function ClassroomsPage() {
     }))
   }
 
+  function toggleSubject(s: Subject) {
+    setForm((f) => {
+      const has = f.subject_ids.includes(s.id)
+      const next = has ? f.subject_ids.filter((id) => id !== s.id) : [...f.subject_ids, s.id]
+      let exclusive = f.is_exclusive
+      if (next.length === 0) exclusive = false
+      else if (!has && s.requires_fixed_classroom) exclusive = true
+      return { ...f, subject_ids: next, is_exclusive: exclusive }
+    })
+  }
+
   function otherRoomHint(t: Teacher) {
     if (!t.home_classroom_id) return null
     if (typeof editingId === 'number' && t.home_classroom_id === editingId) return null
     return t.home_classroom?.display_name ?? null
-  }
-
-  function onSubjectChange(value: string) {
-    const subj = value === '' ? null : subjectById.get(Number(value))
-    setForm((f) => ({
-      ...f,
-      subject_id: value,
-      is_exclusive: value === '' ? false : subj?.requires_fixed_classroom ? true : f.is_exclusive,
-    }))
   }
 
   if (q.isLoading) return <p>Загрузка…</p>
@@ -214,7 +211,7 @@ export function ClassroomsPage() {
     <div>
       <PageHeader
         title="Кабинеты"
-        subtitle="Сгруппированы по этажам. За кабинетом можно закрепить нескольких учителей"
+        subtitle="Сгруппированы по этажам. За кабинетом можно закрепить несколько предметов и учителей"
         actions={
           <button type="button" className="btn btn-primary" onClick={openNew}>
             <i className="bi bi-plus-lg me-1" />
@@ -259,7 +256,7 @@ export function ClassroomsPage() {
                           <tr>
                             <th>Номер</th>
                             <th>Название</th>
-                            <th>Предмет</th>
+                            <th>Предметы</th>
                             <th>Учителя</th>
                             <th>Корпус</th>
                             <th>Классов в слот</th>
@@ -272,8 +269,10 @@ export function ClassroomsPage() {
                               <td>{c.number}</td>
                               <td>{c.name ?? '—'}</td>
                               <td>
-                                {c.subject?.name ?? '—'}
-                                {c.is_exclusive && c.subject ? (
+                                {(c.subjects ?? []).length === 0
+                                  ? '—'
+                                  : (c.subjects ?? []).map((s) => s.name).join(', ')}
+                                {c.is_exclusive && (c.subjects ?? []).length > 0 ? (
                                   <span className="badge text-bg-secondary ms-1">фикс.</span>
                                 ) : null}
                               </td>
@@ -334,20 +333,33 @@ export function ClassroomsPage() {
                   <input className="form-control" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
                 </div>
                 <div className="mb-2">
-                  <label className="form-label">Предмет</label>
-                  <select
-                    className="form-select"
-                    value={form.subject_id}
-                    onChange={(e) => onSubjectChange(e.target.value)}
-                  >
-                    <option value="">— общий —</option>
-                    {subjects.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name}
-                        {s.requires_fixed_classroom ? ' (фикс.)' : ''}
-                      </option>
-                    ))}
-                  </select>
+                  <label className="form-label">Предметы</label>
+                  {subjects.length === 0 ? (
+                    <div className="form-text">Сначала добавьте предметы в справочник.</div>
+                  ) : (
+                    <div className="classroom-subjects-picker border rounded px-2 py-1">
+                      {subjects.map((s) => {
+                        const checked = form.subject_ids.includes(s.id)
+                        return (
+                          <div className="form-check" key={s.id}>
+                            <input
+                              className="form-check-input"
+                              type="checkbox"
+                              id={`room-subject-${s.id}`}
+                              checked={checked}
+                              onChange={() => toggleSubject(s)}
+                            />
+                            <label className="form-check-label" htmlFor={`room-subject-${s.id}`}>
+                              {s.name}
+                              {s.requires_fixed_classroom ? (
+                                <span className="text-muted"> · фикс.</span>
+                              ) : null}
+                            </label>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
                 <div className="form-check mb-2">
                   <input
@@ -355,11 +367,11 @@ export function ClassroomsPage() {
                     type="checkbox"
                     id="roomExclusive"
                     checked={form.is_exclusive}
-                    disabled={form.subject_id === ''}
+                    disabled={form.subject_ids.length === 0}
                     onChange={(e) => setForm((f) => ({ ...f, is_exclusive: e.target.checked }))}
                   />
                   <label className="form-check-label" htmlFor="roomExclusive">
-                    Фиксированный — только этот предмет
+                    Фиксированный — только выбранные предметы
                   </label>
                 </div>
                 <div className="mb-2">

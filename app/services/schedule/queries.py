@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.domain import DAY_NAMES, time_range_label
 from app.models import (
@@ -211,6 +211,7 @@ class ScheduleQueriesMixin:
         classrooms = list(
             self.db.scalars(
                 select(Classroom)
+                .options(selectinload(Classroom.subjects))
                 .where(Classroom.school_id == self.school_id)
                 .order_by(Classroom.number)
             ).all()

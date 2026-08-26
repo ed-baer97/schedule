@@ -1,7 +1,7 @@
 """Shared service-layer DTOs (no ORM / FastAPI)."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -62,7 +62,7 @@ class ClassroomChoiceData:
     number: str
     name: str | None
     display_name: str
-    subject_id: int | None = None
+    subject_ids: list[int] = field(default_factory=list)
     is_exclusive: bool = False
 
 
@@ -107,10 +107,10 @@ class ClassroomData:
     floor: int | None
     building: str | None
     display_name: str
-    subject_id: int | None = None
+    subject_ids: list[int] = field(default_factory=list)
     is_exclusive: bool = False
-    subject: SubjectBriefData | None = None
-    teachers: list[TeacherBriefData] | None = None
+    subjects: list[SubjectBriefData] = field(default_factory=list)
+    teachers: list[TeacherBriefData] = field(default_factory=list)
 
 
 @dataclass
@@ -202,12 +202,13 @@ def settings_data(s) -> ScheduleSettingsData:
 
 
 def classroom_choice(c) -> ClassroomChoiceData:
+    subjects = getattr(c, "subjects", None) or []
     return ClassroomChoiceData(
         id=c.id,
         number=c.number,
         name=c.name,
         display_name=c.display_name,
-        subject_id=getattr(c, "subject_id", None),
+        subject_ids=[s.id for s in subjects],
         is_exclusive=bool(getattr(c, "is_exclusive", False)),
     )
 
@@ -244,7 +245,7 @@ def teacher_data(t) -> TeacherData:
 
 
 def classroom_data(c) -> ClassroomData:
-    subj = getattr(c, "subject", None)
+    subjects = list(getattr(c, "subjects", None) or [])
     teachers = getattr(c, "teachers", None) or []
     return ClassroomData(
         id=c.id,
@@ -255,9 +256,9 @@ def classroom_data(c) -> ClassroomData:
         floor=c.floor,
         building=c.building,
         display_name=c.display_name,
-        subject_id=getattr(c, "subject_id", None),
+        subject_ids=[s.id for s in subjects],
         is_exclusive=bool(getattr(c, "is_exclusive", False)),
-        subject=subject_brief(subj) if subj else None,
+        subjects=[subject_brief(s) for s in subjects],
         teachers=[teacher_brief(t) for t in teachers],
     )
 

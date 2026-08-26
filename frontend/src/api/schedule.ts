@@ -68,7 +68,7 @@ export type ClassroomChoice = {
   number: string
   name: string | null
   display_name: string
-  subject_id: number | null
+  subject_ids: number[]
   is_exclusive: boolean
 }
 

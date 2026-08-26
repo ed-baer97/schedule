@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.domain.classroom_rules import (
     ClassroomFact,
     PlacementContext,
     candidate_rooms_for,
+    room_has_subject,
 )
 from app.domain.schedule_facts import SlotFact
 from app.domain.schedule_rules import classroom_at_capacity
@@ -37,7 +38,7 @@ def load_settings(
 def classroom_fact(room: Classroom) -> ClassroomFact:
     return ClassroomFact(
         id=room.id,
-        subject_id=room.subject_id,
+        subject_ids=frozenset(s.id for s in (room.subjects or [])),
         is_exclusive=bool(room.is_exclusive),
         classes_capacity=room.classes_capacity or 1,
     )
@@ -46,7 +47,9 @@ def classroom_fact(room: Classroom) -> ClassroomFact:
 def load_classroom_facts(db: Session, school_id: int) -> list[ClassroomFact]:
     rooms = list(
         db.scalars(
-            select(Classroom).where(Classroom.school_id == school_id)
+            select(Classroom)
+            .options(selectinload(Classroom.subjects))
+            .where(Classroom.school_id == school_id)
         ).all()
     )
     return [classroom_fact(r) for r in rooms]
@@ -205,7 +208,7 @@ def get_classroom_warnings(
         if not a or not s:
             continue
         if s.requires_fixed_classroom:
-            pool = [r for r in rooms if r.subject_id == s.id]
+            pool = [r for r in rooms if room_has_subject(r, s.id)]
             if not pool and not a.preferred_classroom_id:
                 key = ("fixed_no_room", cell.class_id, s.id)
                 if key not in seen:
@@ -307,7 +310,7 @@ def get_classroom_warnings(
         ).all()
     )
     for s in subjects:
-        pool = [r for r in rooms if r.subject_id == s.id]
+        pool = [r for r in rooms if room_has_subject(r, s.id)]
         if pool:
             continue
         needs = db.scalars(
