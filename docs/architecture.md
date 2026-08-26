@@ -19,7 +19,8 @@ schedule/
 │   ├── security.py           # JWT cookie, пароли (argon2)
 │   ├── bootstrap.py          # первый platform_admin из .env
 │   ├── database.py           # alembic upgrade при старте
-│   ├── celery_app.py         # брокер Redis
+│   ├── http_errors.py        # ServiceError → HTTPException
+│   ├── celery_app.py         # брокер Redis; PING перед delay
 │   ├── tasks.py              # фоновое автосоставление
 │   ├── routers/              # HTTP API (/api/…)
 │   └── schemas/              # Pydantic-схемы
@@ -28,6 +29,7 @@ schedule/
 │       ├── api/              # client.ts + модули по сущностям (типы + fetch)
 │       ├── domain/           # зеркало жёстких правил для UI (дни, слот, кабинет)
 │       ├── auth/             # AuthContext
+│       ├── components/
 │       ├── layouts/
 │       └── pages/            # только UI
 ├── migrations/               # Alembic
@@ -37,6 +39,7 @@ schedule/
 ├── docs/                     # эта документация
 ├── docker-compose.yml
 ├── Dockerfile                # multi-stage: сборка SPA + Python API
+├── package.json              # npm run dev: API + Vite вместе
 ├── run_api.py                # uvicorn backend.main:app
 ├── alembic.ini
 ├── env.example
@@ -70,7 +73,7 @@ schedule/
    - `Classroom.subjects` (M2M `classroom_subjects`) — только `ClassroomService._sync_subjects`; страница предметов показывает обратный список, не пишет связь.
 5. **Канон имён (как в git)** — `backend.deps`, `backend.schemas`, `TeachingAssignment`, `ScheduleCell`, `ScheduleSettings`, `AutoScheduler`, `ScheduleValidator`. Пакеты `app.services.assignment` / `app.services.schedule` доступны также через реэкспорт `assignment_service` / `schedule_service`.
 6. **Правила слота** — предикаты в `app/domain/schedule_rules.py` (`slots_conflict` / `slot_facts_conflict`, `groups_can_share_slot`, `units_cannot_share_class_slot`, `occupancy_blocks_unit`, `teacher_busy_at_slot`, `classroom_at_capacity`, лимиты дня); плоские факты в `app/domain/schedule_facts.py`; ORM→факты только в `app/services/schedule_fact_loader.py`. Валидатор, residual и CP-SAT используют одни предикаты (учитель/кабинет по пересечению интервалов, не по «тому же номеру урока»). Residual строит рёбра со снимка фактов; `validate_cell` — предохранитель на записи. CP-SAT capacity — sweep/`slot_facts_conflict`.
-7. **Правила кабинета** — жёсткое «можно/нельзя» и стоимость в `app/domain/classroom_rules.py` (`room_has_subject`, `room_allows_subject`, `placement_cost`, `candidate_rooms_for`, `PlacementContext.force_teacher_home`). `ClassroomFact.subject_ids` — `frozenset`; пустой набор = общий кабинет; `is_exclusive` без тегов запрещён на CRUD. ORM→`ClassroomFact` / `PlacementContext` и выбор свободного кабинета — только `classroom_resolver.py` (`classroom_fact`, `candidate_classrooms` — адаптер, `pick_classroom` / `pick_classroom_for` — единственный pick-path). Лесенка, residual, CP-SAT и explain берут кандидатов оттуда; валидатор режет пару предмет↔кабинет через `room_denial_message` (факт — из `classroom_fact`). UI сетки зеркалит `roomHasSubject` / `roomAllowsSubject` в `frontend/src/domain/classroomRules.ts` — запись всегда проверяет бэкенд.
+7. **Правила кабинета** — жёсткое «можно/нельзя» и стоимость в `app/domain/classroom_rules.py` (`room_has_subject`, `room_allows_subject`, `room_allows_level` / `room_allows`, `placement_cost`, `candidate_rooms_for`, `PlacementContext.force_teacher_home` / `force_class_home`). `ClassroomFact.subject_ids` — `frozenset`; пустой набор = общий кабинет; `is_exclusive` без тегов запрещён на CRUD. `Classroom.school_level` (`NULL` = общий, `elementary` / `secondary`) — отдельный тег от exclusive: уроки ОШ не ставятся в кабинеты НШ. НШ без `requires_fixed_classroom` остаётся в кабинете класса (`force_class_home`); подгруппы с флагом «уходят» — `force_teacher_home` побеждает. ORM→`ClassroomFact` / `PlacementContext` и выбор свободного кабинета — только `classroom_resolver.py` (`classroom_fact`, `candidate_classrooms` — адаптер, `pick_classroom` / `pick_classroom_for` — единственный pick-path). Лесенка, residual, CP-SAT и explain берут кандидатов оттуда; валидатор режет пару предмет↔кабинет через `room_denial_message` (факт — из `classroom_fact`). UI сетки зеркалит `roomAllows` в `frontend/src/domain/classroomRules.ts` — запись всегда проверяет бэкенд.
 
 Роутеры не содержат солвер: они вызывают сервисы; постановка Job — `JobService.enqueue_auto` (диспатч через порт `app/services/job_dispatch.py`, реализация в `backend/tasks.py`).
 Настройки уровня — `load_settings`; диагностика непроставленных часов — `schedule_diagnostics.py`.
@@ -80,10 +83,11 @@ schedule/
 | Модель | Роль |
 |--------|------|
 | `School` | тенант |
-| `User`, `InviteToken` | вход и приглашения |
+| `User` | вход (`platform_admin` / `school_admin`) |
+| `InviteToken` | таблица из `8auth_tenancy`; поток приглашений не реализован — админов создаёт `/api/admin` |
 | `Job` | статус автосоставления |
 | `Teacher` | ФИО, `home_classroom_id` (хозяин комнаты) |
-| `Classroom` | номер, вместимость; предметы через M2M `classroom_subjects` (пул), `is_exclusive` (только помеченные предметы; пустые теги = общий) |
+| `Classroom` | номер, вместимость; предметы через M2M `classroom_subjects` (пул), `is_exclusive` (только помеченные предметы; пустые теги = общий), `school_level` (`NULL` = общий / НШ / ОШ) |
 | `Subject` | название, цвет; `requires_fixed_classroom`; обратная связь `classrooms` через ту же таблицу |
 | `Shift`, `ShiftLessonTime` | смена и звонки |
 | `SchoolClass` | класс (уровень, смена, `home_classroom_id`, `homeroom_teacher_id`) |
@@ -99,11 +103,11 @@ schedule/
 
 | Префикс | Назначение |
 |---------|------------|
-| `/api/auth` | login, logout, me, accept-invite |
-| `/api/admin` | школы, админы школ, инвайты |
+| `/api/auth` | login, logout, me |
+| `/api/admin` | школы и админы школ |
 | `/api/jobs/{id}` | статус фоновой задачи; `GET /api/jobs/active` — текущая pending/running/cancelling для школы; `POST …/cancel` — остановить (`?force=true` — сразу cancelled) |
 | `/api/dashboard` | сводка |
-| `/api/teachers`, `/classrooms`, `/school-classes`, `/shifts`, `/subjects` | CRUD |
+| `/api/teachers`, `/classrooms`, `/school-classes`, `/shifts`, `/subjects` | CRUD; `GET /api/teachers/load` — часы учителя по предметам и сменам |
 | `/api/workload`, `/assignments` | нагрузка и назначения |
 | `/api/schedule` | сетка, ячейки, настройки; `POST …/auto` и `POST …/repair` → `202` + `job_id`; `POST …/explain` — факты валидатора + текст Qwen |
 | `/api/reports` | просмотр и Excel |
@@ -111,20 +115,22 @@ schedule/
 
 OpenAPI: http://127.0.0.1:8000/docs
 
-Автосоставление: есть Redis — Celery worker; нет — фоновый поток в процессе API (Windows без Docker). Одна активная задача на школу (иначе `409`), включая статус `cancelling`. Уход со страницы UI не останавливает worker: `GET /api/jobs/active` позволяет снова показать прогресс. Прерванный процесс (reload/Ctrl+C) оставляет строку Job — при старте API такие in-process задачи сбрасываются в `failed`; при постановке новой мёртвый воркер тоже сбрасывается. Остановка: `POST /api/jobs/{id}/cancel` (pending сразу `cancelled`; running с живым Celery — `cancelling`, CP-SAT `StopSearch`; `?force=true` или повторный cancel / мёртвый поток — сразу `cancelled`, без записи сетки).
+Автосоставление: есть Redis (PING) — Celery worker; нет — фоновый поток в процессе API (Windows без Docker), без ретраев kombu. Одна активная задача на школу (иначе `409`), включая статус `cancelling`. Уход со страницы UI не останавливает worker: `GET /api/jobs/active` позволяет снова показать прогресс. Прерванный процесс (reload/Ctrl+C) оставляет строку Job — при старте API такие in-process задачи сбрасываются в `failed`; при постановке новой мёртвый воркер тоже сбрасывается. Остановка: `POST /api/jobs/{id}/cancel` (pending сразу `cancelled`; running с живым Celery — `cancelling`, CP-SAT `StopSearch`; `?force=true` или повторный cancel / мёртвый поток — сразу `cancelled`, без записи сетки).
 
 ## Страницы UI (`frontend/src/pages/`)
 
 | Маршрут | Кто | Страница |
 |---------|-----|----------|
-| `/login`, `/invite` | все | вход и приглашение |
-| `/admin` | `platform_admin` | школы и инвайты |
+| `/login` | все | вход |
+| `/admin` | `platform_admin` | школы и админы школ |
 | `/` | `school_admin` | дашборд |
 | `/teachers`, `/classrooms`, `/school-classes`, `/shifts`, `/subjects` | школа | справочники |
-| `/workload` | школа | нагрузка |
+| `/workload` | школа | часы предмет×класс |
+| `/teacher-load` | школа | нагрузка учителей |
 | `/subjects/:id/assignments` | школа | назначения учителей внутри предмета |
 | `/schedule`, `/schedule/auto` | школа | сетка и авто |
-| `/reports`, `/import` | школа | отчёты и импорт |
+| `/reports`, `/reports/class/:id`, `/reports/teacher/:id` | школа | отчёты |
+| `/import` | школа | импорт Excel |
 
 Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker SPA отдаёт FastAPI из `frontend/dist`, снаружи — nginx.
 
@@ -144,7 +150,7 @@ Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker 
 | `job_service.py` | статус Job + `enqueue_auto` + `cancel` (tenancy shift/teacher внутри) |
 | `import_service.py` | валидация файлов + оркестрация ExcelImporter |
 | `report_service.py` | отчёты JSON и Excel |
-| `teacher_service.py` … `subject_service.py` | CRUD справочников + `ensure` для импорта (DTO наружу); `classroom_service` — `_sync_subjects` / `_sync_teachers`; `subject_service` — `selectinload(Subject.classrooms)` |
+| `teacher_service.py` … `subject_service.py` | CRUD справочников + `ensure` для импорта (DTO наружу); `teacher_service.list_load`; `classroom_service` — `_sync_subjects` / `_sync_teachers`; `subject_service` — `selectinload(Subject.classrooms)` |
 | `schedule_mapping.py` | joinedload и DTO-проекции `ScheduleCell` |
 | `tenancy.py` | `require_owned` по `school_id` |
 | `schedule_fact_loader.py` | плоские `UnitFact` / `SlotFact` / teacher/classroom busy для валидатора и солверов |
@@ -152,17 +158,17 @@ Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker 
 | `excel_import.py` | парсинг Excel; запись только через сервисы |
 | `schedule_explain.py` | панель «почему»: факты валидатора + остаток часов; Qwen только формулирует текст |
 | `qwen_client.py` | DashScope OpenAI-compatible; phrasing only, без записи ячеек |
-| `auto_scheduler.py` | CP-SAT «Заполнить всё» по смене; «лесенка» по учителю; `repair_iter` — residual solver; ячейки только через `ScheduleService` |
-| `schedule_solver.py` | residual + OR-Tools CP-SAT на фактах из loader; веса из `ScheduleSettings` / `app.domain.preferences` |
+| `auto_scheduler.py` | CP-SAT «Заполнить всё» по смене (два этапа: допустимость, затем оптимум); «лесенка» по учителю — first-fit + relocating, без DFS-перекладки смены; `repair_iter` — residual solver; ячейки только через `ScheduleService` |
+| `schedule_solver.py` | residual + OR-Tools CP-SAT на фактах из loader; phase 1 `stop_after_first_solution`, phase 2 `AddHint` на остаток времени; веса из `ScheduleSettings` / `app.domain.preferences` |
 | `bell_schedule.py` | интервалы звонков; `slots_conflict` из domain |
 
-Чистые хелперы `app/domain/`: дни/`fmt_time`; `grade_from_name` / `level_from_grade` / `level_label`; `normalize_person_name`; `remaining_hours`; `schedule_facts` (`UnitFact`/`SlotFact`/`BusySlotFact`); слот — `slots_conflict` / `slot_facts_conflict` / `groups_can_share_slot` / `units_cannot_share_class_slot` / `occupancy_blocks_unit` / `teacher_busy_at_slot` / `classroom_at_capacity` / лимиты дня; кабинеты — `room_has_subject` / `room_allows_subject` / `placement_cost` / `candidate_rooms_for`; `preferences` (веса 0–10 → коэффициенты CP-SAT).
+Чистые хелперы `app/domain/`: дни/`fmt_time`; `grade_from_name` / `level_from_grade` / `level_label`; `normalize_person_name`; `remaining_hours`; `schedule_facts` (`UnitFact`/`SlotFact`/`BusySlotFact`); слот — `slots_conflict` / `slot_facts_conflict` / `groups_can_share_slot` / `units_cannot_share_class_slot` / `occupancy_blocks_unit` / `teacher_busy_at_slot` / `classroom_at_capacity` / лимиты дня; кабинеты — `room_has_subject` / `room_allows_subject` / `room_allows` / `placement_cost` / `candidate_rooms_for`; `preferences` (веса 0–10 → коэффициенты CP-SAT).
 
-Автосоставление: есть Redis — Celery worker; нет — фоновый поток. Одна активная задача на школу (иначе `409`). Виды job: `auto_all`, `auto_by_teacher`, `repair`. Остановка через `POST /api/jobs/{id}/cancel` (`?force=true` сбрасывает зависшую). Прерванный API-процесс: in-process jobs → `failed` при старте. Repair не пишет ячейки сам — только residual solver через `ScheduleService`. Панель «почему» на сетке не ставит уроки: валидатор даёт факты, Qwen (если задан `QWEN_API_KEY`) пересказывает их.
+Автосоставление: есть Redis (PING перед `.delay()`) — Celery worker; нет — фоновый поток. Одна активная задача на школу (иначе `409`). Виды job: `auto_all`, `auto_by_teacher`, `repair`. Остановка через `POST /api/jobs/{id}/cancel` (`?force=true` сбрасывает зависшую). Прерванный API-процесс: in-process jobs → `failed` при старте. Repair не пишет ячейки сам — только residual solver через `ScheduleService`. Панель «почему» на сетке не ставит уроки: валидатор даёт факты, Qwen (если задан `QWEN_API_KEY`) пересказывает их.
 
 Все школьные сервисы принимают обязательный `school_id: int` (`AdminService` — platform-wide).
 
-Фронт: `frontend/src/api/*` — единственные HTTP-вызовы; `frontend/src/domain/` — `SchoolLevel`, дни, `groupsCanShareSlot`, `roomHasSubject`, `roomAllowsSubject`.
+Фронт: `frontend/src/api/*` — единственные HTTP-вызовы (`health.ts`, jobs в `schedule.ts`); `frontend/src/domain/` — `SchoolLevel`, дни, `groupsCanShareSlot`, `roomHasSubject`, `roomAllows` / `roomAllowsSubject`.
 
 ## Тесты и CI
 

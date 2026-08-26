@@ -15,7 +15,7 @@ import {
 } from '../api/schedule'
 import type { SchoolLevel } from '../domain/schoolLevel'
 import { assignmentCanJoinSlot, slotAcceptsAnotherLesson } from '../domain/scheduleRules'
-import { roomAllowsSubject } from '../domain/classroomRules'
+import { roomAllows } from '../domain/classroomRules'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
@@ -828,6 +828,7 @@ export function SchedulePage() {
         <AddLessonModal
           slot={slot}
           occupied={occupiedForModal}
+          classSchoolLevel={level}
           dayNames={grid.day_names}
           error={addM.isError ? extractApiError(addM.error) : null}
           onClose={() => {
@@ -857,13 +858,14 @@ export function SchedulePage() {
 function AddLessonModal(props: {
   slot: SlotKey
   occupied: CellOut[]
+  classSchoolLevel: SchoolLevel
   dayNames: string[]
   error: string | null
   onClose: () => void
   onSubmit: (assignment_id: number, classroom_id: number | null) => void
   submitting: boolean
 }) {
-  const { slot, occupied, dayNames, error, onClose, onSubmit, submitting } = props
+  const { slot, occupied, classSchoolLevel, dayNames, error, onClose, onSubmit, submitting } = props
   const occupiedSubject =
     occupied.length > 0 && occupied.every((c) => c.subject_name === occupied[0].subject_name)
       ? occupied[0].subject_name
@@ -907,15 +909,21 @@ function AddLessonModal(props: {
     const rooms = q.data?.classrooms ?? []
     if (!selectedAssignment) return rooms
     return rooms.filter((c) =>
-      roomAllowsSubject(
-        { id: c.id, subject_ids: c.subject_ids ?? [], is_exclusive: Boolean(c.is_exclusive) },
+      roomAllows(
+        {
+          id: c.id,
+          subject_ids: c.subject_ids ?? [],
+          is_exclusive: Boolean(c.is_exclusive),
+          school_level: c.school_level ?? null,
+        },
         {
           subject_id: selectedAssignment.subject_id,
           requires_fixed_classroom: Boolean(selectedAssignment.requires_fixed_classroom),
+          class_school_level: classSchoolLevel,
         },
       ),
     )
-  }, [q.data?.classrooms, selectedAssignment])
+  }, [q.data?.classrooms, selectedAssignment, classSchoolLevel])
 
   useEffect(() => {
     if (filteredAssignments.length === 1) {

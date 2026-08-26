@@ -19,7 +19,7 @@ from app.models.job import (
 )
 from app.services.auto_scheduler import AutoScheduler
 from app.services.job_dispatch import set_dispatcher, set_revoker
-from backend.celery_app import celery_app
+from backend.celery_app import broker_is_reachable, celery_app
 from backend.deps import SessionLocal
 
 
@@ -51,7 +51,14 @@ def _update_job(db, job_id: int, **fields) -> None:
     now = time.monotonic()
     if progress_only:
         last = _last_progress_commit.get(job_id, 0.0)
-        if now - last < _PROGRESS_THROTTLE_SEC:
+        same_message = True
+        try:
+            new_msg = json.loads(fields.get("progress") or "{}").get("message")
+            old_msg = json.loads(job.progress or "{}").get("message")
+            same_message = new_msg == old_msg
+        except Exception:
+            same_message = True
+        if same_message and now - last < _PROGRESS_THROTTLE_SEC:
             return
         _last_progress_commit[job_id] = now
     else:
@@ -70,6 +77,24 @@ def _job_wants_cancel(db, job_id: int) -> bool:
         return False
     db.refresh(job)
     return job.status in (JOB_CANCELLING, JOB_CANCELLED)
+
+
+def _write_progress(job_id: int, payload: dict, current: int, total: int, message: str) -> None:
+    """Job progress via a fresh session so CP-SAT can report without committing the solver session."""
+    db = SessionLocal()
+    try:
+        _update_job(
+            db,
+            job_id,
+            progress=json.dumps(
+                {**payload, "current": current, "total": total, "message": message},
+                ensure_ascii=False,
+            ),
+        )
+    except Exception:
+        pass
+    finally:
+        db.close()
 
 
 def _make_should_stop(job_id: int):
@@ -142,14 +167,27 @@ def _run_auto_schedule_sync(job_id: int) -> None:
         pass
 
 
-def _dispatch_auto_job(job_id: int) -> None:
-    """Celery delay with thread fallback when broker is unavailable.
+def _start_in_process(job_id: int) -> None:
+    threading.Thread(
+        target=_run_auto_schedule_sync,
+        args=(job_id,),
+        daemon=True,
+        name=f"auto-job-{job_id}",
+    ).start()
 
-    Tests keep the previous in-process sync call so SQLite stays single-threaded
-    and the suite never waits on a Redis broker.
+
+def _dispatch_auto_job(job_id: int) -> None:
+    """Celery delay when Redis is up; otherwise a daemon thread in this process.
+
+    Ping the broker first so a missing Redis does not burn ~20s of kombu retries.
+    Tests keep the in-process sync call so SQLite stays single-threaded.
     """
     if os.environ.get("PYTEST_CURRENT_TEST"):
         run_auto_schedule(job_id)
+        return
+    reachable = broker_is_reachable()
+    if not reachable:
+        _start_in_process(job_id)
         return
     try:
         async_result = run_auto_schedule.delay(job_id)
@@ -164,12 +202,7 @@ def _dispatch_auto_job(job_id: int) -> None:
         finally:
             db.close()
     except Exception:
-        threading.Thread(
-            target=_run_auto_schedule_sync,
-            args=(job_id,),
-            daemon=True,
-            name=f"auto-job-{job_id}",
-        ).start()
+        _start_in_process(job_id)
 
 
 @celery_app.task(bind=True, name="schedule.run_auto")
@@ -204,7 +237,12 @@ def run_auto_schedule(self, job_id: int) -> dict:
         )
 
         scheduler = AutoScheduler(
-            db, school_id=school_id, should_stop=_make_should_stop(job_id)
+            db,
+            school_id=school_id,
+            should_stop=_make_should_stop(job_id),
+            on_progress=lambda cur, tot, msg: _write_progress(
+                job_id, payload, int(cur), int(tot), str(msg)
+            ),
         )
         last_event: dict = {}
         last_progress_t = 0.0
@@ -263,8 +301,31 @@ def run_auto_schedule(self, job_id: int) -> dict:
             _finish_cancelled(db, job_id, payload, last_event)
             return {"status": "cancelled", "job_id": job_id}
 
-        if not payload.get("diagnose"):
+        if last_event.get("type") == "error":
+            keep_diag = True
+        else:
+            keep_diag = last_event.get("cp_sat_status") in ("INFEASIBLE", "UNKNOWN")
+        if not payload.get("diagnose") and not keep_diag:
             last_event.pop("diagnostics", None)
+
+        if last_event.get("type") == "error":
+            _update_job(
+                db,
+                job_id,
+                status=JOB_FAILED,
+                error=last_event.get("message") or "Ошибка автозаполнения",
+                result=json.dumps(last_event, ensure_ascii=False),
+                progress=json.dumps(
+                    {
+                        **payload,
+                        "current": last_event.get("count", payload.get("current", 0)),
+                        "total": last_event.get("count", payload.get("total", 0)),
+                        "message": last_event.get("message") or "Не удалось",
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+            return {"status": "failed", "job_id": job_id}
 
         _update_job(
             db,

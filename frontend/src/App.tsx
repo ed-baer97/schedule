@@ -16,6 +16,7 @@ import { SchoolClassesPage } from './pages/SchoolClassesPage'
 import { ShiftsPage } from './pages/ShiftsPage'
 import { SubjectAssignmentsPage } from './pages/SubjectAssignmentsPage'
 import { SubjectsPage } from './pages/SubjectsPage'
+import { TeacherLoadPage } from './pages/TeacherLoadPage'
 import { TeachersPage } from './pages/TeachersPage'
 import { WorkloadPage } from './pages/WorkloadPage'
 
@@ -67,6 +68,7 @@ export default function App() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="teachers" element={<TeachersPage />} />
+        <Route path="teacher-load" element={<TeacherLoadPage />} />
         <Route path="classrooms" element={<ClassroomsPage />} />
         <Route path="school-classes" element={<SchoolClassesPage />} />
         <Route path="shifts" element={<ShiftsPage />} />

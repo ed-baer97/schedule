@@ -9,7 +9,9 @@ from app.domain.classroom_rules import (
     candidate_rooms_for,
     placement_cost,
     rank_candidate_rooms,
+    room_allows,
     room_allows_subject,
+    room_denial_message,
 )
 
 
@@ -18,12 +20,18 @@ INFO = 2
 RUSSIAN = 3
 
 
-def _room(rid: int, subject_id: int | None = None, exclusive: bool = False) -> ClassroomFact:
+def _room(
+    rid: int,
+    subject_id: int | None = None,
+    exclusive: bool = False,
+    school_level: str | None = None,
+) -> ClassroomFact:
     return ClassroomFact(
         id=rid,
         subject_ids=frozenset() if subject_id is None else frozenset({subject_id}),
         is_exclusive=exclusive,
         classes_capacity=1,
+        school_level=school_level,
     )
 
 
@@ -174,3 +182,82 @@ def test_multi_subject_room_same_subject_cost():
     ctx_ru = PlacementContext(subject_id=RUSSIAN, requires_fixed_classroom=False)
     assert placement_cost(room, ctx_math) == COST_SAME_SUBJECT
     assert placement_cost(room, ctx_ru) == COST_OTHER_SUBJECT
+
+
+def test_secondary_blocked_from_elementary_room():
+    home = _room(11, school_level="elementary")
+    gym = _room(1)
+    ctx = PlacementContext(
+        subject_id=MATH,
+        requires_fixed_classroom=False,
+        class_school_level="secondary",
+    )
+    assert room_allows(
+        home,
+        subject_id=MATH,
+        requires_fixed_classroom=False,
+        class_school_level="secondary",
+    ) is False
+    assert room_allows(
+        gym,
+        subject_id=MATH,
+        requires_fixed_classroom=False,
+        class_school_level="secondary",
+    )
+    ranked = rank_candidate_rooms([home, gym], ctx)
+    assert ranked == [(1, COST_GENERAL)]
+    msg = room_denial_message(
+        home,
+        subject_id=MATH,
+        subject_name="Математика",
+        requires_fixed_classroom=False,
+        room_display_name="11",
+        class_school_level="secondary",
+    )
+    assert msg is not None and "начальной" in msg
+
+
+def test_force_class_home_returns_only_class_room():
+    home = _room(11, school_level="elementary")
+    other = _room(43, MATH)
+    gym = _room(1)
+    ctx = PlacementContext(
+        subject_id=RUSSIAN,
+        requires_fixed_classroom=False,
+        class_home_classroom_id=11,
+        class_school_level="elementary",
+        force_class_home=True,
+    )
+    assert candidate_rooms_for([home, other, gym], ctx) == [(11, COST_OWNER_SUBJECT)]
+
+
+def test_force_class_home_ignored_for_fixed_subject():
+    home = _room(11, school_level="elementary")
+    lab = _room(32, INFO, exclusive=True)
+    ctx = PlacementContext(
+        subject_id=INFO,
+        requires_fixed_classroom=True,
+        class_home_classroom_id=11,
+        class_school_level="elementary",
+        force_class_home=True,
+    )
+    ranked = candidate_rooms_for([home, lab], ctx)
+    assert ranked == [(32, COST_SAME_SUBJECT)]
+
+
+def test_force_teacher_home_wins_over_force_class_home():
+    class_home = _room(11, school_level="elementary")
+    teacher_home = _room(20)
+    ctx = PlacementContext(
+        subject_id=RUSSIAN,
+        requires_fixed_classroom=False,
+        teacher_home_classroom_id=20,
+        class_home_classroom_id=11,
+        class_school_level="elementary",
+        force_teacher_home=True,
+        force_class_home=True,
+    )
+    assert candidate_rooms_for([class_home, teacher_home], ctx) == [
+        (20, COST_OWNER_SUBJECT)
+    ]
+

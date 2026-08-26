@@ -64,6 +64,7 @@ class ClassroomChoiceData:
     display_name: str
     subject_ids: list[int] = field(default_factory=list)
     is_exclusive: bool = False
+    school_level: str | None = None
 
 
 @dataclass
@@ -98,6 +99,33 @@ class TeacherData:
 
 
 @dataclass
+class TeacherSubjectHoursData:
+    subject_id: int
+    subject_name: str
+    color: str
+    hours: int
+
+
+@dataclass
+class TeacherShiftBriefData:
+    id: int
+    name: str
+    school_level: str
+    hours: int
+
+
+@dataclass
+class TeacherLoadData:
+    id: int
+    full_name: str
+    subjects: list[TeacherSubjectHoursData]
+    shifts: list[TeacherShiftBriefData]
+    total_hours: int
+    unassigned_shift_hours: int
+    has_classes_without_shift: bool
+
+
+@dataclass
 class ClassroomData:
     id: int
     number: str
@@ -109,6 +137,7 @@ class ClassroomData:
     display_name: str
     subject_ids: list[int] = field(default_factory=list)
     is_exclusive: bool = False
+    school_level: str | None = None
     subjects: list[SubjectBriefData] = field(default_factory=list)
     teachers: list[TeacherBriefData] = field(default_factory=list)
 
@@ -210,6 +239,7 @@ def classroom_choice(c) -> ClassroomChoiceData:
         display_name=c.display_name,
         subject_ids=[s.id for s in subjects],
         is_exclusive=bool(getattr(c, "is_exclusive", False)),
+        school_level=getattr(c, "school_level", None),
     )
 
 
@@ -258,6 +288,7 @@ def classroom_data(c) -> ClassroomData:
         display_name=c.display_name,
         subject_ids=[s.id for s in subjects],
         is_exclusive=bool(getattr(c, "is_exclusive", False)),
+        school_level=getattr(c, "school_level", None),
         subjects=[subject_brief(s) for s in subjects],
         teachers=[teacher_brief(t) for t in teachers],
     )

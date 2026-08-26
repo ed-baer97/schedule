@@ -10,6 +10,7 @@ from app.models import (
     ScheduleCell,
     SchoolClass,
     Shift,
+    Subject,
     Teacher,
     TeachingAssignment,
     classroom_subjects,
@@ -31,6 +32,7 @@ def _clear() -> None:
         session.execute(delete(classroom_subjects))
         session.execute(delete(Classroom))
         session.execute(delete(Shift))
+        session.execute(delete(Subject))
         session.commit()
 
 
@@ -45,6 +47,7 @@ def test_classroom_crud() -> None:
     assert created.json()["subject_ids"] == []
     assert created.json()["subjects"] == []
     assert created.json()["is_exclusive"] is False
+    assert created.json()["school_level"] is None
     assert created.json()["teachers"] == []
 
     listed = client.get("/api/classrooms/")
@@ -273,3 +276,199 @@ def test_teacher_crud_roundtrip() -> None:
     assert body["phone"] == "123"
 
     assert client.delete(f"/api/teachers/{tid}").status_code == 204
+
+
+def test_teacher_load_hours_and_shifts() -> None:
+    first = client.post("/api/teachers/", json={"full_name": "Иванов Иван Иванович"})
+    second = client.post("/api/teachers/", json={"full_name": "Петрова Анна Сергеевна"})
+    idle = client.post("/api/teachers/", json={"full_name": "Сидоров С.С."})
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert idle.status_code == 200, idle.text
+    first_id, second_id, idle_id = first.json()["id"], second.json()["id"], idle.json()["id"]
+
+    math = client.post("/api/subjects/", json={"name": "Математика", "color": "#147f78"})
+    info = client.post("/api/subjects/", json={"name": "Информатика", "color": "#c45a42"})
+    assert math.status_code == 200, math.text
+    assert info.status_code == 200, info.text
+    math_id, info_id = math.json()["id"], info.json()["id"]
+
+    shift1 = client.post(
+        "/api/shifts/",
+        json={
+            "name": "1 смена",
+            "school_level": "elementary",
+            "start_lesson": 1,
+            "lessons_count": 5,
+            "working_days": 5,
+            "max_lessons_per_day": 5,
+        },
+    )
+    shift2 = client.post(
+        "/api/shifts/",
+        json={
+            "name": "2 смена",
+            "school_level": "secondary",
+            "start_lesson": 1,
+            "lessons_count": 6,
+            "working_days": 5,
+            "max_lessons_per_day": 7,
+        },
+    )
+    assert shift1.status_code == 200, shift1.text
+    assert shift2.status_code == 200, shift2.text
+    shift1_id, shift2_id = shift1.json()["id"], shift2.json()["id"]
+
+    cls_a = client.post(
+        "/api/school-classes/",
+        json={"name": "1А", "school_level": "elementary", "shift_id": shift1_id},
+    )
+    cls_b = client.post(
+        "/api/school-classes/",
+        json={"name": "5А", "school_level": "secondary", "shift_id": shift2_id},
+    )
+    cls_none = client.post(
+        "/api/school-classes/",
+        json={"name": "2Б", "school_level": "elementary"},
+    )
+    assert cls_a.status_code == 200, cls_a.text
+    assert cls_b.status_code == 200, cls_b.text
+    assert cls_none.status_code == 200, cls_none.text
+
+    a1 = client.post(
+        "/api/assignments/",
+        json={
+            "subject_id": math_id,
+            "teacher_id": first_id,
+            "class_id": cls_a.json()["id"],
+            "hours_per_week": 5,
+        },
+    )
+    a2 = client.post(
+        "/api/assignments/",
+        json={
+            "subject_id": math_id,
+            "teacher_id": first_id,
+            "class_id": cls_b.json()["id"],
+            "hours_per_week": 4,
+        },
+    )
+    a3 = client.post(
+        "/api/assignments/",
+        json={
+            "subject_id": info_id,
+            "teacher_id": first_id,
+            "class_id": cls_a.json()["id"],
+            "hours_per_week": 2,
+        },
+    )
+    a4 = client.post(
+        "/api/assignments/",
+        json={
+            "subject_id": info_id,
+            "teacher_id": second_id,
+            "class_id": cls_none.json()["id"],
+            "hours_per_week": 3,
+        },
+    )
+    assert a1.status_code == 201, a1.text
+    assert a2.status_code == 201, a2.text
+    assert a3.status_code == 201, a3.text
+    assert a4.status_code == 201, a4.text
+
+    listed = client.get("/api/teachers/load")
+    assert listed.status_code == 200, listed.text
+    by_id = {row["id"]: row for row in listed.json()}
+
+    ivanov = by_id[first_id]
+    assert ivanov["full_name"] == "Иванов Иван Иванович"
+    assert ivanov["total_hours"] == 11
+    subjects = {s["subject_name"]: s["hours"] for s in ivanov["subjects"]}
+    assert subjects == {"Информатика": 2, "Математика": 9}
+    shift_hours = {s["name"]: s["hours"] for s in ivanov["shifts"]}
+    assert shift_hours == {"1 смена": 7, "2 смена": 4}
+    assert ivanov["unassigned_shift_hours"] == 0
+    assert ivanov["has_classes_without_shift"] is False
+
+    petrova = by_id[second_id]
+    assert petrova["total_hours"] == 3
+    assert petrova["subjects"][0]["subject_name"] == "Информатика"
+    assert petrova["shifts"] == []
+    assert petrova["unassigned_shift_hours"] == 3
+    assert petrova["has_classes_without_shift"] is True
+
+    sidirov = by_id[idle_id]
+    assert sidirov["full_name"] == "Сидоров С.С."
+    assert sidirov["subjects"] == []
+    assert sidirov["shifts"] == []
+    assert sidirov["total_hours"] == 0
+    assert sidirov["unassigned_shift_hours"] == 0
+    assert sidirov["has_classes_without_shift"] is False
+
+
+def test_classroom_school_level_roundtrip() -> None:
+    created = client.post(
+        "/api/classrooms/",
+        json={"number": "НШ-11", "school_level": "elementary"},
+    )
+    assert created.status_code == 200, created.text
+    cid = created.json()["id"]
+    assert created.json()["school_level"] == "elementary"
+
+    cleared = client.put(f"/api/classrooms/{cid}", json={"school_level": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["school_level"] is None
+
+    bad = client.post(
+        "/api/classrooms/",
+        json={"number": "НШ-bad", "school_level": "primary"},
+    )
+    assert bad.status_code == 422
+
+
+def test_elementary_class_home_tags_general_room() -> None:
+    room = client.post("/api/classrooms/", json={"number": "1А-каб"})
+    assert room.status_code == 200, room.text
+    rid = room.json()["id"]
+    assert room.json()["school_level"] is None
+
+    cls = client.post(
+        "/api/school-classes/",
+        json={
+            "name": "1Г",
+            "school_level": "elementary",
+            "home_classroom_id": rid,
+        },
+    )
+    assert cls.status_code == 200, cls.text
+    tagged = client.get(f"/api/classrooms/{rid}")
+    assert tagged.status_code == 200
+    assert tagged.json()["school_level"] == "elementary"
+
+
+def test_elementary_class_home_does_not_tag_specialist_room() -> None:
+    pe = client.post(
+        "/api/subjects/",
+        json={"name": "Физкультура", "requires_fixed_classroom": True},
+    )
+    assert pe.status_code == 200, pe.text
+    gym = client.post(
+        "/api/classrooms/",
+        json={"number": "СЗ-1", "subject_ids": [pe.json()["id"]]},
+    )
+    assert gym.status_code == 200, gym.text
+    gid = gym.json()["id"]
+
+    cls = client.post(
+        "/api/school-classes/",
+        json={
+            "name": "1Д",
+            "school_level": "elementary",
+            "home_classroom_id": gid,
+        },
+    )
+    assert cls.status_code == 200, cls.text
+    still = client.get(f"/api/classrooms/{gid}")
+    assert still.status_code == 200
+    assert still.json()["school_level"] is None
+

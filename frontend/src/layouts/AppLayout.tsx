@@ -1,29 +1,17 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
-import { apiJson } from '../api/client'
+import { fetchHealth } from '../api/health'
 import { cancelJob, fetchActiveJob } from '../api/schedule'
 import { useAuth } from '../auth/AuthContext'
 import { AtmosphereBg } from '../components/AtmosphereBg'
 import { BrandMark } from '../components/BrandMark'
 import { ThemeToggle } from '../components/ThemeToggle'
 
-type HealthResponse = {
-  status: string
-  database: {
-    connected: boolean
-    schema_ready: boolean
-    missing_tables?: string[]
-    missing_columns?: Record<string, string[]>
-    message?: string
-    error?: string
-  }
-}
-
 function ApiHealthBanner() {
   const q = useQuery({
     queryKey: ['health'],
-    queryFn: () => apiJson<HealthResponse>('/api/health'),
+    queryFn: fetchHealth,
     refetchInterval: 8000,
     refetchIntervalInBackground: true,
     retry: false,
@@ -148,6 +136,7 @@ const NAV = [
   { type: 'link' as const, to: '/subjects', icon: 'bi-journal-text', label: 'Предметы' },
   { type: 'section' as const, label: 'Нагрузка' },
   { type: 'link' as const, to: '/workload', icon: 'bi-table', label: 'Часы' },
+  { type: 'link' as const, to: '/teacher-load', icon: 'bi-person-lines-fill', label: 'Нагрузка учителей' },
   { type: 'section' as const, label: 'Расписание' },
   { type: 'link' as const, to: '/schedule', icon: 'bi-calendar3', label: 'Сетка и настройки' },
   { type: 'section' as const, label: 'Данные' },

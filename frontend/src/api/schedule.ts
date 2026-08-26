@@ -70,6 +70,7 @@ export type ClassroomChoice = {
   display_name: string
   subject_ids: number[]
   is_exclusive: boolean
+  school_level?: string | null
 }
 
 export type AssignmentChoice = {
@@ -297,18 +298,21 @@ export async function pollJob(
   onLog: (line: string) => void,
   signal?: AbortSignal,
 ): Promise<JobOut> {
+  let lastLogged = ''
   for (;;) {
     throwIfAborted(signal)
     const job = await getJob(jobId)
     throwIfAborted(signal)
     const prog = job.progress || {}
+    const message = String(prog.message || '')
     onProgress({
       current: Number(prog.current || 0),
       total: Number(prog.total || 0),
-      message: String(prog.message || job.status),
+      message: message || job.status,
     })
-    if (prog.message) {
-      onLog(`[${prog.current ?? 0}/${prog.total ?? 0}] ${prog.message}`)
+    if (message && message !== lastLogged) {
+      lastLogged = message
+      onLog(message)
     }
     if (
       job.status === 'done' ||

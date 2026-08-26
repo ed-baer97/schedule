@@ -1,4 +1,4 @@
-/* Публичные страницы: лендинг, вход, приглашение */
+/* Публичные страницы: лендинг и вход */
 
 .landing-page {
   --lp-ink: #eef3ea;
@@ -709,18 +709,6 @@ html[data-theme='light'] .landing-step-n {
   max-width: 1180px;
   margin: 0 auto;
   width: 100%;
-}
-
-.landing-invite {
-  max-width: 440px;
-  width: 100%;
-  margin: 2rem auto 4rem;
-  padding: 0 1.5rem;
-}
-
-.landing-page--compact .landing-hero {
-  display: block;
-  padding-bottom: 2rem;
 }
 
 @media (max-width: 991.98px) {

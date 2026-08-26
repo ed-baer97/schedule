@@ -722,6 +722,68 @@ def test_teacher_ladder_relocates_clustered_leftover_hour() -> None:
         assert remaining == 0, result
 
 
+def test_cp_sat_two_phase_fills_small_shift() -> None:
+    pytest.importorskip("ortools")
+    ids = _seed_shift2_math_teacher(n_classes=2, hours=2)
+    with SessionLocal() as session:
+        from app.services.assignment_hours import remaining_for
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+        )
+        remaining = sum(
+            remaining_for(a)
+            for a in session.query(TeachingAssignment).filter(
+                TeachingAssignment.id.in_(ids["assignment_ids"])
+            )
+        )
+    assert result.get("type") == "done", result
+    assert result.get("cp_sat_status") in ("OPTIMAL", "FEASIBLE"), result
+    assert remaining == 0, result
+    assert result.get("count") == 4
+    with SessionLocal() as session:
+        cells = (
+            session.query(ScheduleCell)
+            .filter(ScheduleCell.class_id.in_(ids["class_ids"]))
+            .all()
+        )
+        by: dict[tuple[int, int], list[int]] = {}
+        for cell in cells:
+            by.setdefault((cell.class_id, cell.day_of_week), []).append(cell.lesson_number)
+        for lessons in by.values():
+            occupied = sorted(set(lessons))
+            assert occupied[0] == 1, occupied
+            assert occupied[-1] - occupied[0] + 1 == len(occupied), occupied
+
+
+def test_cp_sat_stops_when_teacher_hours_exceed_shift_slots() -> None:
+    """6 classes × 6h = 36h for one teacher vs 5×6 = 30 shift slots."""
+    ids = _seed_shift2_math_teacher(n_classes=6, hours=6)
+    with SessionLocal() as session:
+        from app.services.auto_scheduler import AutoScheduler
+
+        before = session.query(ScheduleCell).count()
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=5.0,
+            random_seed=1,
+        )
+        after = session.query(ScheduleCell).count()
+    assert result.get("type") == "error", result
+    assert result.get("cp_sat_status") == "INFEASIBLE", result
+    blob = (result.get("message") or "") + " ".join(
+        d.get("reason", "") for d in (result.get("diagnostics") or [])
+    )
+    assert "36" in blob and "30" in blob, blob
+    assert "Баер" in blob, blob
+    assert after == before
+
+
 def test_workload_shows_class_hours_not_sum_of_subgroups() -> None:
     with SessionLocal() as session:
         subject = Subject(school_id=TEST_SCHOOL_ID, name="Информатика")
@@ -866,3 +928,72 @@ def test_fixed_subject_rejects_wrong_classroom() -> None:
         },
     )
     assert ok.status_code == 201, ok.text
+
+
+def test_elementary_classroom_blocks_secondary() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Баер Э.В.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="7А", grade=7, school_level="secondary"
+        )
+        session.add_all([shift, math, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        elem_room = Classroom(
+            school_id=TEST_SCHOOL_ID,
+            number="11",
+            school_level="elementary",
+        )
+        gym = Classroom(school_id=TEST_SCHOOL_ID, number="СЗ")
+        session.add_all([elem_room, gym])
+        session.flush()
+        assignment = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=2,
+        )
+        session.add(assignment)
+        session.commit()
+        class_id = cls.id
+        assignment_id = assignment.id
+        elem_id = elem_room.id
+        gym_id = gym.id
+
+    denied = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+            "classroom_id": elem_id,
+        },
+    )
+    assert denied.status_code == 422, denied.text
+    errors = denied.json()["detail"]["errors"]
+    assert any("начальной" in e for e in errors)
+
+    ok = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+            "classroom_id": gym_id,
+        },
+    )
+    assert ok.status_code == 201, ok.text
+

@@ -10,4 +10,4 @@ npm run dev      # Vite :5173, прокси /api → FastAPI :8000
 npm run build    # → frontend/dist (отдаёт FastAPI / Docker-образ)
 ```
 
-Маршруты: `/login`, `/invite`, `/admin` (platform), остальное — приложение школы после auth.
+Маршруты: `/login`, `/admin` (platform), остальное — приложение школы после auth.

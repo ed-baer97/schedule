@@ -1,4 +1,4 @@
-"""User and invite models for auth / multi-tenant admin."""
+"""User models for auth / multi-tenant admin."""
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
@@ -36,6 +36,9 @@ class User(Base):
 
 
 class InviteToken(Base):
+    """Reserved table from 8auth_tenancy. Invite flow is not implemented;
+    school admins are created by platform_admin via /api/admin."""
+
     __tablename__ = "invite_tokens"
 
     id = Column(Integer, primary_key=True)

@@ -49,6 +49,7 @@ def create_classroom(
         building=body.building,
         subject_ids=body.subject_ids,
         is_exclusive=body.is_exclusive,
+        school_level=body.school_level,
         teacher_ids=body.teacher_ids,
     )
     return ClassroomOut.model_validate(asdict(c))
@@ -72,6 +73,7 @@ def update_classroom(
         building=data.get("building"),
         subject_ids=data.get("subject_ids"),
         is_exclusive=data.get("is_exclusive"),
+        school_level=data.get("school_level"),
         teacher_ids=data.get("teacher_ids"),
         fields_set=frozenset(data.keys()),
     )

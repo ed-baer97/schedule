@@ -5,6 +5,7 @@ CP-SAT global solver (one shift) with reassignment.
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 import threading
+import time
 from typing import Any, Callable
 
 from app.domain.schedule_facts import SlotFact
@@ -16,6 +17,8 @@ from app.domain.schedule_rules import (
     teacher_class_day_limit_reached,
     units_cannot_share_class_slot,
 )
+from sqlalchemy.orm import joinedload
+
 from app.config import Config
 from app.models import SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_counts, remaining_for
@@ -439,10 +442,147 @@ class CpSatScheduleSolver:
         self._classroom_resolver = classroom_resolver
         self._schedule = ScheduleService(session, school_id)
 
+    _PHASE2_MIN_REMAINING_SEC = 0.5
+
     def _cancelled_result(self, should_stop, metrics_before=None) -> CpSatSolveResult | None:
         if should_stop and should_stop():
             return CpSatSolveResult(status="CANCELLED", metrics_before=metrics_before)
         return None
+
+    def _notify(
+        self,
+        on_progress: Callable[[int, int, str], None] | None,
+        current: int,
+        total: int,
+        message: str,
+    ) -> None:
+        if not on_progress:
+            return
+        try:
+            on_progress(current, total, message)
+        except Exception:
+            pass
+
+    def _apply_solver_params(
+        self,
+        solver,
+        random_seed: int,
+        time_limit_sec: float,
+        *,
+        stop_after_first: bool,
+    ) -> None:
+        solver.parameters.max_time_in_seconds = float(time_limit_sec)
+        solver.parameters.num_search_workers = Config.SOLVER_NUM_WORKERS
+        solver.parameters.random_seed = int(random_seed)
+        if stop_after_first:
+            solver.parameters.stop_after_first_solution = True
+
+    def _solve_with_cancel(self, solver, model, should_stop) -> Any:
+        watcher_stop = threading.Event()
+        watcher: threading.Thread | None = None
+
+        def _watch_cancel() -> None:
+            while not watcher_stop.is_set():
+                try:
+                    if should_stop and should_stop():
+                        stop = getattr(solver, "StopSearch", None)
+                        if callable(stop):
+                            stop()
+                        return
+                except Exception:
+                    pass
+                if watcher_stop.wait(0.4):
+                    return
+
+        if should_stop:
+            watcher = threading.Thread(
+                target=_watch_cancel, daemon=True, name="cp-sat-cancel"
+            )
+            watcher.start()
+        try:
+            return solver.Solve(model)
+        finally:
+            watcher_stop.set()
+            if watcher is not None:
+                watcher.join(timeout=1.5)
+
+    def _hint_bool_maps(self, model, solver, *var_maps: dict) -> None:
+        for var_map in var_maps:
+            for var in var_map.values():
+                try:
+                    model.AddHint(var, int(solver.Value(var)))
+                except Exception:
+                    continue
+
+    def _run_two_phase_search(
+        self,
+        model,
+        x: dict,
+        y: dict,
+        time_limit_sec: float,
+        random_seed: int,
+        should_stop,
+        on_progress: Callable[[int, int, str], None] | None = None,
+    ) -> tuple[str | None, Any, Any, float]:
+        """
+        Phase 1: first feasible (stop_after_first_solution).
+        Phase 2: optimize remaining time with hints if the first solution is only FEASIBLE.
+        """
+        t0 = time.perf_counter()
+        budget = max(0.1, float(time_limit_sec))
+        self._notify(
+            on_progress,
+            30,
+            100,
+            f"Ищу допустимое расписание (лимит {int(budget)} с)…",
+        )
+
+        solver1 = cp_model.CpSolver()
+        self._apply_solver_params(
+            solver1, random_seed, budget, stop_after_first=True
+        )
+        status1 = self._solve_with_cancel(solver1, model, should_stop)
+        elapsed = time.perf_counter() - t0
+        if should_stop and should_stop():
+            return "CANCELLED", status1, solver1, elapsed
+
+        remaining = budget - elapsed
+        if status1 == cp_model.FEASIBLE and remaining >= self._PHASE2_MIN_REMAINING_SEC:
+            self._notify(
+                on_progress,
+                70,
+                100,
+                f"Допустимое найдено за {elapsed:.0f} с, улучшаю качество ({remaining:.0f} с)…",
+            )
+            self._hint_bool_maps(model, solver1, x, y)
+            solver2 = cp_model.CpSolver()
+            self._apply_solver_params(
+                solver2, random_seed, remaining, stop_after_first=False
+            )
+            status2 = self._solve_with_cancel(solver2, model, should_stop)
+            elapsed = time.perf_counter() - t0
+            if should_stop and should_stop():
+                return "CANCELLED", status2, solver2, elapsed
+            if status2 in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+                return None, status2, solver2, elapsed
+            return None, status1, solver1, elapsed
+
+        if status1 == cp_model.OPTIMAL:
+            self._notify(
+                on_progress,
+                80,
+                100,
+                f"Найдено оптимальное расписание за {elapsed:.0f} с",
+            )
+        elif status1 in (cp_model.FEASIBLE,):
+            self._notify(
+                on_progress,
+                80,
+                100,
+                f"Допустимое расписание найдено за {elapsed:.0f} с",
+            )
+
+        return None, status1, solver1, elapsed
 
     def _compute_schedule_metrics(self, class_ids: list[int]) -> dict[str, Any]:
         """Aggregate window gaps and simple class load balance for classes in scope."""
@@ -503,6 +643,7 @@ class CpSatScheduleSolver:
         random_seed: int = 1,
         max_diag_items: int = 20,
         should_stop: Callable[[], bool] | None = None,
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> CpSatSolveResult:
         """
         Rebuild schedule for all classes in the given shift (same school_level).
@@ -535,7 +676,13 @@ class CpSatScheduleSolver:
         max_per_subject_day = settings.max_lessons_per_subject_per_day if settings else 2
 
         assignments = (
-            self.session.query(TeachingAssignment).filter(
+            self.session.query(TeachingAssignment)
+            .options(
+                joinedload(TeachingAssignment.teacher),
+                joinedload(TeachingAssignment.school_class),
+                joinedload(TeachingAssignment.subject),
+            )
+            .filter(
                 TeachingAssignment.class_id.in_(class_ids),
                 TeachingAssignment.teacher_id.isnot(None),
                 TeachingAssignment.hours_per_week > 0,
@@ -551,6 +698,55 @@ class CpSatScheduleSolver:
                 diagnostics=[{"reason": "Нет назначений с учителем для классов смены"}],
             )
 
+        shift_obj = shift_classes[0].shift
+        if not shift_obj:
+            return CpSatSolveResult(
+                status="MODEL_INVALID",
+                diagnostics=[{"reason": "Смена не найдена"}],
+            )
+        n_shift_slots = int(shift_obj.working_days) * int(shift_obj.lessons_count)
+        hours_by_tid: dict[int, int] = defaultdict(int)
+        name_by_tid: dict[int, str] = {}
+        for a in assignments:
+            tid = a.teacher_id
+            if not tid:
+                continue
+            hours_by_tid[tid] += int(a.hours_per_week or 0)
+            if tid not in name_by_tid:
+                teacher = a.teacher
+                name_by_tid[tid] = teacher.display_name if teacher else f"#{tid}"
+        overload_diag: list[dict[str, str]] = []
+        for tid, hours in sorted(hours_by_tid.items(), key=lambda kv: -kv[1]):
+            if hours <= n_shift_slots:
+                continue
+            name = name_by_tid.get(tid) or f"#{tid}"
+            overload_diag.append(
+                {
+                    "reason": (
+                        f"У учителя {name} в этой смене {hours} ч, "
+                        f"а слотов в сетке смены только {n_shift_slots} "
+                        f"({shift_obj.working_days} дн. × {shift_obj.lessons_count} ур.). "
+                        "Составление остановлено: нагрузка не помещается в смену."
+                    )
+                }
+            )
+        if overload_diag:
+            return CpSatSolveResult(
+                status="INFEASIBLE",
+                diagnostics=overload_diag[:max_diag_items],
+            )
+
+        n_hours = sum(int(a.hours_per_week or 0) for a in assignments)
+        self._notify(
+            on_progress,
+            10,
+            100,
+            (
+                f"Смена «{shift_obj.name}»: {len(shift_classes)} кл., "
+                f"{n_hours} ч, {len(hours_by_tid)} учителей"
+            ),
+        )
+
         metrics_before = self._compute_schedule_metrics(class_ids)
 
         stopped = self._cancelled_result(should_stop, metrics_before)
@@ -560,6 +756,13 @@ class CpSatScheduleSolver:
         units = build_unit_facts(assignments, hours_mode="full")
         if not units:
             return CpSatSolveResult(status="MODEL_INVALID", diagnostics=[{"reason": "Нет часов для размещения"}])
+
+        self._notify(
+            on_progress,
+            18,
+            100,
+            f"Сборка модели: {len(units)} уроков-часов…",
+        )
 
         slots_by_class: dict[int, list[SlotFact]] = build_slots_by_class(
             shift_classes, session=self.session, with_intervals=True
@@ -634,12 +837,15 @@ class CpSatScheduleSolver:
         candidates_by_assignment: dict[int, list[tuple[int, int]]] = {
             a.id: candidate_classrooms(a, settings, rooms) for a in assignments
         }
-        # y[ui, slot_id, room_id] — which room when unit placed in slot
+        # Only model rooms when the pool is small (labs). Wide pools (~30 rooms)
+        # exploded y to ~800k bools; 60s then returned UNKNOWN with an empty grid.
+        _ROOM_MODEL_MAX_CANDIDATES = 4
         y: dict[tuple[int, str, int], Any] = {}
+        modeled_room_ids: set[int] = set()
         for ui, unit in unit_list:
             a = assignment_map[unit.assignment_id]
             cands = candidates_by_assignment.get(a.id, [])
-            if not cands:
+            if not cands or len(cands) > _ROOM_MODEL_MAX_CANDIDATES:
                 continue
             for slot in feasible_slots_by_unit[ui]:
                 key = (ui, slot.slot_id)
@@ -650,6 +856,7 @@ class CpSatScheduleSolver:
                     yv = model.NewBoolVar(f"y_u{ui}_{slot.slot_id}_r{rid}")
                     y[(ui, slot.slot_id, rid)] = yv
                     y_vars.append(yv)
+                    modeled_room_ids.add(rid)
                 model.Add(sum(y_vars) == x[key])
 
         # Same class slot: conflicting pairs cannot share slot
@@ -673,16 +880,17 @@ class CpSatScheduleSolver:
                             continue
                         model.Add(x[key_a] + x[key_b] <= 1)
 
-        # No class windows (hard):
-        # within a day, lessons must form a contiguous prefix by lesson number.
+        # Hard: class day is a prefix of the shift grid (start_lesson … last
+        # used). Empty first period with lessons after it is a window for kids.
+        # Trailing free periods at the end of the day are allowed. Teacher gaps stay soft.
         for cid in class_ids:
             uidxs = [ui for ui, u in unit_list if u.class_id == cid]
             if not uidxs:
                 continue
+            lesson_start = shift_obj.start_lesson
+            lesson_end = shift_obj.start_lesson + shift_obj.lessons_count
             for day in range(1, shift_obj.working_days + 1):
                 occ_by_lesson = {}
-                lesson_start = shift_obj.start_lesson
-                lesson_end = shift_obj.start_lesson + shift_obj.lessons_count
                 for lesson in range(lesson_start, lesson_end):
                     terms = []
                     for ui in uidxs:
@@ -700,7 +908,6 @@ class CpSatScheduleSolver:
                         model.Add(occ == 0)
                     occ_by_lesson[lesson] = occ
 
-                # Prefix rule: if lesson N is occupied, N-1 must also be occupied.
                 for lesson in range(lesson_start + 1, lesson_end):
                     model.Add(occ_by_lesson[lesson] <= occ_by_lesson[lesson - 1])
 
@@ -719,14 +926,9 @@ class CpSatScheduleSolver:
                         items.append((x[key], slot))
             _add_capacity_overlap_constraints(model, items, capacity=1)
 
-        # Classroom: respect capacity for overlapping time (interval sweep)
-        all_room_ids = {
-            rid
-            for cands in candidates_by_assignment.values()
-            for rid, _ in cands
-        }
+        # Classroom: respect capacity only for small modeled pools
         room_caps = {r.id: r.classes_capacity for r in rooms}
-        for room_id in all_room_ids:
+        for room_id in modeled_room_ids:
             cap_n = room_caps.get(room_id, 1)
             if cap_n >= 10**5:
                 continue
@@ -967,49 +1169,29 @@ class CpSatScheduleSolver:
                         model.Add(day_active == 0)
                     obj_terms.append(day_active * scales.teacher_days)
 
-        model.Minimize(sum(obj_terms))
-
         stopped = self._cancelled_result(should_stop, metrics_before)
         if stopped:
             return stopped
 
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = float(time_limit_sec)
-        solver.parameters.num_search_workers = Config.SOLVER_NUM_WORKERS
-        solver.parameters.random_seed = random_seed
-
-        watcher_stop = threading.Event()
-        watcher: threading.Thread | None = None
-
-        def _watch_cancel() -> None:
-            while not watcher_stop.is_set():
-                try:
-                    if should_stop and should_stop():
-                        stop = getattr(solver, "StopSearch", None)
-                        if callable(stop):
-                            stop()
-                        return
-                except Exception:
-                    pass
-                if watcher_stop.wait(0.4):
-                    return
-
-        if should_stop:
-            watcher = threading.Thread(
-                target=_watch_cancel, daemon=True, name="cp-sat-cancel"
+        if obj_terms:
+            model.Minimize(sum(obj_terms))
+        cancelled, status, solver, search_wall = self._run_two_phase_search(
+            model,
+            x,
+            y,
+            time_limit_sec=time_limit_sec,
+            random_seed=random_seed,
+            should_stop=should_stop,
+            on_progress=on_progress,
+        )
+        if cancelled == "CANCELLED" or (should_stop and should_stop()):
+            stopped = CpSatSolveResult(
+                status="CANCELLED",
+                metrics_before=metrics_before,
             )
-            watcher.start()
-        try:
-            status = solver.Solve(model)
-        finally:
-            watcher_stop.set()
-            if watcher is not None:
-                watcher.join(timeout=1.5)
-
-        stopped = self._cancelled_result(should_stop, metrics_before)
-        if stopped:
-            stopped.solver_status = solver.StatusName(status)
-            stopped.wall_time_sec = solver.WallTime()
+            if solver is not None and status is not None:
+                stopped.solver_status = solver.StatusName(status)
+            stopped.wall_time_sec = search_wall
             return stopped
 
         status_name = solver.StatusName(status)
@@ -1018,14 +1200,15 @@ class CpSatScheduleSolver:
                 {
                     "reason": (
                         "CP-SAT: модель неразрешима при заданных ограничениях "
-                        f"(статус {status_name}). Проверьте часы, смену и кабинеты."
+                        f"(статус {status_name}). Проверьте часы учителей, "
+                        "окна в сетке класса и кабинеты."
                     )
                 }
             ]
             return CpSatSolveResult(
                 status="INFEASIBLE",
                 solver_status=status_name,
-                wall_time_sec=solver.WallTime(),
+                wall_time_sec=search_wall,
                 diagnostics=diag[:max_diag_items],
                 metrics_before=metrics_before,
             )
@@ -1042,7 +1225,7 @@ class CpSatScheduleSolver:
             return CpSatSolveResult(
                 status="UNKNOWN",
                 solver_status=status_name,
-                wall_time_sec=solver.WallTime(),
+                wall_time_sec=search_wall,
                 diagnostics=diag[:max_diag_items],
                 metrics_before=metrics_before,
             )
@@ -1060,6 +1243,7 @@ class CpSatScheduleSolver:
             stopped = self._cancelled_result(should_stop, metrics_before)
             if stopped:
                 return stopped
+            self._notify(on_progress, 90, 100, "Запись расписания в сетку…")
             self._schedule.delete_cells(class_ids=class_ids, commit=False)
 
             placements = []
@@ -1077,7 +1261,7 @@ class CpSatScheduleSolver:
                     self.session.rollback()
                     return CpSatSolveResult(
                         status="ERROR",
-                        error_message="Решение не удалось извлечь (нет выбранного слота)",
+                        error_message=f"CP-SAT не выбрал слот для часа {unit.unit_id}",
                         metrics_before=metrics_before,
                     )
 
@@ -1126,7 +1310,7 @@ class CpSatScheduleSolver:
             status="OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE",
             solver_status=status_name,
             objective=objective_val,
-            wall_time_sec=solver.WallTime(),
+            wall_time_sec=search_wall,
             placed_count=len(placements),
             placements=placements,
             diagnostics=[],

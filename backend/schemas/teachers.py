@@ -27,3 +27,27 @@ class TeacherUpdate(BaseModel):
     email: str | None = None
     phone: str | None = None
     home_classroom_id: int | None = None
+
+
+class TeacherSubjectHoursOut(BaseModel):
+    subject_id: int
+    subject_name: str
+    color: str
+    hours: int
+
+
+class TeacherShiftBriefOut(BaseModel):
+    id: int
+    name: str
+    school_level: str
+    hours: int
+
+
+class TeacherLoadOut(BaseModel):
+    id: int
+    full_name: str
+    subjects: list[TeacherSubjectHoursOut]
+    shifts: list[TeacherShiftBriefOut]
+    total_hours: int
+    unassigned_shift_hours: int = 0
+    has_classes_without_shift: bool = False

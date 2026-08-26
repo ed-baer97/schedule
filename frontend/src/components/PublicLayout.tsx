@@ -7,13 +7,12 @@ import { ThemeToggle } from './ThemeToggle'
 
 type PublicLayoutProps = {
   children: ReactNode
-  compact?: boolean
   active?: 'login'
 }
 
-export function PublicLayout({ children, compact, active }: PublicLayoutProps) {
+export function PublicLayout({ children, active }: PublicLayoutProps) {
   return (
-    <div className={`landing-page${compact ? ' landing-page--compact' : ''}`}>
+    <div className="landing-page">
       <AtmosphereBg className="landing-bg" />
       <OverlayScrollArea className="landing-scroll">
         <div className="landing-inner">

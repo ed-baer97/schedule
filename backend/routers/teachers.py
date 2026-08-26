@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 from app.models import School
 from app.services.teacher_service import TeacherService
 from backend.deps import get_current_school, get_db
-from backend.schemas.teachers import TeacherCreate, TeacherOut, TeacherUpdate
+from backend.schemas.teachers import (
+    TeacherCreate,
+    TeacherLoadOut,
+    TeacherOut,
+    TeacherUpdate,
+)
 
 router = APIRouter()
 
@@ -20,6 +25,17 @@ def list_teachers(
     return [
         TeacherOut.model_validate(asdict(t))
         for t in TeacherService(db, school.id).list()
+    ]
+
+
+@router.get("/load", response_model=list[TeacherLoadOut])
+def list_teacher_load(
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> list[TeacherLoadOut]:
+    return [
+        TeacherLoadOut.model_validate(asdict(row))
+        for row in TeacherService(db, school.id).list_load()
     ]
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
+from app.domain.classroom_rules import normalize_classroom_school_level
 from app.models import Classroom, Subject, Teacher
 from app.services.dto import ClassroomData, classroom_data
 from app.services.errors import BadRequestError
@@ -121,6 +122,7 @@ class ClassroomService:
         building: str | None = None,
         subject_ids: list[int] | None = None,
         is_exclusive: bool = False,
+        school_level: str | None = None,
         teacher_ids: list[int] | None = None,
         commit: bool = True,
     ) -> ClassroomData | Classroom:
@@ -135,6 +137,7 @@ class ClassroomService:
             floor=floor,
             building=(building or "").strip() or None,
             is_exclusive=bool(is_exclusive) if ids else False,
+            school_level=normalize_classroom_school_level(school_level),
         )
         self.db.add(c)
         self.db.flush()
@@ -192,6 +195,7 @@ class ClassroomService:
         building: str | None = None,
         subject_ids: list[int] | None = None,
         is_exclusive: bool | None = None,
+        school_level: str | None = None,
         teacher_ids: list[int] | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> ClassroomData:
@@ -210,6 +214,8 @@ class ClassroomService:
             c.floor = floor
         if "building" in fields_set:
             c.building = (building or "").strip() or None
+        if "school_level" in fields_set:
+            c.school_level = normalize_classroom_school_level(school_level)
 
         new_ids = [s.id for s in (c.subjects or [])]
         new_exclusive = bool(c.is_exclusive)

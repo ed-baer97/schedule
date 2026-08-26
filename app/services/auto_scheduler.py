@@ -24,10 +24,11 @@ class AutoScheduler:
     Supports: teacher_room (дети приходят к учителю), class_room (учитель приходит к классу).
     """
 
-    def __init__(self, session, school_id: int, should_stop=None):
+    def __init__(self, session, school_id: int, should_stop=None, on_progress=None):
         self.session = session
         self.school_id = school_id
         self._should_stop = should_stop
+        self._on_progress = on_progress
         self.validator = ScheduleValidator(self.session, school_id=school_id)
         self._schedule = ScheduleService(session, school_id)
         self.graph_solver = ResidualGraphSolver(
@@ -37,6 +38,14 @@ class AutoScheduler:
             self._get_classroom_for_cell, session=self.session, school_id=school_id
         )
         self._ladder_day_cache: dict[tuple[int, int], dict] = {}
+
+    def _report(self, current: int, total: int, message: str) -> None:
+        if self._on_progress is None:
+            return
+        try:
+            self._on_progress(current, total, message)
+        except Exception:
+            pass
 
     def _stopped(self) -> bool:
         if self._should_stop is None:
@@ -68,42 +77,46 @@ class AutoScheduler:
         """
         yield {
             "type": "progress",
-            "current": 1,
+            "current": 2,
             "total": 100,
-            "message": "CP-SAT: подготовка данных и метрики «до»",
+            "message": "Загрузка классов и нагрузки…",
         }
+        self._report(2, 100, "Загрузка классов и нагрузки…")
         if self._stopped():
             yield self._cancelled_event()
             return
-        yield {
-            "type": "progress",
-            "current": 5,
-            "total": 100,
-            "message": "CP-SAT: решение (OR-Tools)",
-        }
         result = self.cp_sat_solver.solve_shift(
             shift_id=shift_id,
             school_level=school_level,
             time_limit_sec=time_limit_sec,
             random_seed=random_seed,
             should_stop=self._should_stop,
+            on_progress=self._on_progress,
         )
         if result.status == "CANCELLED" or self._stopped():
             yield self._cancelled_event()
+            return
+        if result.status in ("ERROR", "MODEL_INVALID", "INFEASIBLE"):
+            reasons = [
+                d.get("reason") for d in (result.diagnostics or []) if d.get("reason")
+            ]
+            yield {
+                "type": "error",
+                "message": result.error_message
+                or (reasons[0] if reasons else "Ошибка CP-SAT"),
+                "diagnostics": result.diagnostics,
+                "cp_sat_status": result.status,
+                "solver_status": result.solver_status,
+                "wall_time_sec": result.wall_time_sec,
+                "count": 0,
+            }
             return
         yield {
             "type": "progress",
             "current": 99,
             "total": 100,
-            "message": "CP-SAT: запись результатов",
+            "message": "Запись расписания в сетку…",
         }
-        if result.status in ("ERROR", "MODEL_INVALID"):
-            yield {
-                "type": "error",
-                "message": result.error_message
-                or (result.diagnostics[0].get("reason") if result.diagnostics else "Ошибка CP-SAT"),
-            }
-            return
         done = {
             "type": "done",
             "count": result.placed_count,
@@ -584,188 +597,12 @@ class AutoScheduler:
         )
         self._ladder_day_cache.clear()
 
-    def _place_hours_backtrack(
-        self, hours, school_level, working_days, max_lessons,
-        pair_mode=False, node_limit=40000,
-    ):
-        """DFS over slot variants. In pair_mode tries consecutive doubles first."""
-        stats = {"nodes": 0, "placed": 0}
-
-        def rec(idx):
-            if idx >= len(hours):
-                return True
-            if stats["nodes"] >= node_limit:
-                return False
-            stats["nodes"] += 1
-            assignment = hours[idx]
-            can_pair = (
-                pair_mode
-                and idx + 1 < len(hours)
-                and hours[idx + 1].id == assignment.id
-                and remaining_for(assignment) >= 2
-            )
-            if can_pair:
-                for day, lesson in self._iter_pair_starts(
-                    assignment, working_days, max_lessons
-                ):
-                    n = self._place_consecutive_pair(
-                        assignment, day, lesson, school_level
-                    )
-                    if not n:
-                        continue
-                    stats["placed"] += n
-                    if rec(idx + 2):
-                        return True
-                    stats["placed"] -= n
-                    pair_cells = (
-                        self.session.query(ScheduleCell)
-                        .filter(
-                            ScheduleCell.assignment_id == assignment.id,
-                            ScheduleCell.day_of_week == day,
-                            ScheduleCell.lesson_number.in_((lesson, lesson + 1)),
-                        )
-                        .all()
-                    )
-                    self._delete_cells(pair_cells)
-            for day, lesson in self._iter_assignment_slots(
-                assignment, working_days, max_lessons
-            ):
-                classroom_id = self._get_classroom_for_cell(
-                    assignment, school_level, day=day, lesson=lesson
-                )
-                errors = self.validator.validate_cell(
-                    assignment=assignment,
-                    day=day,
-                    lesson=lesson,
-                    classroom_id=classroom_id,
-                )
-                if errors:
-                    continue
-                before = (
-                    self.session.query(ScheduleCell)
-                    .filter_by(class_id=assignment.class_id, day_of_week=day, lesson_number=lesson)
-                    .all()
-                )
-                before_ids = {c.id for c in before}
-                n = self._create_hour_cell(assignment, day, lesson, school_level)
-                if not n:
-                    continue
-                created = [
-                    c
-                    for c in self.session.query(ScheduleCell)
-                    .filter_by(class_id=assignment.class_id, day_of_week=day, lesson_number=lesson)
-                    .all()
-                    if c.id not in before_ids
-                ]
-                stats["placed"] += n
-                if rec(idx + 1):
-                    return True
-                stats["placed"] -= n
-                self._delete_cells(created)
-            return False
-
-        rec(0)
-        return stats["placed"]
-
-    def _repack_teacher_shifts(
-        self, teacher_id, assignments, school_level, working_days, max_lessons,
-        pair_mode=False,
-    ):
-        """
-        Rebuild this teacher's cells in shifts that still have leftover hours,
-        trying consecutive pairs first (when allowed), then DFS variants.
-        Returns net newly placed hours (can be 0).
-        """
-        leftover = [a for a in assignments if remaining_for(a) > 0]
-        if not leftover:
-            return 0
-        shift_ids = {
-            a.school_class.shift_id
-            for a in leftover
-            if a.school_class and a.school_class.shift_id
-        }
-        if not shift_ids:
-            return 0
-
-        pack_assignments = [
-            a
-            for a in assignments
-            if a.school_class and a.school_class.shift_id in shift_ids
-        ]
-        unplaced_before = sum(remaining_for(a) for a in pack_assignments)
-        cells = (
-            self.session.query(ScheduleCell)
-            .join(TeachingAssignment)
-            .join(SchoolClass)
-            .filter(
-                TeachingAssignment.teacher_id == teacher_id,
-                SchoolClass.shift_id.in_(shift_ids),
-            )
-            .all()
-        )
-        snapshot = [
-            {
-                "class_id": c.class_id,
-                "day_of_week": c.day_of_week,
-                "lesson_number": c.lesson_number,
-                "assignment_id": c.assignment_id,
-                "classroom_id": c.classroom_id,
-            }
-            for c in cells
-        ]
-        self._delete_cells(cells)
-
-        hours = []
-        for kind, assignment in self._schedule_units(pack_assignments, pair_mode):
-            if kind == 'pair' and remaining_for(assignment) >= 2:
-                n = self._place_pair_first_fit(
-                    assignment, school_level, working_days, max_lessons
-                )
-            else:
-                n = self._place_one_teacher_hour_first_fit(
-                    assignment, school_level, working_days, max_lessons
-                )
-            if not n:
-                hours.append(assignment)
-                if kind == 'pair':
-                    hours.append(assignment)
-
-        if hours:
-            self._place_hours_backtrack(
-                hours, school_level, working_days, max_lessons, pair_mode=pair_mode
-            )
-
-        unplaced_after = sum(remaining_for(a) for a in pack_assignments)
-        if unplaced_after >= unplaced_before:
-            rebuilt = (
-                self.session.query(ScheduleCell)
-                .join(TeachingAssignment)
-                .join(SchoolClass)
-                .filter(
-                    TeachingAssignment.teacher_id == teacher_id,
-                    SchoolClass.shift_id.in_(shift_ids),
-                )
-                .all()
-            )
-            self._delete_cells(rebuilt)
-            for row in snapshot:
-                self._schedule.insert_cell(
-                    class_id=row["class_id"],
-                    day_of_week=row["day_of_week"],
-                    lesson_number=row["lesson_number"],
-                    assignment_id=row["assignment_id"],
-                    classroom_id=row["classroom_id"],
-                )
-            self._ladder_day_cache.clear()
-            return 0
-        return unplaced_before - unplaced_after
-
     def schedule_by_teacher_ladder_iter(self, teacher_id, school_level='elementary'):
         """
         То же, что schedule_by_teacher_ladder, но отдаёт события прогресса для потоковой отдачи.
         Если в настройках «2 урока» — сначала ставит сдвоенные уроки подряд, часы
-        разных классов чередуются. Если не умещается — перебирает дни и слоты,
-        сохраняя приоритет пар.
+        разных классов чередуются. Если не умещается — сдвигает уже поставленный
+        урок этого учителя (без полного DFS по смене).
         """
         self._ladder_day_cache.clear()
         aq = self.session.query(TeachingAssignment)\
@@ -846,7 +683,7 @@ class AutoScheduler:
                     'current': step,
                     'total': n_left,
                     'message': (
-                        f'Перебор вариантов: {assignment.subject.name} '
+                        f'Перестановка: {assignment.subject.name} '
                         f'— {assignment.school_class.name}'
                     ),
                 }
@@ -866,23 +703,6 @@ class AutoScheduler:
                         n += extra
                 if n:
                     scheduled_count += n
-
-        leftover = [a for a in assignments if remaining_for(a) > 0]
-        if leftover:
-            if self._stopped():
-                yield self._cancelled_event(scheduled_count)
-                return
-            yield {
-                'type': 'progress',
-                'current': 1,
-                'total': 1,
-                'message': 'Перебор вариантов: перекладка смены учителя',
-            }
-            n = self._repack_teacher_shifts(
-                teacher_id, assignments, school_level, working_days, max_lessons,
-                pair_mode=pair_mode,
-            )
-            scheduled_count += n
 
         if self._stopped():
             yield self._cancelled_event(scheduled_count)

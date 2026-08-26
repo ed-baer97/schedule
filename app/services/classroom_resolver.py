@@ -41,6 +41,7 @@ def classroom_fact(room: Classroom) -> ClassroomFact:
         subject_ids=frozenset(s.id for s in (room.subjects or [])),
         is_exclusive=bool(room.is_exclusive),
         classes_capacity=room.classes_capacity or 1,
+        school_level=getattr(room, "school_level", None),
     )
 
 
@@ -65,12 +66,20 @@ def placement_context_for(
     teacher = assignment.teacher
     school_class = assignment.school_class
     mode = settings.classroom_mode if settings else "class_room"
+    class_level = getattr(school_class, "school_level", None) if school_class else None
     leave = bool(
         settings
         and settings.elementary_group_subjects_leave
-        and getattr(school_class, "school_level", None) == "elementary"
+        and class_level == "elementary"
         and assignment.group_number is not None
         and not subject.requires_fixed_classroom
+    )
+    force_class_home = bool(
+        class_level == "elementary"
+        and not subject.requires_fixed_classroom
+        and not leave
+        and school_class is not None
+        and school_class.home_classroom_id is not None
     )
     return PlacementContext(
         subject_id=subject.id,
@@ -81,7 +90,9 @@ def placement_context_for(
             school_class.home_classroom_id if school_class else None
         ),
         classroom_mode=mode,
+        class_school_level=class_level,
         force_teacher_home=leave,
+        force_class_home=force_class_home,
     )
 
 

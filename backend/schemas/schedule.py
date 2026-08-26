@@ -102,6 +102,7 @@ class ClassroomChoiceOut(BaseModel):
     display_name: str
     subject_ids: list[int] = []
     is_exclusive: bool = False
+    school_level: str | None = None
 
 
 class AssignmentsForClassOut(BaseModel):

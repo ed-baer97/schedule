@@ -48,6 +48,7 @@ export function AutoSchedulerPage() {
     { current: 0, total: 0, message: '' },
   )
   const [log, setLog] = useState<string[]>([])
+  const [elapsedSec, setElapsedSec] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [stuckJobId, setStuckJobId] = useState<number | null>(null)
   const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
@@ -99,6 +100,15 @@ export function AutoSchedulerPage() {
     onError: (e: Error) => setRulesMsg({ kind: 'danger', text: e.message }),
   })
 
+  useEffect(() => {
+    if (!running) {
+      return
+    }
+    setElapsedSec(0)
+    const id = window.setInterval(() => setElapsedSec((s) => s + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [running])
+
   function appendLog(line: string) {
     setLog((prev) => {
       const next = [...prev, line]
@@ -127,10 +137,17 @@ export function AutoSchedulerPage() {
   }
 
   function handleJobResult(job: JobOut) {
+    const logDiagnostics = (src: Record<string, unknown> | null | undefined) => {
+      const diags = (src?.diagnostics as { reason?: string }[] | undefined) || []
+      for (const d of diags) {
+        if (d?.reason) appendLog(`• ${d.reason}`)
+      }
+    }
     if (job.status === 'failed') {
       const msg = job.error || 'Задача завершилась с ошибкой'
       setError(msg)
-      appendLog(`Ошибка: ${msg}`)
+      appendLog(`Не удалось составить расписание. ${msg}`)
+      logDiagnostics(job.result)
       return
     }
     if (job.status === 'cancelled') {
@@ -143,14 +160,22 @@ export function AutoSchedulerPage() {
       return
     }
     const e = job.result || {}
-    appendLog(`Готово. Размещено уроков: ${e.count ?? '—'}.`)
+    const count = e.count ?? '—'
+    const wall = e.wall_time_sec as number | undefined
+    appendLog(`Готово. В сетку записано уроков: ${count}.`)
+    if (typeof wall === 'number') {
+      appendLog(`Поиск занял ${Math.round(wall)} с.`)
+    }
     const placed = e.solver_placed_count as number | undefined
     if (placed != null) {
       const unplaced = (e.unplaced as unknown[] | undefined)?.length ?? 0
-      appendLog(`Solver-pass: добавлено ${placed}, остаток назначений ${unplaced}.`)
+      appendLog(`Repair: добавлено ${placed}, осталось назначений ${unplaced}.`)
     }
     const status = e.cp_sat_status as string | undefined
-    if (status) appendLog(`CP-SAT status: ${status}`)
+    if (status === 'OPTIMAL') appendLog('Найдено оптимальное расписание.')
+    else if (status === 'FEASIBLE') appendLog('Найдено допустимое расписание.')
+    else if (status === 'UNKNOWN') appendLog('За отведённое время решение не найдено.')
+    logDiagnostics(e)
   }
 
   async function attachToJob(jobId: number, opts?: { resume?: boolean }) {
@@ -389,7 +414,9 @@ export function AutoSchedulerPage() {
                     value={timeLimit}
                     onChange={(e) => setTimeLimit(Number(e.target.value) || 60)}
                   />
-                  <div className="form-text">Один прогон CP-SAT на смену, не дольше этого времени.</div>
+                  <div className="form-text">
+                    Сначала ищет любое допустимое расписание, затем улучшает его до этого лимита.
+                  </div>
                 </div>
                 <div className="col-md-6">
                   <label className="form-label small">Random seed</label>
@@ -514,7 +541,10 @@ export function AutoSchedulerPage() {
             </div>
           </div>
           {progress.message && (
-            <div className="small text-muted mb-2">{progress.message}</div>
+            <div className="small text-muted mb-2">
+              {progress.message}
+              {running && elapsedSec > 0 ? ` · ${elapsedSec} с` : ''}
+            </div>
           )}
           {running && (
             <div className="small text-muted mb-2">
@@ -607,7 +637,7 @@ function RulesCard(props: {
               <option value="2">2 урока подряд</option>
             </select>
             <div className="form-text">
-              При «2 урока подряд» автосоставление сначала ставит сдвоенные уроки; если не умещается — перебирает слоты, сохраняя этот приоритет.
+              При «2 урока подряд» лесенка сначала ставит сдвоенные уроки; если не умещается — сдвигает уже поставленный урок этого учителя.
             </div>
           </div>
           <div className="col-md-6">

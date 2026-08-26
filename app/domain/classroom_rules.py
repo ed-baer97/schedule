@@ -11,12 +11,23 @@ COST_GENERAL = 40
 COST_PREFERRED_BONUS = -5
 
 
+CLASSROOM_SCHOOL_LEVELS = frozenset({"elementary", "secondary"})
+
+
+def normalize_classroom_school_level(value: str | None) -> str | None:
+    if not value:
+        return None
+    v = str(value).strip()
+    return v if v in CLASSROOM_SCHOOL_LEVELS else None
+
+
 @dataclass(frozen=True)
 class ClassroomFact:
     id: int
     subject_ids: frozenset[int] = frozenset()
     is_exclusive: bool = False
     classes_capacity: int = 1
+    school_level: str | None = None
 
 
 @dataclass(frozen=True)
@@ -29,8 +40,11 @@ class PlacementContext:
     preferred_classroom_id: int | None = None
     class_home_classroom_id: int | None = None
     classroom_mode: str = "class_room"  # class_room | teacher_room
+    class_school_level: str | None = None
     # Elementary subgroups leave the class room for the teacher's home.
     force_teacher_home: bool = False
+    # Elementary non-fixed subjects stay in the class home room.
+    force_class_home: bool = False
 
 
 def room_has_subject(room: ClassroomFact, subject_id: int) -> bool:
@@ -61,6 +75,32 @@ def room_allows_subject(
     return True
 
 
+def room_allows_level(room: ClassroomFact, class_school_level: str | None) -> bool:
+    """Hard: tagged rooms only for that school level. Untagged = shared (gym, lab)."""
+    tagged = room.school_level
+    if not tagged:
+        return True
+    if not class_school_level:
+        return True
+    return tagged == class_school_level
+
+
+def room_allows(
+    room: ClassroomFact,
+    *,
+    subject_id: int,
+    requires_fixed_classroom: bool,
+    class_school_level: str | None = None,
+) -> bool:
+    if not room_allows_level(room, class_school_level):
+        return False
+    return room_allows_subject(
+        room,
+        subject_id=subject_id,
+        requires_fixed_classroom=requires_fixed_classroom,
+    )
+
+
 def room_denial_message(
     room: ClassroomFact,
     *,
@@ -69,14 +109,28 @@ def room_denial_message(
     requires_fixed_classroom: bool,
     room_display_name: str,
     room_subject_name: str | None = None,
+    class_school_level: str | None = None,
 ) -> str | None:
-    """Human-readable reason if room_allows_subject is False."""
-    if room_allows_subject(
+    """Human-readable reason if the room cannot host this lesson."""
+    if room_allows(
         room,
         subject_id=subject_id,
         requires_fixed_classroom=requires_fixed_classroom,
+        class_school_level=class_school_level,
     ):
         return None
+    if not room_allows_level(room, class_school_level):
+        if room.school_level == "elementary":
+            return (
+                f"Кабинет {room_display_name} — кабинет начальной школы, "
+                "уроки основной школы сюда нельзя"
+            )
+        if room.school_level == "secondary":
+            return (
+                f"Кабинет {room_display_name} — кабинет основной школы, "
+                "уроки начальной сюда нельзя"
+            )
+        return f"Кабинет {room_display_name} недоступен для этого уровня школы"
     if requires_fixed_classroom:
         return (
             f"Предмет «{subject_name}» требует фиксированный кабинет — "
@@ -100,10 +154,11 @@ def placement_cost(
     2. Same subject as room (other teacher) → low
     3. General (empty tags) / other non-exclusive subject room → medium
     """
-    if not room_allows_subject(
+    if not room_allows(
         room,
         subject_id=ctx.subject_id,
         requires_fixed_classroom=ctx.requires_fixed_classroom,
+        class_school_level=ctx.class_school_level,
     ):
         return None
 
@@ -166,7 +221,8 @@ def candidate_rooms_for(
     Ranked (classroom_id, cost) for ctx.
 
     force_teacher_home (non-fixed subjects): only the teacher's home room
-    if it exists and allows the subject; otherwise fall through to ranking.
+    if it exists and allows the placement; otherwise fall through.
+    force_class_home: only the class home room (elementary stay-in-class).
     """
     if (
         ctx.force_teacher_home
@@ -176,10 +232,26 @@ def candidate_rooms_for(
         home = next(
             (r for r in rooms if r.id == ctx.teacher_home_classroom_id), None
         )
-        if home is not None and room_allows_subject(
+        if home is not None and room_allows(
             home,
             subject_id=ctx.subject_id,
             requires_fixed_classroom=False,
+            class_school_level=ctx.class_school_level,
+        ):
+            return [(home.id, COST_OWNER_SUBJECT)]
+    if (
+        ctx.force_class_home
+        and not ctx.requires_fixed_classroom
+        and ctx.class_home_classroom_id is not None
+    ):
+        home = next(
+            (r for r in rooms if r.id == ctx.class_home_classroom_id), None
+        )
+        if home is not None and room_allows(
+            home,
+            subject_id=ctx.subject_id,
+            requires_fixed_classroom=False,
+            class_school_level=ctx.class_school_level,
         ):
             return [(home.id, COST_OWNER_SUBJECT)]
     return rank_candidate_rooms(rooms, ctx)

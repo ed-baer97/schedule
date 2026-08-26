@@ -289,3 +289,16 @@ def test_enqueue_abandons_stale_celery_job() -> None:
     assert queued.status_code == 202, queued.text
     got = client.get(f"/api/jobs/{stuck_id}")
     assert got.json()["status"] == "failed"
+
+
+def test_broker_is_reachable_rejects_non_redis() -> None:
+    from backend.celery_app import broker_is_reachable
+
+    assert broker_is_reachable("amqp://localhost") is False
+    assert broker_is_reachable("") is False
+
+
+def test_broker_is_reachable_closed_port() -> None:
+    from backend.celery_app import broker_is_reachable
+
+    assert broker_is_reachable("redis://127.0.0.1:1", timeout=0.2) is False

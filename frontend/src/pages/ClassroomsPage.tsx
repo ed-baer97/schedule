@@ -18,6 +18,26 @@ type FloorGroup = {
   items: Classroom[]
 }
 
+type ClassroomLevel = '' | 'elementary' | 'secondary'
+
+function classroomLevelLabel(level: string | null | undefined): string {
+  if (level === 'elementary') return 'НШ'
+  if (level === 'secondary') return 'ОШ'
+  return 'Общий'
+}
+
+const emptyForm = {
+  number: '',
+  name: '',
+  floor: '',
+  building: '',
+  classes_capacity: '1',
+  subject_ids: [] as number[],
+  is_exclusive: false,
+  school_level: '' as ClassroomLevel,
+  teacher_ids: [] as number[],
+}
+
 function compareRoomNumber(a: Classroom, b: Classroom) {
   return a.number.localeCompare(b.number, 'ru', { numeric: true })
 }
@@ -66,16 +86,7 @@ export function ClassroomsPage() {
   const [editingId, setEditingId] = useState<number | 'new' | null>(null)
   const [openKey, setOpenKey] = useState<string | null>(null)
   const openedOnce = useRef(false)
-  const [form, setForm] = useState({
-    number: '',
-    name: '',
-    floor: '',
-    building: '',
-    classes_capacity: '1',
-    subject_ids: [] as number[],
-    is_exclusive: false,
-    teacher_ids: [] as number[],
-  })
+  const [form, setForm] = useState(emptyForm)
 
   const q = useQuery({
     queryKey: ['classrooms'],
@@ -100,6 +111,7 @@ export function ClassroomsPage() {
         classes_capacity: Number(form.classes_capacity || 1) || 1,
         subject_ids: form.subject_ids,
         is_exclusive: form.subject_ids.length === 0 ? false : form.is_exclusive,
+        school_level: form.school_level || null,
         teacher_ids: form.teacher_ids,
       }
       if (!payload.number) throw new Error('Укажите номер кабинета')
@@ -151,16 +163,7 @@ export function ClassroomsPage() {
   }, [groups])
 
   function openNew() {
-    setForm({
-      number: '',
-      name: '',
-      floor: '',
-      building: '',
-      classes_capacity: '1',
-      subject_ids: [],
-      is_exclusive: false,
-      teacher_ids: [],
-    })
+    setForm({ ...emptyForm })
     setEditingId('new')
   }
 
@@ -173,6 +176,10 @@ export function ClassroomsPage() {
       classes_capacity: String(c.classes_capacity ?? 1),
       subject_ids: (c.subjects ?? []).map((s) => s.id),
       is_exclusive: Boolean(c.is_exclusive),
+      school_level:
+        c.school_level === 'elementary' || c.school_level === 'secondary'
+          ? c.school_level
+          : '',
       teacher_ids: (c.teachers ?? []).map((t) => t.id),
     })
     setEditingId(c.id)
@@ -256,6 +263,7 @@ export function ClassroomsPage() {
                           <tr>
                             <th>Номер</th>
                             <th>Название</th>
+                            <th>Уровень</th>
                             <th>Предметы</th>
                             <th>Учителя</th>
                             <th>Корпус</th>
@@ -268,6 +276,15 @@ export function ClassroomsPage() {
                             <tr key={c.id}>
                               <td>{c.number}</td>
                               <td>{c.name ?? '—'}</td>
+                              <td>
+                                {c.school_level ? (
+                                  <span className="badge text-bg-secondary">
+                                    {classroomLevelLabel(c.school_level)}
+                                  </span>
+                                ) : (
+                                  'Общий'
+                                )}
+                              </td>
                               <td>
                                 {(c.subjects ?? []).length === 0
                                   ? '—'
@@ -373,6 +390,30 @@ export function ClassroomsPage() {
                   <label className="form-check-label" htmlFor="roomExclusive">
                     Фиксированный — только выбранные предметы
                   </label>
+                </div>
+                <div className="mb-2">
+                  <label className="form-label" htmlFor="roomSchoolLevel">
+                    Уровень школы
+                  </label>
+                  <select
+                    id="roomSchoolLevel"
+                    className="form-select"
+                    value={form.school_level}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        school_level: e.target.value as ClassroomLevel,
+                      }))
+                    }
+                  >
+                    <option value="">Общий (спортзал, лаборатория)</option>
+                    <option value="elementary">Начальная школа</option>
+                    <option value="secondary">Основная школа</option>
+                  </select>
+                  <div className="form-text">
+                    Кабинеты начальной недоступны для уроков основной школы, даже если
+                    класс НШ ушёл на физкультуру. Общие кабинеты доступны всем.
+                  </div>
                 </div>
                 <div className="mb-2">
                   <label className="form-label">Учителя</label>

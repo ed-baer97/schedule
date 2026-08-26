@@ -35,6 +35,8 @@ class Classroom(Base):
     floor = Column(Integer)
     building = Column(String(50))
     is_exclusive = Column(Boolean, default=False, nullable=False)
+    # NULL = shared (gym, lab); 'elementary' / 'secondary' = tagged for that level.
+    school_level = Column(String(20), nullable=True)
 
     school = relationship("School")
     subjects = relationship(

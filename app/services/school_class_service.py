@@ -68,6 +68,21 @@ class SchoolClassService:
         self.db.commit()
         return self.list()
 
+    def _maybe_tag_elementary_home(
+        self, classroom_id: int | None, school_level: str | None
+    ) -> None:
+        """Tag a general class home room as elementary; never overwrite labs/gyms."""
+        if not classroom_id or school_level != "elementary":
+            return
+        room = self.db.get(Classroom, classroom_id)
+        if room is None or room.school_id != self.school_id:
+            return
+        if getattr(room, "school_level", None):
+            return
+        if list(getattr(room, "subjects", None) or []):
+            return
+        room.school_level = "elementary"
+
     def create(
         self,
         *,
@@ -97,6 +112,7 @@ class SchoolClassService:
             students_count=students_count,
         )
         self.db.add(sc)
+        self._maybe_tag_elementary_home(home_classroom_id, school_level)
         if commit:
             self.db.commit()
             self.db.refresh(sc)
@@ -158,6 +174,7 @@ class SchoolClassService:
             sc.homeroom_teacher_id = homeroom_teacher_id
         if "students_count" in fields_set:
             sc.students_count = students_count
+        self._maybe_tag_elementary_home(sc.home_classroom_id, sc.school_level)
         self.db.commit()
         self.db.refresh(sc)
         return school_class_data(self._load_one(sc.id))

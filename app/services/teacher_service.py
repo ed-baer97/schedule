@@ -1,12 +1,20 @@
 """Teacher catalog CRUD."""
 from __future__ import annotations
 
+from collections import defaultdict
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.names import normalize_person_name
-from app.models import Classroom, Teacher
-from app.services.dto import TeacherData, teacher_data
+from app.models import Classroom, SchoolClass, Teacher, TeachingAssignment
+from app.services.dto import (
+    TeacherData,
+    TeacherLoadData,
+    TeacherShiftBriefData,
+    TeacherSubjectHoursData,
+    teacher_data,
+)
 from app.services.errors import NotFoundError
 from app.services.tenancy import require_owned
 
@@ -41,6 +49,93 @@ class TeacherService:
 
     def get(self, teacher_id: int) -> TeacherData:
         return teacher_data(self._load_one(teacher_id))
+
+    def list_load(self) -> list[TeacherLoadData]:
+        """ФИО, часы в неделю по предметам и смены классов, которые ведёт учитель."""
+        teachers = list(
+            self.db.execute(
+                select(Teacher)
+                .where(Teacher.school_id == self.school_id)
+                .order_by(Teacher.full_name)
+            )
+            .scalars()
+            .all()
+        )
+        assignments = list(
+            self.db.execute(
+                select(TeachingAssignment)
+                .options(
+                    joinedload(TeachingAssignment.subject),
+                    joinedload(TeachingAssignment.school_class).joinedload(
+                        SchoolClass.shift
+                    ),
+                )
+                .where(
+                    TeachingAssignment.school_id == self.school_id,
+                    TeachingAssignment.teacher_id.isnot(None),
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        by_teacher: dict[int, list[TeachingAssignment]] = defaultdict(list)
+        for assignment in assignments:
+            if assignment.teacher_id is None:
+                continue
+            if int(assignment.hours_per_week or 0) <= 0:
+                continue
+            by_teacher[int(assignment.teacher_id)].append(assignment)
+        return [self._load_row(teacher, by_teacher.get(int(teacher.id), [])) for teacher in teachers]
+
+    @staticmethod
+    def _load_row(teacher: Teacher, rows: list[TeachingAssignment]) -> TeacherLoadData:
+        subject_hours: dict[int, TeacherSubjectHoursData] = {}
+        shifts: dict[int, TeacherShiftBriefData] = {}
+        unassigned_hours = 0
+        for assignment in rows:
+            hours = int(assignment.hours_per_week or 0)
+            subject = assignment.subject
+            current = subject_hours.get(int(subject.id))
+            if current is None:
+                subject_hours[int(subject.id)] = TeacherSubjectHoursData(
+                    subject_id=int(subject.id),
+                    subject_name=subject.name,
+                    color=subject.display_color,
+                    hours=hours,
+                )
+            else:
+                current.hours += hours
+            school_class = assignment.school_class
+            shift = getattr(school_class, "shift", None)
+            if shift is None:
+                unassigned_hours += hours
+                continue
+            shift_row = shifts.get(int(shift.id))
+            if shift_row is None:
+                shifts[int(shift.id)] = TeacherShiftBriefData(
+                    id=int(shift.id),
+                    name=shift.name,
+                    school_level=shift.school_level,
+                    hours=hours,
+                )
+            else:
+                shift_row.hours += hours
+        subjects = sorted(subject_hours.values(), key=lambda s: s.subject_name.lower())
+        level_order = {"elementary": 0, "secondary": 1}
+        shift_list = sorted(
+            shifts.values(),
+            key=lambda s: (level_order.get(s.school_level, 9), s.name.lower()),
+        )
+        return TeacherLoadData(
+            id=int(teacher.id),
+            full_name=teacher.full_name,
+            subjects=subjects,
+            shifts=shift_list,
+            total_hours=sum(s.hours for s in subjects),
+            unassigned_shift_hours=unassigned_hours,
+            has_classes_without_shift=unassigned_hours > 0,
+        )
 
     def create(
         self,

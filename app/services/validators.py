@@ -156,6 +156,11 @@ class ScheduleValidator:
                     requires_fixed_classroom=bool(subject.requires_fixed_classroom),
                     room_display_name=classroom.display_name,
                     room_subject_name=room_subj_name,
+                    class_school_level=(
+                        assignment.school_class.school_level
+                        if assignment.school_class
+                        else None
+                    ),
                 )
                 if denial:
                     errors.append(denial)

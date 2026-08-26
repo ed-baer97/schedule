@@ -104,6 +104,7 @@ export function SchoolClassesPage() {
       setMsg('Сохранено')
       setEditingId(null)
       await qc.invalidateQueries({ queryKey: ['school-classes'] })
+      await qc.invalidateQueries({ queryKey: ['classrooms'] })
     },
     onError: (e: Error) => setMsg(e.message),
   })

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { ModalPortal } from '../components/ModalPortal'
 import { createTeacher, deleteTeacher, listTeachers, updateTeacher, type Teacher } from '../api/teachers'
@@ -82,10 +83,15 @@ export function TeachersPage() {
       <PageHeader
         title="Учителя"
         actions={
-          <button type="button" className="btn btn-primary" onClick={openNew}>
-            <i className="bi bi-plus-lg me-1" />
-            Добавить
-          </button>
+          <>
+            <Link to="/teacher-load" className="btn btn-outline-secondary">
+              Нагрузка
+            </Link>
+            <button type="button" className="btn btn-primary" onClick={openNew}>
+              <i className="bi bi-plus-lg me-1" />
+              Добавить
+            </button>
+          </>
         }
       />
       {msg && (

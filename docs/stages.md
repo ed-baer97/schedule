@@ -92,7 +92,7 @@
 
 - [x] Модель `User`
 - [x] JWT в httpOnly cookie
-- [x] `/api/auth/login`, `/logout`, `/me`, `/accept-invite`
+- [x] `/api/auth/login`, `/logout`, `/me`
 - [x] Страница `/login` в React
 - [x] Bootstrap: `BOOTSTRAP_ADMIN_EMAIL` / `PASSWORD`
 - [x] Рабочие роутеры за `get_current_user` / `get_current_school`
@@ -117,14 +117,14 @@
 - [x] Модель `School`
 - [x] `school_id` на доменных таблицах + миграция `8auth_tenancy`
 - [x] `get_current_school()` на рабочие API
-- [x] `/api/admin/schools`, `/admins` + invite-токен
-- [x] UI `/admin`: список школ, создание, приглашение
+- [x] `/api/admin/schools`, `/admins`
+- [x] UI `/admin`: список школ, создание, админы школ
 - [x] `school_admin` только своя школа; `platform_admin` без `school_id` → `/admin` (сетку не открывает)
 
 ### Готово, когда
 
 - [ ] Две школы не видят данные друг друга (проверить на стенде)
-- [ ] Platform-админ создаёт школу и инвайт без SQL
+- [ ] Platform-админ создаёт школу и админа школы без SQL
 
 ---
 
