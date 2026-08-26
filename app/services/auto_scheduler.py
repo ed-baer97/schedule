@@ -24,9 +24,10 @@ class AutoScheduler:
     Supports: teacher_room (дети приходят к учителю), class_room (учитель приходит к классу).
     """
 
-    def __init__(self, session, school_id: int):
+    def __init__(self, session, school_id: int, should_stop=None):
         self.session = session
         self.school_id = school_id
+        self._should_stop = should_stop
         self.validator = ScheduleValidator(self.session, school_id=school_id)
         self._schedule = ScheduleService(session, school_id)
         self.graph_solver = ResidualGraphSolver(
@@ -35,6 +36,22 @@ class AutoScheduler:
         self.cp_sat_solver = CpSatScheduleSolver(
             self._get_classroom_for_cell, session=self.session, school_id=school_id
         )
+        self._ladder_day_cache: dict[tuple[int, int], dict] = {}
+
+    def _stopped(self) -> bool:
+        if self._should_stop is None:
+            return False
+        try:
+            return bool(self._should_stop())
+        except Exception:
+            return False
+
+    def _cancelled_event(self, count=0, message='Остановлено'):
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+        return {'type': 'cancelled', 'count': count, 'message': message}
 
     def _settings_for(self, school_level):
         return load_settings(self.session, self.school_id, school_level)
@@ -55,6 +72,9 @@ class AutoScheduler:
             "total": 100,
             "message": "CP-SAT: подготовка данных и метрики «до»",
         }
+        if self._stopped():
+            yield self._cancelled_event()
+            return
         yield {
             "type": "progress",
             "current": 5,
@@ -66,7 +86,11 @@ class AutoScheduler:
             school_level=school_level,
             time_limit_sec=time_limit_sec,
             random_seed=random_seed,
+            should_stop=self._should_stop,
         )
+        if result.status == "CANCELLED" or self._stopped():
+            yield self._cancelled_event()
+            return
         yield {
             "type": "progress",
             "current": 99,
@@ -110,12 +134,19 @@ class AutoScheduler:
             "total": 1,
             "message": "Repair: дозаполнение оставшихся часов…",
         }
+        if self._stopped():
+            yield self._cancelled_event()
+            return
         result = self.graph_solver.solve_residuals(
             school_level=school_level,
             teacher_id=teacher_id,
             class_id=class_id,
             max_diag_items=20,
+            should_stop=self._should_stop,
         )
+        if self._stopped():
+            yield self._cancelled_event(result.placed_count)
+            return
         yield {
             "type": "done",
             "count": result.placed_count,
@@ -143,6 +174,10 @@ class AutoScheduler:
 
     def _get_teacher_lessons_for_class_day(self, class_id, day):
         """Map teacher_id -> set(lesson_number) for class/day."""
+        key = (int(class_id), int(day))
+        cached = self._ladder_day_cache.get(key)
+        if cached is not None:
+            return cached
         rows = self.session.query(ScheduleCell).join(TeachingAssignment).filter(
             ScheduleCell.class_id == class_id,
             ScheduleCell.day_of_week == day,
@@ -154,7 +189,11 @@ class AutoScheduler:
             if tid not in lessons_by_teacher:
                 lessons_by_teacher[tid] = set()
             lessons_by_teacher[tid].add(cell.lesson_number)
+        self._ladder_day_cache[key] = lessons_by_teacher
         return lessons_by_teacher
+
+    def _touch_ladder_day(self, class_id, day):
+        self._ladder_day_cache.pop((int(class_id), int(day)), None)
 
     def _ordered_lessons_for_teacher_class_day(self, assignment, day, max_lessons):
         """
@@ -169,7 +208,7 @@ class AutoScheduler:
 
         existing = lessons_by_teacher.get(tid, set())
         if len(existing) != 1:
-            return base
+            return [x for x in base if x not in existing]
 
         anchor = next(iter(existing))
         around = []
@@ -177,7 +216,7 @@ class AutoScheduler:
             around.append(anchor + 1)
         if anchor - 1 >= 1:
             around.append(anchor - 1)
-        rest = [x for x in base if x not in around]
+        rest = [x for x in base if x not in around and x not in existing]
         return around + rest
 
     def _get_classroom_for_cell(
@@ -349,6 +388,7 @@ class AutoScheduler:
             assignment_id=assignment.id,
             classroom_id=classroom_id,
         )
+        self._touch_ladder_day(assignment.class_id, day)
         n = 1
         if assignment.group_number is not None:
             n += self._try_place_complementary_subgroup(
@@ -542,6 +582,7 @@ class AutoScheduler:
             cell_ids=[c.id for c in cells],
             commit=False,
         )
+        self._ladder_day_cache.clear()
 
     def _place_hours_backtrack(
         self, hours, school_level, working_days, max_lessons,
@@ -715,6 +756,7 @@ class AutoScheduler:
                     assignment_id=row["assignment_id"],
                     classroom_id=row["classroom_id"],
                 )
+            self._ladder_day_cache.clear()
             return 0
         return unplaced_before - unplaced_after
 
@@ -725,6 +767,7 @@ class AutoScheduler:
         разных классов чередуются. Если не умещается — перебирает дни и слоты,
         сохраняя приоритет пар.
         """
+        self._ladder_day_cache.clear()
         aq = self.session.query(TeachingAssignment)\
             .join(SchoolClass)\
             .filter(
@@ -761,6 +804,9 @@ class AutoScheduler:
             round_placed = 0
             n_slots = len(units)
             for idx, (kind, assignment) in enumerate(units):
+                if self._stopped():
+                    yield self._cancelled_event(scheduled_count)
+                    return
                 label = 'сдвоенный урок' if kind == 'pair' else assignment.subject.name
                 yield {
                     'type': 'progress',
@@ -791,6 +837,9 @@ class AutoScheduler:
             n_left = max(1, sum(remaining_for(a) for a in leftover))
             step = 0
             for kind, assignment in self._schedule_units(leftover, pair_mode):
+                if self._stopped():
+                    yield self._cancelled_event(scheduled_count)
+                    return
                 step += 1
                 yield {
                     'type': 'progress',
@@ -820,6 +869,9 @@ class AutoScheduler:
 
         leftover = [a for a in assignments if remaining_for(a) > 0]
         if leftover:
+            if self._stopped():
+                yield self._cancelled_event(scheduled_count)
+                return
             yield {
                 'type': 'progress',
                 'current': 1,
@@ -832,13 +884,21 @@ class AutoScheduler:
             )
             scheduled_count += n
 
+        if self._stopped():
+            yield self._cancelled_event(scheduled_count)
+            return
+
         self.session.commit()
 
         solver_result = self.graph_solver.solve_residuals(
             school_level=school_level,
             teacher_id=teacher_id,
             max_diag_items=20,
+            should_stop=self._should_stop,
         )
+        if self._stopped():
+            yield self._cancelled_event(scheduled_count + solver_result.placed_count)
+            return
         scheduled_count += solver_result.placed_count
         yield {
             'type': 'done',
@@ -894,6 +954,7 @@ class AutoScheduler:
                     assignment_id=comp.id,
                     classroom_id=classroom_id,
                 )
+                self._touch_ladder_day(comp.class_id, day)
                 return 1
         return 0
 

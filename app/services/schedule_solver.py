@@ -4,6 +4,7 @@ CP-SAT global solver (one shift) with reassignment.
 """
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
+import threading
 from typing import Any, Callable
 
 from app.domain.schedule_facts import SlotFact
@@ -15,6 +16,7 @@ from app.domain.schedule_rules import (
     teacher_class_day_limit_reached,
     units_cannot_share_class_slot,
 )
+from app.config import Config
 from app.models import SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_counts, remaining_for
 from app.services.classroom_resolver import (
@@ -209,7 +211,14 @@ class ResidualGraphSolver:
         match_unit_to_slot = {u: s for s, u in match_slot_to_unit.items()}
         return match_unit_to_slot
 
-    def solve_residuals(self, school_level="elementary", teacher_id=None, class_id=None, max_diag_items=20):
+    def solve_residuals(
+        self,
+        school_level="elementary",
+        teacher_id=None,
+        class_id=None,
+        max_diag_items=20,
+        should_stop: Callable[[], bool] | None = None,
+    ):
         assignment_query = self.session.query(TeachingAssignment).join(SchoolClass).filter(
             SchoolClass.school_level == school_level,
             TeachingAssignment.teacher_id.isnot(None),
@@ -318,6 +327,8 @@ class ResidualGraphSolver:
 
         # Re-validate while applying to keep hard constraints intact with newly added cells
         for unit_id, slot_id in matched.items():
+            if should_stop and should_stop():
+                break
             unit = unit_map[unit_id]
             slot = slot_map[slot_id]
             assignment = assignment_map[unit.assignment_id]
@@ -398,7 +409,7 @@ class ResidualGraphSolver:
 class CpSatSolveResult:
     """Result of CP-SAT optimization for one shift."""
 
-    status: str  # OPTIMAL, FEASIBLE, INFEASIBLE, UNKNOWN, MODEL_INVALID, ERROR
+    status: str  # OPTIMAL, FEASIBLE, INFEASIBLE, UNKNOWN, MODEL_INVALID, ERROR, CANCELLED
     solver_status: str | None = None
     objective: int | None = None
     wall_time_sec: float | None = None
@@ -428,6 +439,10 @@ class CpSatScheduleSolver:
         self._classroom_resolver = classroom_resolver
         self._schedule = ScheduleService(session, school_id)
 
+    def _cancelled_result(self, should_stop, metrics_before=None) -> CpSatSolveResult | None:
+        if should_stop and should_stop():
+            return CpSatSolveResult(status="CANCELLED", metrics_before=metrics_before)
+        return None
 
     def _compute_schedule_metrics(self, class_ids: list[int]) -> dict[str, Any]:
         """Aggregate window gaps and simple class load balance for classes in scope."""
@@ -487,6 +502,7 @@ class CpSatScheduleSolver:
         time_limit_sec: float = 60.0,
         random_seed: int = 1,
         max_diag_items: int = 20,
+        should_stop: Callable[[], bool] | None = None,
     ) -> CpSatSolveResult:
         """
         Rebuild schedule for all classes in the given shift (same school_level).
@@ -536,6 +552,10 @@ class CpSatScheduleSolver:
             )
 
         metrics_before = self._compute_schedule_metrics(class_ids)
+
+        stopped = self._cancelled_result(should_stop, metrics_before)
+        if stopped:
+            return stopped
 
         units = build_unit_facts(assignments, hours_mode="full")
         if not units:
@@ -949,12 +969,48 @@ class CpSatScheduleSolver:
 
         model.Minimize(sum(obj_terms))
 
+        stopped = self._cancelled_result(should_stop, metrics_before)
+        if stopped:
+            return stopped
+
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = float(time_limit_sec)
-        solver.parameters.num_search_workers = 8
+        solver.parameters.num_search_workers = Config.SOLVER_NUM_WORKERS
         solver.parameters.random_seed = random_seed
 
-        status = solver.Solve(model)
+        watcher_stop = threading.Event()
+        watcher: threading.Thread | None = None
+
+        def _watch_cancel() -> None:
+            while not watcher_stop.is_set():
+                try:
+                    if should_stop and should_stop():
+                        stop = getattr(solver, "StopSearch", None)
+                        if callable(stop):
+                            stop()
+                        return
+                except Exception:
+                    pass
+                if watcher_stop.wait(0.4):
+                    return
+
+        if should_stop:
+            watcher = threading.Thread(
+                target=_watch_cancel, daemon=True, name="cp-sat-cancel"
+            )
+            watcher.start()
+        try:
+            status = solver.Solve(model)
+        finally:
+            watcher_stop.set()
+            if watcher is not None:
+                watcher.join(timeout=1.5)
+
+        stopped = self._cancelled_result(should_stop, metrics_before)
+        if stopped:
+            stopped.solver_status = solver.StatusName(status)
+            stopped.wall_time_sec = solver.WallTime()
+            return stopped
 
         status_name = solver.StatusName(status)
         if status in (cp_model.INFEASIBLE, cp_model.MODEL_INVALID):
@@ -1001,6 +1057,9 @@ class CpSatScheduleSolver:
 
         # Apply: transaction — remove old cells for scope, insert new
         try:
+            stopped = self._cancelled_result(should_stop, metrics_before)
+            if stopped:
+                return stopped
             self._schedule.delete_cells(class_ids=class_ids, commit=False)
 
             placements = []

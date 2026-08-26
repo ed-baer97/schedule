@@ -8,37 +8,34 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
+from migrations.schema_util import column_exists
+
 revision = "11classroom_subject"
 down_revision = "10homeroom_teacher"
 branch_labels = None
 depends_on = None
 
 
-def _column_exists(connection, table: str, column: str) -> bool:
-    result = connection.execute(sa.text(f"PRAGMA table_info({table})"))
-    return any(row[1] == column for row in result)
-
-
 def upgrade() -> None:
     conn = op.get_bind()
 
-    if not _column_exists(conn, "classrooms", "subject_id"):
+    if not column_exists(conn, "classrooms", "subject_id"):
         op.add_column(
             "classrooms",
             sa.Column("subject_id", sa.Integer(), nullable=True),
         )
-    if not _column_exists(conn, "classrooms", "is_exclusive"):
+    if not column_exists(conn, "classrooms", "is_exclusive"):
         op.add_column(
             "classrooms",
             sa.Column(
                 "is_exclusive",
                 sa.Boolean(),
                 nullable=False,
-                server_default="0",
+                server_default=sa.false(),
             ),
         )
 
-    if _column_exists(conn, "subjects", "default_classroom_id"):
+    if column_exists(conn, "subjects", "default_classroom_id"):
         rows = conn.execute(
             sa.text(
                 """
@@ -73,12 +70,12 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     conn = op.get_bind()
-    if not _column_exists(conn, "subjects", "default_classroom_id"):
+    if not column_exists(conn, "subjects", "default_classroom_id"):
         op.add_column(
             "subjects",
             sa.Column("default_classroom_id", sa.Integer(), nullable=True),
         )
-    if _column_exists(conn, "classrooms", "subject_id"):
+    if column_exists(conn, "classrooms", "subject_id"):
         rows = conn.execute(
             sa.text(
                 """
@@ -100,5 +97,5 @@ def downgrade() -> None:
                 {"cid": classroom_id, "sid": subject_id},
             )
         op.drop_column("classrooms", "subject_id")
-    if _column_exists(conn, "classrooms", "is_exclusive"):
+    if column_exists(conn, "classrooms", "is_exclusive"):
         op.drop_column("classrooms", "is_exclusive")

@@ -4,7 +4,7 @@
 
 **Как отмечать:** `[x]` у пункта, когда он проверен (код в git и/или стенд). Этап закрыт, когда отмечены все пункты раздела «Готово, когда».
 
-**Поток выкладки:** код готовим локально → push в git → на Ubuntu `git pull && docker compose up -d --build`.
+**Поток выкладки:** код готовим локально → push в git → на Ubuntu `git pull && docker compose --profile queue up -d --build --force-recreate`.
 
 **Стенд:** Ubuntu, i3, 8 ГБ RAM, свободный домен, Cloudflare Tunnel (порты 80/443 на роутере не открываем).
 
@@ -82,7 +82,7 @@
 - [ ] Справочники, сетка, импорт, отчёты работают
 - [ ] Порты 80/443 на роутере закрыты
 
-**Дальше на стенде всегда:** `git pull && docker compose up -d --build`
+**Дальше на стенде всегда:** `git pull && docker compose --profile queue up -d --build --force-recreate`
 
 ---
 

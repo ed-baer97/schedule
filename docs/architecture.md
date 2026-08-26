@@ -82,7 +82,7 @@ schedule/
 | `User`, `InviteToken` | вход и приглашения |
 | `Job` | статус автосоставления |
 | `Teacher` | ФИО, `home_classroom_id` (хозяин комнаты) |
-| `Classroom` | номер, вместимость; `subject_id` (пул предмета), `is_exclusive` |
+| `Classroom` | номер, вместимость; предметы через `classroom_subjects` (пул), `is_exclusive` |
 | `Subject` | название, цвет; `requires_fixed_classroom` (без кабинета по умолчанию) |
 | `Shift`, `ShiftLessonTime` | смена и звонки |
 | `SchoolClass` | класс (уровень, смена, `home_classroom_id`, `homeroom_teacher_id`) |
@@ -100,7 +100,7 @@ schedule/
 |---------|------------|
 | `/api/auth` | login, logout, me, accept-invite |
 | `/api/admin` | школы, админы школ, инвайты |
-| `/api/jobs/{id}` | статус фоновой задачи |
+| `/api/jobs/{id}` | статус фоновой задачи; `POST …/cancel` — остановить pending/running |
 | `/api/dashboard` | сводка |
 | `/api/teachers`, `/classrooms`, `/school-classes`, `/shifts`, `/subjects` | CRUD |
 | `/api/workload`, `/assignments` | нагрузка и назначения |
@@ -110,7 +110,7 @@ schedule/
 
 OpenAPI: http://127.0.0.1:8000/docs
 
-Автосоставление: есть Redis — Celery worker; нет — синхронный fallback (удобно для Windows без Docker). Одна активная задача на школу (иначе `409`).
+Автосоставление: есть Redis — Celery worker; нет — фоновый поток в процессе API (Windows без Docker). Одна активная задача на школу (иначе `409`), включая статус `cancelling`. Остановка: `POST /api/jobs/{id}/cancel` (pending сразу `cancelled`; running — `cancelling`, CP-SAT `StopSearch`, без записи сетки).
 
 ## Страницы UI (`frontend/src/pages/`)
 
@@ -140,7 +140,7 @@ Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker 
 | `job_dispatch.py` | порт диспатча auto-job (Celery в `backend/tasks`) |
 | `dashboard_service.py` | сводка школы |
 | `admin_service.py` | школы, админы школ, platform dashboard |
-| `job_service.py` | статус Job + `enqueue_auto` (tenancy shift/teacher внутри) |
+| `job_service.py` | статус Job + `enqueue_auto` + `cancel` (tenancy shift/teacher внутри) |
 | `import_service.py` | валидация файлов + оркестрация ExcelImporter |
 | `report_service.py` | отчёты JSON и Excel |
 | `teacher_service.py` … `subject_service.py` | CRUD справочников + `ensure` для импорта (DTO наружу) |
@@ -157,7 +157,7 @@ Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker 
 
 Чистые хелперы `app/domain/`: дни/`fmt_time`; `grade_from_name` / `level_from_grade` / `level_label`; `normalize_person_name`; `remaining_hours`; `schedule_facts` (`UnitFact`/`SlotFact`/`BusySlotFact`); слот — `slots_conflict` / `slot_facts_conflict` / `groups_can_share_slot` / `units_cannot_share_class_slot` / `occupancy_blocks_unit` / `teacher_busy_at_slot` / `classroom_at_capacity` / лимиты дня; кабинеты — `room_allows_subject` / `placement_cost` / `candidate_rooms_for`; `preferences` (веса 0–10 → коэффициенты CP-SAT).
 
-Автосоставление: есть Redis — Celery worker; нет — синхронный fallback. Одна активная задача на школу (иначе `409`). Виды job: `auto_all`, `auto_by_teacher`, `repair`. Repair не пишет ячейки сам — только residual solver через `ScheduleService`. Панель «почему» на сетке не ставит уроки: валидатор даёт факты, Qwen (если задан `QWEN_API_KEY`) пересказывает их.
+Автосоставление: есть Redis — Celery worker; нет — фоновый поток. Одна активная задача на школу (иначе `409`). Виды job: `auto_all`, `auto_by_teacher`, `repair`. Остановка через `POST /api/jobs/{id}/cancel`. Repair не пишет ячейки сам — только residual solver через `ScheduleService`. Панель «почему» на сетке не ставит уроки: валидатор даёт факты, Qwen (если задан `QWEN_API_KEY`) пересказывает их.
 
 Все школьные сервисы принимают обязательный `school_id: int` (`AdminService` — platform-wide).
 

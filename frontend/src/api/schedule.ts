@@ -181,6 +181,10 @@ export function getJob(jobId: number) {
   return apiJson<JobOut>(`/api/jobs/${jobId}`)
 }
 
+export function cancelJob(jobId: number) {
+  return apiJson<JobOut>(`/api/jobs/${jobId}/cancel`, { method: 'POST' })
+}
+
 export type AutoAllPayload = {
   school_level: SchoolLevel
   shift_id: number
@@ -254,8 +258,10 @@ export async function runJobAndPoll(
   start: () => Promise<{ job_id: number }>,
   onProgress: (p: { current: number; total: number; message: string }) => void,
   onLog: (line: string) => void,
+  onStarted?: (jobId: number) => void,
 ): Promise<JobOut> {
   const started = await start()
+  onStarted?.(started.job_id)
   onLog(`Задача #${started.job_id} поставлена в очередь`)
   for (;;) {
     await new Promise((r) => setTimeout(r, 1000))
@@ -269,7 +275,11 @@ export async function runJobAndPoll(
     if (prog.message) {
       onLog(`[${prog.current ?? 0}/${prog.total ?? 0}] ${prog.message}`)
     }
-    if (job.status === 'done' || job.status === 'failed') {
+    if (
+      job.status === 'done' ||
+      job.status === 'failed' ||
+      job.status === 'cancelled'
+    ) {
       return job
     }
   }

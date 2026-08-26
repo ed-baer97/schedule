@@ -9,9 +9,16 @@ from sqlalchemy.orm import Session
 
 from app.config import Config
 from app.models import Job, SchoolClass, Shift, Teacher
-from app.models.job import JOB_PENDING, JOB_RUNNING
-from app.services.errors import ConflictError
-from app.services.job_dispatch import dispatch_auto_job
+from app.models.job import (
+    JOB_ACTIVE_STATUSES,
+    JOB_CANCELLED,
+    JOB_CANCELLING,
+    JOB_DONE,
+    JOB_FAILED,
+    JOB_PENDING,
+)
+from app.services.errors import BadRequestError, ConflictError
+from app.services.job_dispatch import dispatch_auto_job, revoke_auto_job
 from app.services.tenancy import require_owned
 
 
@@ -74,7 +81,7 @@ class JobService:
         active = self.db.scalars(
             select(Job).where(
                 Job.school_id == self.school_id,
-                Job.status.in_([JOB_PENDING, JOB_RUNNING]),
+                Job.status.in_(JOB_ACTIVE_STATUSES),
             )
         ).first()
         if active is not None:
@@ -105,3 +112,33 @@ class JobService:
             self.db.refresh(job)
 
         return {"job_id": job.id, "status": JOB_PENDING}
+
+    def cancel(self, job_id: int) -> JobStatusData:
+        """Ask a pending/running auto-job to stop. Cooperative: CP-SAT StopSearch."""
+        job = require_owned(self.db, Job, job_id, self.school_id)
+        if job.status in (JOB_DONE, JOB_FAILED, JOB_CANCELLED):
+            raise BadRequestError("Задача уже завершена, останавливать нечего.")
+
+        payload = _parse_json(job.progress) or {}
+        celery_id = job.celery_task_id
+        if job.status == JOB_PENDING:
+            job.status = JOB_CANCELLED
+            job.result = json.dumps(
+                {"type": "cancelled", "count": 0, "message": "Остановлено"},
+                ensure_ascii=False,
+            )
+            job.progress = json.dumps(
+                {**payload, "message": "Остановлено"},
+                ensure_ascii=False,
+            )
+        else:
+            job.status = JOB_CANCELLING
+            job.progress = json.dumps(
+                {**payload, "message": "Остановка…"},
+                ensure_ascii=False,
+            )
+        self.db.commit()
+        self.db.refresh(job)
+        if celery_id:
+            revoke_auto_job(str(celery_id))
+        return self.get(job_id)

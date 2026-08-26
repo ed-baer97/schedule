@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import {
+  cancelJob,
   clearSchedule,
   enqueueAutoAll,
   enqueueAutoByTeacher,
@@ -38,6 +39,8 @@ export function AutoSchedulerPage() {
   const [diagnose, setDiagnose] = useState<boolean>(false)
   const [teacherId, setTeacherId] = useState<number | ''>('')
   const [running, setRunning] = useState<boolean>(false)
+  const [stopping, setStopping] = useState<boolean>(false)
+  const [activeJobId, setActiveJobId] = useState<number | null>(null)
   const [progress, setProgress] = useState<{ current: number; total: number; message: string }>(
     { current: 0, total: 0, message: '' },
   )
@@ -101,6 +104,8 @@ export function AutoSchedulerPage() {
     setError(null)
     setProgress({ current: 0, total: 0, message: '' })
     setLog([])
+    setStopping(false)
+    setActiveJobId(null)
   }
 
   function handleJobResult(job: JobOut) {
@@ -108,6 +113,15 @@ export function AutoSchedulerPage() {
       const msg = job.error || 'Задача завершилась с ошибкой'
       setError(msg)
       appendLog(`Ошибка: ${msg}`)
+      return
+    }
+    if (job.status === 'cancelled') {
+      const count = (job.result?.count as number | undefined) ?? 0
+      if (job.kind === 'auto_all') {
+        appendLog('Остановлено. Сетка смены не менялась — CP-SAT записывает результат только в конце.')
+      } else {
+        appendLog(`Остановлено. Уже поставленные уроки сохранены (${count}).`)
+      }
       return
     }
     const e = job.result || {}
@@ -140,6 +154,7 @@ export function AutoSchedulerPage() {
           }),
         (p) => setProgress(p),
         appendLog,
+        (id) => setActiveJobId(id),
       )
       handleJobResult(job)
       await qc.invalidateQueries({ queryKey: ['schedule'] })
@@ -147,6 +162,8 @@ export function AutoSchedulerPage() {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setRunning(false)
+      setStopping(false)
+      setActiveJobId(null)
     }
   }
 
@@ -167,6 +184,7 @@ export function AutoSchedulerPage() {
           }),
         (p) => setProgress(p),
         appendLog,
+        (id) => setActiveJobId(id),
       )
       handleJobResult(job)
       await qc.invalidateQueries({ queryKey: ['schedule'] })
@@ -174,6 +192,8 @@ export function AutoSchedulerPage() {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setRunning(false)
+      setStopping(false)
+      setActiveJobId(null)
     }
   }
 
@@ -199,6 +219,7 @@ export function AutoSchedulerPage() {
         () => enqueueRepair({ school_level: level }),
         (p) => setProgress(p),
         appendLog,
+        (id) => setActiveJobId(id),
       )
       handleJobResult(job)
       await qc.invalidateQueries({ queryKey: ['schedule'] })
@@ -206,6 +227,20 @@ export function AutoSchedulerPage() {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
       setRunning(false)
+      setStopping(false)
+      setActiveJobId(null)
+    }
+  }
+
+  async function stopRunning() {
+    if (activeJobId == null || stopping) return
+    setStopping(true)
+    try {
+      await cancelJob(activeJobId)
+      appendLog('Запрошена остановка…')
+    } catch (e) {
+      setStopping(false)
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -292,6 +327,7 @@ export function AutoSchedulerPage() {
                     value={timeLimit}
                     onChange={(e) => setTimeLimit(Number(e.target.value) || 60)}
                   />
+                  <div className="form-text">Один прогон CP-SAT на смену, не дольше этого времени.</div>
                 </div>
                 <div className="col-md-6">
                   <label className="form-label small">Random seed</label>
@@ -388,7 +424,23 @@ export function AutoSchedulerPage() {
       <div className="card shadow-sm mt-3">
         <div className="card-header d-flex justify-content-between align-items-center">
           <span className="fw-semibold">Прогресс</span>
-          {running && <span className="text-muted small">выполняется…</span>}
+          <div className="d-flex align-items-center gap-2">
+            {running && (
+              <span className="text-muted small">
+                {stopping ? 'останавливается…' : 'выполняется…'}
+              </span>
+            )}
+            {running && (
+              <button
+                type="button"
+                className="btn btn-sm btn-outline-danger"
+                disabled={activeJobId == null || stopping}
+                onClick={stopRunning}
+              >
+                Остановить
+              </button>
+            )}
+          </div>
         </div>
         <div className="card-body">
           <div className="progress mb-2" role="progressbar" aria-label="Progress">

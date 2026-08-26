@@ -57,6 +57,8 @@ class Config:
         os.environ.get("CELERY_RESULT_BACKEND") or "redis://localhost:6379/1"
     )
     SOLVER_TIME_LIMIT_SEC = int(os.environ.get("SOLVER_TIME_LIMIT_SEC") or "90")
+    # Worker container is capped at 1.5 CPU; 8 search threads only contend.
+    SOLVER_NUM_WORKERS = max(1, int(os.environ.get("SOLVER_NUM_WORKERS") or "2"))
     QWEN_API_KEY = (os.environ.get("QWEN_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or "").strip()
     QWEN_BASE_URL = (
         os.environ.get("QWEN_BASE_URL")

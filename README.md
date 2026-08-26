@@ -67,7 +67,7 @@ docker compose up -d --build
 docker compose --profile queue up -d   # автосоставление в фоне
 ```
 
-Не делать `docker compose down -v` (сотрёт БД). Полная инструкция: [docs/deploy.md](docs/deploy.md).
+Не делать `docker compose down -v` (сотрёт БД). Обновление: `git pull && docker compose --profile queue up -d --build --force-recreate`. Полная инструкция: [docs/deploy.md](docs/deploy.md).
 
 ## Тесты
 

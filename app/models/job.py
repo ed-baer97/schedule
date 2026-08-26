@@ -8,8 +8,14 @@ from app.db import Base
 
 JOB_PENDING = "pending"
 JOB_RUNNING = "running"
+JOB_CANCELLING = "cancelling"
+JOB_CANCELLED = "cancelled"
 JOB_DONE = "done"
 JOB_FAILED = "failed"
+
+# Block a second auto-job for the same school.
+JOB_ACTIVE_STATUSES = (JOB_PENDING, JOB_RUNNING, JOB_CANCELLING)
+JOB_TERMINAL_STATUSES = (JOB_DONE, JOB_FAILED, JOB_CANCELLED)
 
 
 def _utc_now() -> datetime:

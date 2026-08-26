@@ -22,7 +22,9 @@ docker compose --profile queue up -d
 - Cloudflare Tunnel направлять на `http://127.0.0.1:80`
 - Не делать `docker compose down -v` — сотрётся volume Postgres
 - `.env` и токен туннеля в git не класть
-- Обновление: `git pull && docker compose up -d --build`
+- Обновление: `git pull && docker compose --profile queue up -d --build --force-recreate`
+- После `--build` без `--force-recreate` возможен 502: nginx держит IP старого `api`
+- Worker: `SOLVER_NUM_WORKERS=2` (контейнер 1.5 CPU). «Заполнить всё» — CP-SAT на одну смену, не лесенка по всем учителям.
 
 ## Бэкап
 

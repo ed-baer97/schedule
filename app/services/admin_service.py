@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Job, ScheduleSettings, School, SchoolClass, Teacher, User
-from app.models.job import JOB_PENDING, JOB_RUNNING
+from app.models.job import JOB_PENDING, JOB_RUNNING, JOB_CANCELLING
 from app.models.user import ROLE_SCHOOL_ADMIN
 from app.passwords import hash_password
 from app.services.errors import BadRequestError, NotFoundError
@@ -96,7 +96,7 @@ class AdminService:
             self.db.scalar(
                 select(func.count())
                 .select_from(Job)
-                .where(Job.status.in_((JOB_PENDING, JOB_RUNNING)))
+                .where(Job.status.in_((JOB_PENDING, JOB_RUNNING, JOB_CANCELLING)))
             )
             or 0
         )
