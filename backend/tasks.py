@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -21,6 +22,8 @@ from app.services.auto_scheduler import AutoScheduler
 from app.services.job_dispatch import set_dispatcher, set_revoker
 from backend.celery_app import broker_is_reachable, celery_app
 from backend.deps import SessionLocal
+
+log = logging.getLogger(__name__)
 
 
 def _utc_now():
@@ -176,10 +179,19 @@ def _start_in_process(job_id: int) -> None:
     ).start()
 
 
+def _fail_enqueue(job_id: int, error: str) -> None:
+    db = SessionLocal()
+    try:
+        _update_job(db, job_id, status=JOB_FAILED, error=error)
+    finally:
+        db.close()
+
+
 def _dispatch_auto_job(job_id: int) -> None:
     """Celery delay when Redis is up; otherwise a daemon thread in this process.
 
     Ping the broker first so a missing Redis does not burn ~20s of kombu retries.
+    If Redis answers, never fall back to the API process (512 MB container).
     Tests keep the in-process sync call so SQLite stays single-threaded.
     """
     if os.environ.get("PYTEST_CURRENT_TEST"):
@@ -187,6 +199,7 @@ def _dispatch_auto_job(job_id: int) -> None:
         return
     reachable = broker_is_reachable()
     if not reachable:
+        log.warning("Redis unreachable; auto-job %s runs in the API process", job_id)
         _start_in_process(job_id)
         return
     try:
@@ -201,8 +214,14 @@ def _dispatch_auto_job(job_id: int) -> None:
                 db.commit()
         finally:
             db.close()
-    except Exception:
-        _start_in_process(job_id)
+        log.info("Auto-job %s queued on Celery %s", job_id, async_result.id)
+    except Exception as exc:
+        log.exception("Celery enqueue failed for auto-job %s", job_id)
+        _fail_enqueue(
+            job_id,
+            "Не удалось поставить задачу в Celery worker. "
+            f"Солвер в процессе API не запускается: {exc}",
+        )
 
 
 @celery_app.task(bind=True, name="schedule.run_auto")
@@ -225,13 +244,25 @@ def run_auto_schedule(self, job_id: int) -> dict:
             _finish_cancelled(db, job_id, payload)
             return {"status": "cancelled", "job_id": job_id}
 
+        via_celery = bool(getattr(self.request, "id", None)) and not bool(
+            getattr(self.request, "called_directly", True)
+        )
+        start_message = (
+            "Запуск на Celery worker…" if via_celery else "Запуск в процессе API…"
+        )
         _update_job(
             db,
             job_id,
             status=JOB_RUNNING,
             celery_task_id=self.request.id,
             progress=json.dumps(
-                {**payload, "current": 0, "total": 0, "message": "Запуск…"},
+                {
+                    **payload,
+                    "current": 0,
+                    "total": 0,
+                    "message": start_message,
+                    "runner": "celery" if via_celery else "api",
+                },
                 ensure_ascii=False,
             ),
         )

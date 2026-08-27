@@ -302,3 +302,38 @@ def test_broker_is_reachable_closed_port() -> None:
     from backend.celery_app import broker_is_reachable
 
     assert broker_is_reachable("redis://127.0.0.1:1", timeout=0.2) is False
+
+
+def test_dispatch_fails_closed_when_redis_up_but_enqueue_errors(monkeypatch) -> None:
+    from app.services.job_service import JobService
+    from backend import tasks
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setattr(tasks, "broker_is_reachable", lambda: True)
+
+    def _should_not_run(_job_id: int) -> None:
+        raise AssertionError("in-process fallback must not run when Redis is up")
+
+    monkeypatch.setattr(tasks, "_start_in_process", _should_not_run)
+
+    def _boom(_job_id: int):
+        raise RuntimeError("enqueue failed")
+
+    monkeypatch.setattr(tasks.run_auto_schedule, "delay", _boom)
+
+    with SessionLocal() as session:
+        queued = JobService(session, TEST_SCHOOL_ID).enqueue_auto(
+            kind="repair",
+            payload={"school_level": "elementary"},
+            created_by_id=TEST_USER_ID,
+            dispatch=False,
+        )
+        job_id = queued["job_id"]
+
+    tasks._dispatch_auto_job(job_id)
+
+    with SessionLocal() as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        assert job.status == "failed"
+        assert "Celery" in (job.error or "")

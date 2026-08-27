@@ -133,7 +133,7 @@
 ### В git
 
 - [x] Redis + worker в compose (`--profile queue`)
-- [x] concurrency=1, prefetch=1, mem_limit worker 2g
+- [x] concurrency=1, prefetch=1, mem_limit worker 4g, cpus 4, SOLVER_NUM_WORKERS=4
 - [x] `POST /api/schedule/auto` → `202` + `job_id`
 - [x] `GET /api/jobs/{id}`
 - [x] Фронт: поллинг вместо NDJSON

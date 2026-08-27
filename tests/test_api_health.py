@@ -25,6 +25,7 @@ def test_health() -> None:
     assert body["status"] in ("ok", "degraded")
     assert body["database"]["connected"] is True
     assert body["database"]["schema_ready"] is True
+    assert isinstance(body["queue"]["broker_reachable"], bool)
 
 
 def test_dashboard_stats() -> None:

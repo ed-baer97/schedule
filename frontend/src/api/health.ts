@@ -10,6 +10,9 @@ export type HealthResponse = {
     message?: string
     error?: string
   }
+  queue?: {
+    broker_reachable: boolean
+  }
 }
 
 export function fetchHealth() {

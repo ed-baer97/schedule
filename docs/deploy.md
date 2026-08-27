@@ -24,7 +24,8 @@ docker compose --profile queue up -d
 - `.env` и токен туннеля в git не класть
 - Обновление: `git pull && docker compose --profile queue up -d --build --force-recreate`
 - 502: не дергайте nginx, пока он `Restarting`. Сначала `docker compose --profile queue ps` и `logs api --tail 80`. Если `api` Up — `docker compose --profile queue up -d --force-recreate --no-deps nginx`, затем `curl -sS http://127.0.0.1/api/health`
-- Worker: `SOLVER_NUM_WORKERS=2` (контейнер 1.5 CPU). «Заполнить всё» — CP-SAT на одну смену, не лесенка по всем учителям.
+- Worker: `cpus: 4`, `mem_limit: 4g`, `SOLVER_NUM_WORKERS=4` (потоки = ядра). На 2 vCPU в `.env`: `SOLVER_CPUS=2` и `SOLVER_NUM_WORKERS=2`. «Заполнить всё» — CP-SAT на одну смену, не лесенка по всем учителям.
+- Журнал задачи должен начинаться с «Запуск на Celery worker…». Если «в процессе API» — Redis/worker недоступны, солвер сидит в контейнере api (512 МБ).
 
 ## Бэкап
 
@@ -32,4 +33,4 @@ docker compose --profile queue up -d
 
 ## Ресурсы (8 ГБ RAM)
 
-Один uvicorn, один worker, swap 2 ГБ. В простое ~2.5–3.5 ГБ, на пике автосоставления ~5–7 ГБ.
+Один uvicorn, один worker, swap 2 ГБ. В простое ~2.5–3.5 ГБ. Worker по умолчанию 4 ГБ (не 2 ГБ): CP-SAT на полной смене иначе уходит в swap. На 16 ГБ хоста можно `SOLVER_MEM_LIMIT=6g`.
