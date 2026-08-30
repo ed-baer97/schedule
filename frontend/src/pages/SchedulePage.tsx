@@ -15,10 +15,13 @@ import {
 } from '../api/schedule'
 import type { SchoolLevel } from '../domain/schoolLevel'
 import { assignmentCanJoinSlot, slotAcceptsAnotherLesson } from '../domain/scheduleRules'
-import { roomAllows } from '../domain/classroomRules'
+import { roomAllows, roomFreeAtSlot } from '../domain/classroomRules'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
+type ScheduleDensity = 'compact' | 'comfortable'
+
+const DENSITY_KEY = 'schedule:density'
 
 if (typeof window !== 'undefined') {
   try {
@@ -74,6 +77,45 @@ function teacherHoverKey(cell: Pick<CellOut, 'teacher_id' | 'teacher_name'>) {
   if (cell.teacher_id != null) return `id-${cell.teacher_id}`
   const name = (cell.teacher_name ?? '').trim()
   return name ? `name-${name}` : ''
+}
+
+function loadDensity(): ScheduleDensity {
+  try {
+    return localStorage.getItem(DENSITY_KEY) === 'comfortable' ? 'comfortable' : 'compact'
+  } catch {
+    return 'compact'
+  }
+}
+
+function saveDensity(next: ScheduleDensity) {
+  try {
+    localStorage.setItem(DENSITY_KEY, next)
+  } catch {
+    /* ignore */
+  }
+}
+
+function shortTeacherName(full: string | null | undefined): string {
+  const name = (full ?? '').trim()
+  if (!name) return '?'
+  const parts = name.split(/\s+/).filter(Boolean)
+  if (parts.length === 1) return parts[0]
+  const initials = parts
+    .slice(1)
+    .map((p) => {
+      const ch = [...p][0]
+      return ch ? `${ch.toUpperCase()}.` : ''
+    })
+    .join('')
+  return initials ? `${parts[0]} ${initials}` : parts[0]
+}
+
+function lessonCardTitle(cell: CellOut): string {
+  const bits = [cell.subject_name]
+  if (cell.group_number != null) bits.push(`гр.${cell.group_number}`)
+  if (cell.teacher_name) bits.push(cell.teacher_name)
+  if (cell.classroom_name) bits.push(`каб. ${cell.classroom_name}`)
+  return bits.join(' · ')
 }
 
 function suppressCardDrag(ev: ReactPointerEvent<HTMLElement>) {
@@ -221,11 +263,17 @@ function scrollScheduleAnchor(id: string, align: 'start' | 'nearest' = 'nearest'
   return true
 }
 
+function gridViewport(): HTMLElement | null {
+  return document.querySelector('.schedule-grid-card .overlay-scroll-viewport')
+}
+
 function restorePixels(top: number, left: number) {
-  const viewport = document.querySelector('.overlay-scroll-viewport') as HTMLElement | null
+  const viewport = gridViewport()
   if (!viewport || !viewportReady(viewport)) return false
   viewport.scrollTo({ top, left })
-  if (top > 8 && viewport.scrollTop < 8) return false
+  if ((top > 8 && viewport.scrollTop < 8) || (left > 8 && viewport.scrollLeft < 8)) {
+    return false
+  }
   return true
 }
 
@@ -245,10 +293,9 @@ export function SchedulePage() {
   const shiftId =
     shiftRaw && Number(shiftRaw)
       ? Number(shiftRaw)
-      : urlLevel
-        ? null
-        : storedTab?.shift_id ?? null
+      : storedTab?.shift_id ?? null
   const [toast, setToast] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
+  const [density, setDensity] = useState<ScheduleDensity>(loadDensity)
   const { expanded, setExpanded } = useScheduleExpand()
   const [slot, setSlot] = useState<SlotKey | null>(null)
   const [whyCell, setWhyCell] = useState<CellOut | null>(null)
@@ -256,6 +303,10 @@ export function SchedulePage() {
   const restoreDone = useRef(false)
   const syncAllowed = useRef(false)
   const pendingAnchor = useRef(bootAnchor)
+
+  useEffect(() => {
+    saveDensity(density)
+  }, [density])
 
   function finishRestore() {
     restoreDone.current = true
@@ -267,21 +318,10 @@ export function SchedulePage() {
     const saved = loadSavedView(level, shiftId)
     const liveHash = window.location.hash.replace(/^#/, '')
     const hash = liveHash || saved?.hash || pendingAnchor.current || ''
-    if (hash) {
-      const align = hash.startsWith('slot-') ? 'nearest' : 'start'
-      if (scrollScheduleAnchor(hash, align)) {
-        replaceHash(hash)
-        const viewport = document.querySelector('.overlay-scroll-viewport') as HTMLElement | null
-        if (viewport) {
-          saveSavedView(level, shiftId, {
-            hash,
-            top: viewport.scrollTop,
-            left: viewport.scrollLeft,
-          })
-        }
-        finishRestore()
-        return true
-      }
+    const viewport = gridViewport()
+    if (viewport && (viewport.scrollTop > 8 || viewport.scrollLeft > 8)) {
+      finishRestore()
+      return true
     }
     if (saved && (saved.top > 0 || saved.left > 0)) {
       if (restorePixels(saved.top, saved.left)) {
@@ -289,6 +329,23 @@ export function SchedulePage() {
         finishRestore()
         return true
       }
+      return false
+    }
+    if (hash.startsWith('slot-')) {
+      if (scrollScheduleAnchor(hash, 'nearest')) {
+        replaceHash(hash)
+        finishRestore()
+        return true
+      }
+      return false
+    }
+    if (hash.startsWith('day-') || hash.startsWith('class-')) {
+      if (scrollScheduleAnchor(hash, 'start')) {
+        replaceHash(hash)
+        finishRestore()
+        return true
+      }
+      return false
     }
     if (!hash && (!saved || (saved.top === 0 && saved.left === 0))) {
       finishRestore()
@@ -327,8 +384,7 @@ export function SchedulePage() {
     const id = slotAnchor(classId, day, lesson)
     replaceHash(id)
     requestAnimationFrame(() => {
-      scrollScheduleAnchor(id, 'nearest')
-      const viewport = document.querySelector('.overlay-scroll-viewport') as HTMLElement | null
+      const viewport = gridViewport()
       if (viewport) {
         saveSavedView(level, shiftId, {
           hash: id,
@@ -341,8 +397,9 @@ export function SchedulePage() {
 
   function syncHashFromScroll() {
     if (!syncAllowed.current) return
-    const viewport = document.querySelector('.overlay-scroll-viewport') as HTMLElement | null
+    const viewport = gridViewport()
     if (!viewport) return
+    const liveHash = window.location.hash.replace(/^#/, '')
     const days = viewport.querySelectorAll<HTMLElement>('[id^="day-"]')
     if (!days.length) return
     const sticky = viewport.querySelector('thead') as HTMLElement | null
@@ -352,14 +409,15 @@ export function SchedulePage() {
     days.forEach((el) => {
       if (el.getBoundingClientRect().top <= viewTop) current = el.id
     })
+    const hash = liveHash.startsWith('slot-') ? liveHash : current
     saveSavedView(level, shiftId, {
-      hash: current,
+      hash,
       top: viewport.scrollTop,
       left: viewport.scrollLeft,
     })
     window.clearTimeout(hashTimer.current)
     hashTimer.current = window.setTimeout(() => {
-      if (window.location.hash !== `#${current}`) replaceHash(current)
+      if (window.location.hash !== `#${hash}`) replaceHash(hash)
     }, 50)
   }
 
@@ -536,7 +594,7 @@ export function SchedulePage() {
   }
 
   return (
-    <div className={`schedule-grid-page${expanded ? ' is-expanded' : ''}`}>
+    <div className={`schedule-grid-page is-${density}${expanded ? ' is-expanded' : ''}`}>
       {toast && (
         <div
           className={`alert alert-${toast.kind} alert-dismissible fade show schedule-toast py-2 mb-0`}
@@ -611,18 +669,38 @@ export function SchedulePage() {
           </ul>
         )}
 
-        {expanded && (
-          <button
-            type="button"
-            className="btn btn-dark btn-sm schedule-expand-btn ms-auto"
-            title="Свернуть таблицу"
-            aria-label="Свернуть таблицу"
-            onClick={() => setExpanded(false)}
-          >
-            <i className="bi bi-arrows-angle-contract" />
-            <span className="ms-1">Свернуть</span>
-          </button>
-        )}
+        <div className="schedule-grid-view-controls">
+          <div className="schedule-density" role="group" aria-label="Плотность сетки">
+            <button
+              type="button"
+              className={density === 'compact' ? 'is-active' : ''}
+              aria-pressed={density === 'compact'}
+              onClick={() => setDensity('compact')}
+            >
+              Плотно
+            </button>
+            <button
+              type="button"
+              className={density === 'comfortable' ? 'is-active' : ''}
+              aria-pressed={density === 'comfortable'}
+              onClick={() => setDensity('comfortable')}
+            >
+              Обычно
+            </button>
+          </div>
+          {expanded && (
+            <button
+              type="button"
+              className="btn btn-dark btn-sm schedule-expand-btn"
+              title="Свернуть таблицу"
+              aria-label="Свернуть таблицу"
+              onClick={() => setExpanded(false)}
+            >
+              <i className="bi bi-arrows-angle-contract" />
+              <span className="ms-1">Свернуть</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {grid.classes.length === 0 ? (
@@ -636,13 +714,14 @@ export function SchedulePage() {
           {teacherHoverCss ? <style>{teacherHoverCss}</style> : null}
           <OverlayScrollArea
             key={`${level}-${shiftId ?? 'auto'}`}
+            persistKey={`schedule-grid:${level}:${shiftId ?? 'auto'}`}
             onScroll={syncHashFromScroll}
             onViewportReady={() => {
               tryRestoreAnchor()
             }}
           >
             <table
-              className="table table-bordered mb-0 schedule-grid-table"
+              className={`table table-bordered mb-0 schedule-grid-table is-${density}`}
               onMouseOver={(e) => {
                 const card = (e.target as HTMLElement).closest('.lesson-card') as HTMLElement | null
                 const key = card?.dataset.teacherKey || ''
@@ -677,8 +756,7 @@ export function SchedulePage() {
                       <tr key={`d-${row.day}`} id={dayAnchor(row.day)}>
                         <td
                           colSpan={grid.classes.length + 1}
-                          className="bg-light fw-semibold py-1"
-                          style={{ textAlign: 'center' }}
+                          className="schedule-day-row"
                         >
                           {grid.day_names[row.day - 1]}
                         </td>
@@ -693,8 +771,15 @@ export function SchedulePage() {
                   return (
                     <tr key={`r-${idx}`}>
                       <td className="schedule-slot-index text-center align-middle">
-                        <div className="schedule-slot-num">
-                          {row.kind === 'class_hour' ? 'Классный час' : lesson}
+                        <div
+                          className="schedule-slot-num"
+                          title={row.kind === 'class_hour' ? 'Классный час' : undefined}
+                        >
+                          {row.kind === 'class_hour'
+                            ? density === 'compact'
+                              ? 'Кл. час'
+                              : 'Классный час'
+                            : lesson}
                         </div>
                         {time ? <BellLabel time={time} /> : null}
                       </td>
@@ -713,8 +798,8 @@ export function SchedulePage() {
                           <td
                             key={c.id}
                             id={slotAnchor(c.id, row.day, lesson)}
-                            className="p-1 align-top"
-                            style={{ minWidth: 130, cursor: canAdd ? 'pointer' : 'default' }}
+                            className="schedule-slot-cell align-top"
+                            style={{ cursor: canAdd ? 'pointer' : 'default' }}
                             onDragOver={(e) => e.preventDefault()}
                             onDrop={(e) =>
                               onDropSlot(e, {
@@ -730,7 +815,9 @@ export function SchedulePage() {
                             }}
                           >
                             {cells.length === 0 ? (
-                              <div className="text-muted text-center small py-2">+</div>
+                              <div className="schedule-slot-empty" aria-hidden>
+                                +
+                              </div>
                             ) : (
                               <>
                                 {cells.map((cell, i) => (
@@ -738,6 +825,7 @@ export function SchedulePage() {
                                     key={cell.id}
                                     draggable
                                     data-teacher-key={teacherHoverKey(cell) || undefined}
+                                    title={lessonCardTitle(cell)}
                                     onDragStart={(e) => {
                                       applyTeacherHover(
                                         e.currentTarget.closest('.schedule-grid-table'),
@@ -745,24 +833,39 @@ export function SchedulePage() {
                                       )
                                       onDragStartCell(e, cell)
                                     }}
-                                    className="lesson-card rounded mb-1 position-relative"
+                                    className="lesson-card position-relative"
                                     style={{
                                       ['--lesson-color' as string]: cell.subject_color,
                                     }}
                                   >
-                                    {i > 0 && <hr className="my-1" />}
-                                    <div className="fw-semibold lesson-subject">
+                                    {i > 0 && density === 'comfortable' && <hr className="my-1" />}
+                                    <div className="lesson-subject">
                                       {cell.subject_name}
                                       {cell.group_number != null && (
-                                        <span className="badge schedule-group-badge ms-1">
+                                        <span className="badge schedule-group-badge">
                                           гр.{cell.group_number}
                                         </span>
                                       )}
                                     </div>
-                                    <div className="small teacher-name">{cell.teacher_name ?? '?'}</div>
-                                    {cell.classroom_name && (
-                                      <div className="small text-muted">каб. {cell.classroom_name}</div>
-                                    )}
+                                    <div className="lesson-card-meta">
+                                      <span className="teacher-name">
+                                        {density === 'compact'
+                                          ? shortTeacherName(cell.teacher_name)
+                                          : (cell.teacher_name ?? '?')}
+                                      </span>
+                                      {cell.classroom_name ? (
+                                        <>
+                                          <span className="lesson-meta-sep" aria-hidden>
+                                            ·
+                                          </span>
+                                          <span className="lesson-room">
+                                            {density === 'compact'
+                                              ? cell.classroom_name
+                                              : `каб. ${cell.classroom_name}`}
+                                          </span>
+                                        </>
+                                      ) : null}
+                                    </div>
                                     <div className="lesson-card-actions">
                                       <button
                                         type="button"
@@ -828,6 +931,7 @@ export function SchedulePage() {
         <AddLessonModal
           slot={slot}
           occupied={occupiedForModal}
+          cells={grid.cells}
           classSchoolLevel={level}
           dayNames={grid.day_names}
           error={addM.isError ? extractApiError(addM.error) : null}
@@ -858,6 +962,7 @@ export function SchedulePage() {
 function AddLessonModal(props: {
   slot: SlotKey
   occupied: CellOut[]
+  cells: CellOut[]
   classSchoolLevel: SchoolLevel
   dayNames: string[]
   error: string | null
@@ -865,7 +970,7 @@ function AddLessonModal(props: {
   onSubmit: (assignment_id: number, classroom_id: number | null) => void
   submitting: boolean
 }) {
-  const { slot, occupied, classSchoolLevel, dayNames, error, onClose, onSubmit, submitting } = props
+  const { slot, occupied, cells, classSchoolLevel, dayNames, error, onClose, onSubmit, submitting } = props
   const occupiedSubject =
     occupied.length > 0 && occupied.every((c) => c.subject_name === occupied[0].subject_name)
       ? occupied[0].subject_name
@@ -875,8 +980,8 @@ function AddLessonModal(props: {
   const [classroomId, setClassroomId] = useState<number | ''>('')
 
   const q = useQuery({
-    queryKey: ['schedule', 'assignments-for-class', slot.class_id],
-    queryFn: () => fetchAssignmentsForClass(slot.class_id),
+    queryKey: ['schedule', 'assignments-for-class', slot.class_id, slot.day, slot.lesson],
+    queryFn: () => fetchAssignmentsForClass(slot.class_id, { day: slot.day, lesson: slot.lesson }),
   })
 
   const compatibleAssignments = useMemo(
@@ -907,8 +1012,11 @@ function AddLessonModal(props: {
 
   const allowedClassrooms = useMemo(() => {
     const rooms = q.data?.classrooms ?? []
-    if (!selectedAssignment) return rooms
-    return rooms.filter((c) =>
+    const free = rooms.filter((c) =>
+      roomFreeAtSlot(c, cells, { day: slot.day, lesson: slot.lesson }),
+    )
+    if (!selectedAssignment) return free
+    return free.filter((c) =>
       roomAllows(
         {
           id: c.id,
@@ -923,17 +1031,22 @@ function AddLessonModal(props: {
         },
       ),
     )
-  }, [q.data?.classrooms, selectedAssignment, classSchoolLevel])
+  }, [q.data?.classrooms, selectedAssignment, classSchoolLevel, cells, slot.day, slot.lesson])
 
   useEffect(() => {
     if (filteredAssignments.length === 1) {
       const only = filteredAssignments[0]
       setAssignmentId(only.id)
-      if (only.preferred_classroom_id) setClassroomId(only.preferred_classroom_id)
+      if (only.preferred_classroom_id) {
+        const room = (q.data?.classrooms ?? []).find((c) => c.id === only.preferred_classroom_id)
+        if (room && roomFreeAtSlot(room, cells, { day: slot.day, lesson: slot.lesson })) {
+          setClassroomId(only.preferred_classroom_id)
+        }
+      }
     } else {
       setAssignmentId('')
     }
-  }, [filteredAssignments])
+  }, [filteredAssignments, q.data?.classrooms, cells, slot.day, slot.lesson])
 
   useEffect(() => {
     if (classroomId === '') return
@@ -1005,7 +1118,15 @@ function AddLessonModal(props: {
                       setAssignmentId(id)
                       const picked = filteredAssignments.find((a) => a.id === id)
                       if (picked?.preferred_classroom_id) {
-                        setClassroomId(picked.preferred_classroom_id)
+                        const room = (q.data?.classrooms ?? []).find(
+                          (c) => c.id === picked.preferred_classroom_id,
+                        )
+                        if (
+                          room &&
+                          roomFreeAtSlot(room, cells, { day: slot.day, lesson: slot.lesson })
+                        ) {
+                          setClassroomId(picked.preferred_classroom_id)
+                        }
                       }
                     }}
                   >

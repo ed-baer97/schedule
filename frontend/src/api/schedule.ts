@@ -71,6 +71,7 @@ export type ClassroomChoice = {
   subject_ids: number[]
   is_exclusive: boolean
   school_level?: string | null
+  classes_capacity?: number | null
 }
 
 export type AssignmentChoice = {
@@ -91,7 +92,7 @@ export type AssignmentsData = {
   classrooms: ClassroomChoice[]
 }
 
-export type ScheduleWarning = { type: string; message: string }
+export type ScheduleWarning = ClassroomWarning
 
 export type AutoPageData = {
   teachers: { id: number; full_name: string }[]
@@ -156,8 +157,15 @@ export function deleteScheduleCell(cellId: number) {
   return apiJson<void>(`/api/schedule/cells/${cellId}`, { method: 'DELETE' })
 }
 
-export function fetchAssignmentsForClass(classId: number) {
-  return apiJson<AssignmentsData>(`/api/schedule/assignments-for-class/${classId}`)
+export function fetchAssignmentsForClass(
+  classId: number,
+  slot?: { day: number; lesson: number },
+) {
+  const q =
+    slot != null
+      ? `?day_of_week=${slot.day}&lesson_number=${slot.lesson}`
+      : ''
+  return apiJson<AssignmentsData>(`/api/schedule/assignments-for-class/${classId}${q}`)
 }
 
 export function fetchAutoPageData() {
@@ -218,6 +226,8 @@ export type AutoAllPayload = {
   time_limit_sec: number
   random_seed: number
   diagnose: boolean
+  split?: 'shift' | 'grade_bands'
+  hours_first?: 'more' | 'fewer'
 }
 
 export type AutoByTeacherPayload = {
@@ -263,6 +273,44 @@ export type ExplainSlotOut = {
 
 export function explainSlot(payload: ExplainSlotPayload) {
   return apiJson<ExplainSlotOut>('/api/schedule/explain', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export type AssistPayload = {
+  message: string
+  school_level: SchoolLevel
+  shift_id?: number | null
+  apply?: boolean
+}
+
+export type AssistMove = {
+  cell_id: number
+  subject: string
+  class_name: string
+  from_day: number
+  from_lesson: number
+  to_day: number
+  to_lesson: number
+  allowed: boolean
+  applied: boolean
+  blockers: string[]
+  label: string
+}
+
+export type AssistOut = {
+  interpretation: string
+  llm_used: boolean
+  preference_updates: Record<string, number>
+  preferences_applied: boolean
+  moves: AssistMove[]
+  applied_moves: number
+  rejected: AssistMove[]
+}
+
+export function assistSchedule(payload: AssistPayload) {
+  return apiJson<AssistOut>('/api/schedule/assist', {
     method: 'POST',
     body: JSON.stringify(payload),
   })

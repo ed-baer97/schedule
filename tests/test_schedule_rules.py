@@ -133,6 +133,47 @@ def test_slot_facts_conflict_non_overlapping_intervals():
     assert slot_facts_conflict(a, b) is False
 
 
+def test_slot_facts_conflict_same_bells_different_days():
+    """Clock-only bells must not make Monday occupy Tuesday."""
+    a = SlotFact(
+        slot_id="c1:d2:l1",
+        class_id=1,
+        day=2,
+        lesson=1,
+        shift_id=1,
+        interval=(time(8, 0), time(8, 45)),
+    )
+    b = BusySlotFact(
+        shift_id=1,
+        day=1,
+        lesson=1,
+        interval=(time(8, 0), time(8, 45)),
+    )
+    assert slot_facts_conflict(a, b) is False
+
+
+def test_teacher_busy_at_slot_same_bells_different_day():
+    slot = SlotFact(
+        slot_id="c1:d2:l1",
+        class_id=1,
+        day=2,
+        lesson=1,
+        shift_id=1,
+        interval=(time(8, 0), time(8, 45)),
+    )
+    busy = {
+        10: [
+            BusySlotFact(
+                shift_id=1,
+                day=1,
+                lesson=1,
+                interval=(time(8, 0), time(8, 45)),
+            )
+        ],
+    }
+    assert teacher_busy_at_slot(slot, 10, busy) is False
+
+
 def test_teacher_busy_at_slot_interval_overlap():
     slot = SlotFact(
         slot_id="c1:d1:l2",
@@ -213,3 +254,63 @@ def test_classroom_at_capacity_cap2_not_full():
         )
     )
     assert classroom_at_capacity(slot, 50, busy, capacity=2) is True
+
+
+def test_secondary_grade_bands_split_5_6_then_7_9():
+    from types import SimpleNamespace
+
+    from app.domain.school_class import (
+        grade_bands_for_level,
+        partition_classes_by_grade_bands,
+    )
+
+    bands = grade_bands_for_level("secondary")
+    assert bands[0].label == "5–6 классы"
+    assert bands[0].contains(5) and bands[0].contains(6)
+    assert not bands[0].contains(7)
+    assert bands[1].contains(7) and bands[1].contains(9)
+    classes = [
+        SimpleNamespace(id=1, grade=5),
+        SimpleNamespace(id=2, grade=6),
+        SimpleNamespace(id=3, grade=8),
+        SimpleNamespace(id=4, grade=10),
+    ]
+    parts = partition_classes_by_grade_bands(classes, "secondary")
+    assert [p[0].label for p in parts] == ["5–6 классы", "7–9 классы"]
+    assert [c.grade for c in parts[0][1]] == [5, 6]
+    assert [c.grade for c in parts[1][1]] == [8, 10]
+
+
+def test_elementary_grade_bands_1_2_then_3_4():
+    from types import SimpleNamespace
+
+    from app.domain.school_class import partition_classes_by_grade_bands
+
+    classes = [
+        SimpleNamespace(grade=1),
+        SimpleNamespace(grade=4),
+    ]
+    parts = partition_classes_by_grade_bands(classes, "elementary")
+    assert [p[0].label for p in parts] == ["1–2 классы", "3–4 классы"]
+
+
+def test_leftover_singles_and_extra_singleton_days():
+    from app.domain.schedule_rules import extra_singleton_days, leftover_singles_allowed
+
+    assert leftover_singles_allowed(6) == 0
+    assert leftover_singles_allowed(5) == 1
+    assert leftover_singles_allowed(1) == 1
+    assert extra_singleton_days(0, 6) == 0
+    assert extra_singleton_days(4, 6) == 4
+    assert extra_singleton_days(1, 5) == 0
+    assert extra_singleton_days(3, 5) == 2
+
+
+def test_second_hour_is_split():
+    from app.domain.schedule_rules import second_hour_is_split
+
+    assert second_hour_is_split([], 5) is False
+    assert second_hour_is_split([5], 6) is False
+    assert second_hour_is_split([5], 4) is False
+    assert second_hour_is_split([5], 7) is True
+    assert second_hour_is_split([5, 6], 7) is False

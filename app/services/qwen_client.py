@@ -1,6 +1,5 @@
-"""Qwen (DashScope OpenAI-compatible) client. Phrasing only — never writes schedule cells."""
-from __future__ import annotations
-
+"""Qwen (DashScope OpenAI-compatible) client. Never writes schedule cells."""
+import json
 import logging
 
 import httpx
@@ -58,3 +57,28 @@ def phrase_for_scheduler(user_payload: str, *, system: str) -> str | None:
     except Exception as exc:  # noqa: BLE001
         log.warning("Qwen call failed: %s", exc)
     return None
+
+
+def complete_json(user_payload: str, *, system: str) -> dict | None:
+    """Ask Qwen for a JSON object. Returns None if unset, invalid, or the call fails."""
+    raw = phrase_for_scheduler(user_payload, system=system)
+    if not raw:
+        return None
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        inner = [ln for ln in lines if not ln.strip().startswith("```")]
+        text = "\n".join(inner)
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            return None
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            log.warning("Qwen JSON parse failed: %s", text[:200])
+            return None
+    return data if isinstance(data, dict) else None

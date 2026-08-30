@@ -20,6 +20,7 @@ from app.models.job import (
     JOB_PENDING,
 )
 from app.services.errors import BadRequestError, ConflictError
+from app.services.job_cancel import request_cancel
 from app.services.job_dispatch import dispatch_auto_job, revoke_auto_job
 from app.services.tenancy import require_owned
 
@@ -248,6 +249,9 @@ class JobService:
         job = require_owned(self.db, Job, job_id, self.school_id)
         if job.status in (JOB_DONE, JOB_FAILED, JOB_CANCELLED):
             raise BadRequestError("Задача уже завершена, останавливать нечего.")
+
+        # Flag first so in-process CP-SAT can StopSearch even if this commit waits on SQLite.
+        request_cancel(job_id)
 
         payload = _parse_json(job.progress) or {}
         celery_id = job.celery_task_id

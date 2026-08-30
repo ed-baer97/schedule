@@ -4,10 +4,12 @@ Schedule validation service
 from sqlalchemy.orm import Session
 
 from app.domain.assignment import hours_exhausted
+from app.domain.days import DAY_NAMES
 from app.domain.schedule_facts import UnitFact
 from app.domain.schedule_rules import (
     occupancy_blocks_unit,
     overlapping_classroom_busy,
+    second_hour_is_split,
     slot_facts_conflict,
     subject_day_limit_reached,
     teacher_class_day_limit_reached,
@@ -29,6 +31,12 @@ def _lesson_word(lesson: int) -> str:
     return "классный час" if lesson == 0 else f"урок {lesson}"
 
 
+def _day_name(day: int) -> str:
+    if 1 <= day <= len(DAY_NAMES):
+        return DAY_NAMES[day - 1]
+    return f"день {day}"
+
+
 def _cell_brief(cell: ScheduleCell) -> str:
     assignment = cell.assignment
     subject_name = "?"
@@ -39,7 +47,10 @@ def _cell_brief(cell: ScheduleCell) -> str:
         if assignment.group_number:
             group = f" (гр.{assignment.group_number})"
     class_name = cell.school_class.name if cell.school_class else "?"
-    return f"{subject_name}{group} у {class_name} ({_lesson_word(cell.lesson_number)})"
+    return (
+        f"{subject_name}{group} у {class_name} "
+        f"({_day_name(cell.day_of_week)}, {_lesson_word(cell.lesson_number)})"
+    )
 
 
 class ScheduleValidator:
@@ -190,6 +201,13 @@ class ScheduleValidator:
                 f'(не больше {max_per_day})'
             )
 
+        if self.check_subject_pair_split(assignment, day, lesson, exclude_cell_id):
+            subject_name = assignment.subject.display_name if assignment.subject else "предмет"
+            errors.append(
+                f'Сдвоенные уроки «{subject_name}» должны идти подряд, '
+                f'без другого предмета между ними'
+            )
+
         # Check max lessons per teacher+class per day
         if self.check_teacher_class_per_day_limit(assignment, day, exclude_cell_id):
             teacher_name = assignment.teacher.display_name if assignment.teacher else "учитель"
@@ -217,6 +235,21 @@ class ScheduleValidator:
             query = query.filter(ScheduleCell.id != exclude_cell_id)
         count = query.count()
         return subject_day_limit_reached(count, max_per_day)
+
+    def check_subject_pair_split(self, assignment, day, lesson, exclude_cell_id=None):
+        """True if a second hour of this subject today would not be adjacent."""
+        settings = self._settings_for(assignment.school_class.school_level)
+        max_per_day = settings.max_lessons_per_subject_per_day if settings else 2
+        if max_per_day < 2:
+            return False
+        query = self.session.query(ScheduleCell).filter(
+            ScheduleCell.assignment_id == assignment.id,
+            ScheduleCell.day_of_week == day,
+        )
+        if exclude_cell_id:
+            query = query.filter(ScheduleCell.id != exclude_cell_id)
+        existing = [c.lesson_number for c in query.all()]
+        return second_hour_is_split(existing, lesson)
 
     def check_teacher_class_per_day_limit(self, assignment, day, exclude_cell_id=None):
         """

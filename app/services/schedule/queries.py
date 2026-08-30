@@ -16,7 +16,12 @@ from app.models import (
     TeachingAssignment,
 )
 from app.services.assignment_hours import placed_counts, remaining_for
-from app.services.classroom_resolver import get_classroom_warnings, load_settings
+from app.services.classroom_resolver import (
+    filter_free_classrooms,
+    get_classroom_warnings,
+    load_settings,
+)
+from app.services.schedule_fact_loader import candidate_slot_fact, load_classroom_busy
 from app.services.dto import (
     classroom_choice,
     school_class_row,
@@ -163,8 +168,13 @@ class ScheduleQueriesMixin:
             settings=settings_data(settings) if settings else None,
         )
 
-    def assignments_for_class(self, class_id: int) -> AssignmentsForClassData:
-        require_owned(self.db, SchoolClass, class_id, self.school_id)
+    def assignments_for_class(
+        self,
+        class_id: int,
+        day: int | None = None,
+        lesson: int | None = None,
+    ) -> AssignmentsForClassData:
+        school_class = require_owned(self.db, SchoolClass, class_id, self.school_id)
         assignments = list(
             self.db.execute(
                 select(TeachingAssignment)
@@ -216,6 +226,18 @@ class ScheduleQueriesMixin:
                 .order_by(Classroom.number)
             ).all()
         )
+        if day is not None and lesson is not None:
+            slot = candidate_slot_fact(
+                self.db,
+                class_id=class_id,
+                day=day,
+                lesson=lesson,
+                shift_id=school_class.shift_id,
+            )
+            busy = load_classroom_busy(self.db, {c.id for c in classrooms})
+            classrooms = filter_free_classrooms(
+                classrooms, slot=slot, classroom_busy=busy
+            )
         return AssignmentsForClassData(
             assignments=result,
             classrooms=[classroom_choice(c) for c in classrooms],

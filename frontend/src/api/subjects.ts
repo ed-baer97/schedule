@@ -1,11 +1,14 @@
 import { apiJson } from './client'
 import type { SchoolLevel } from '../domain/schoolLevel'
 
+export type SubjectDifficulty = 'easy' | 'medium' | 'hard'
+
 export type Subject = {
   id: number
   name: string
   color: string | null
   display_color: string
+  difficulty: SubjectDifficulty
   requires_fixed_classroom: boolean
   classrooms: { id: number; display_name: string }[]
 }
@@ -13,6 +16,7 @@ export type Subject = {
 export type SubjectPayload = {
   name: string
   color: string
+  difficulty?: SubjectDifficulty
   requires_fixed_classroom: boolean
 }
 

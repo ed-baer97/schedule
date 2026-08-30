@@ -1,17 +1,21 @@
 """
 Automatic schedule generation service
 """
+from app.domain.preferences import WEIGHT_MAX, clamp_weight
 from app.domain.schedule_rules import groups_can_share_slot
+from app.domain.school_class import (
+    SPLIT_GRADE_BANDS,
+    SPLIT_WHOLE_SHIFT,
+    partition_classes_by_grade_bands,
+)
 from app.models import SchoolClass, TeachingAssignment, ScheduleCell
 from app.services.assignment_hours import remaining_for
 from app.services.classroom_resolver import (
-    get_classroom_warnings,
     load_classroom_facts,
     load_settings,
     pick_classroom,
     pick_classroom_for,
 )
-from app.services.schedule_diagnostics import build_unplaced_diagnostics
 from app.services.schedule_service import ScheduleService
 from app.services.schedule_solver import CpSatScheduleSolver, ResidualGraphSolver
 from app.services.validators import ScheduleValidator
@@ -71,17 +75,26 @@ class AutoScheduler:
         school_level: str = "elementary",
         time_limit_sec: float = 60.0,
         random_seed: int = 1,
+        class_ids: list[int] | None = None,
+        progress_prefix: str | None = None,
+        hours_first: str = "more",
     ):
         """
         CP-SAT: полная пересборка расписания для одной смены (переназначение слотов).
+        ``class_ids`` ограничивает кусок смены (параллели классов).
         """
+
+        def _emit(cur: int, tot: int, msg: str) -> None:
+            text = f"{progress_prefix}: {msg}" if progress_prefix else msg
+            self._report(cur, tot, text)
+
+        load_msg = "Загрузка классов и нагрузки…"
         yield {
             "type": "progress",
             "current": 2,
             "total": 100,
-            "message": "Загрузка классов и нагрузки…",
+            "message": f"{progress_prefix}: {load_msg}" if progress_prefix else load_msg,
         }
-        self._report(2, 100, "Загрузка классов и нагрузки…")
         if self._stopped():
             yield self._cancelled_event()
             return
@@ -91,7 +104,9 @@ class AutoScheduler:
             time_limit_sec=time_limit_sec,
             random_seed=random_seed,
             should_stop=self._should_stop,
-            on_progress=self._on_progress,
+            on_progress=_emit,
+            class_ids=class_ids,
+            hours_first=hours_first,
         )
         if result.status == "CANCELLED" or self._stopped():
             yield self._cancelled_event()
@@ -100,10 +115,14 @@ class AutoScheduler:
             reasons = [
                 d.get("reason") for d in (result.diagnostics or []) if d.get("reason")
             ]
+            message = result.error_message or (
+                reasons[0] if reasons else "Ошибка CP-SAT"
+            )
+            if progress_prefix:
+                message = f"{progress_prefix}: {message}"
             yield {
                 "type": "error",
-                "message": result.error_message
-                or (reasons[0] if reasons else "Ошибка CP-SAT"),
+                "message": message,
                 "diagnostics": result.diagnostics,
                 "cp_sat_status": result.status,
                 "solver_status": result.solver_status,
@@ -111,11 +130,12 @@ class AutoScheduler:
                 "count": 0,
             }
             return
+        write_msg = "Запись расписания в сетку…"
         yield {
             "type": "progress",
             "current": 99,
             "total": 100,
-            "message": "Запись расписания в сетку…",
+            "message": f"{progress_prefix}: {write_msg}" if progress_prefix else write_msg,
         }
         done = {
             "type": "done",
@@ -124,8 +144,6 @@ class AutoScheduler:
             "solver_status": result.solver_status,
             "objective": result.objective,
             "wall_time_sec": result.wall_time_sec,
-            "metrics_before": result.metrics_before,
-            "metrics_after": result.metrics_after,
             "diagnostics": result.diagnostics,
         }
         if result.status in ("INFEASIBLE", "UNKNOWN"):
@@ -168,22 +186,6 @@ class AutoScheduler:
             "solver_used": True,
             "message": f"Repair: добавлено уроков: {result.placed_count}",
         }
-
-    def cp_sat_schedule_shift_result(
-        self,
-        shift_id: int,
-        school_level: str = "elementary",
-        time_limit_sec: float = 60.0,
-        random_seed: int = 1,
-    ):
-        """Return last done/error payload for CP-SAT shift run."""
-        last: dict = {"type": "done", "count": 0}
-        for event in self.cp_sat_schedule_shift_iter(
-            shift_id, school_level, time_limit_sec, random_seed
-        ):
-            if event.get("type") in ("done", "error"):
-                last = event
-        return last
 
     def _get_teacher_lessons_for_class_day(self, class_id, day):
         """Map teacher_id -> set(lesson_number) for class/day."""
@@ -229,8 +231,7 @@ class AutoScheduler:
             around.append(anchor + 1)
         if anchor - 1 >= 1:
             around.append(anchor - 1)
-        rest = [x for x in base if x not in around and x not in existing]
-        return around + rest
+        return [x for x in around if x not in existing]
 
     def _get_classroom_for_cell(
         self, assignment, school_level, day=None, lesson=None, exclude_cell_id=None
@@ -252,19 +253,6 @@ class AutoScheduler:
         settings = self._settings_for(school_level)
         rooms = load_classroom_facts(self.session, self.school_id)
         return pick_classroom(assignment, settings, rooms)
-
-    def schedule_by_teacher_ladder(self, teacher_id, school_level='elementary'):
-        """
-        'Ladder' strategy: fill teacher's schedule sequentially
-        to avoid 'windows' (gaps between lessons).
-        
-        Returns count of scheduled lessons.
-        """
-        count = 0
-        for event in self.schedule_by_teacher_ladder_iter(teacher_id, school_level):
-            if event.get('type') == 'done':
-                count = event['count']
-        return count
 
     def schedule_by_teacher_ladder_result(self, teacher_id, school_level='elementary'):
         """Return full done-event payload for non-stream routes."""
@@ -288,6 +276,14 @@ class AutoScheduler:
         )
         max_per = settings.max_lessons_per_subject_per_day if settings else 2
         return max_per >= 2
+
+    def _strict_consecutive_pairs(self, school_level):
+        """Slider 10: do not split leftover doubles into singleton hours."""
+        if not self._prefer_consecutive_pairs(school_level):
+            return False
+        settings = self._settings_for(school_level)
+        raw = getattr(settings, "pref_adjacent_pairs", 5) if settings else 5
+        return clamp_weight(raw) >= WEIGHT_MAX
 
     def _iter_assignment_slots(self, assignment, working_days, max_lessons):
         """
@@ -670,6 +666,7 @@ class AutoScheduler:
                 break
 
         leftover = [a for a in assignments if remaining_for(a) > 0]
+        strict_pairs = self._strict_consecutive_pairs(school_level)
         if leftover:
             n_left = max(1, sum(remaining_for(a) for a in leftover))
             step = 0
@@ -692,7 +689,7 @@ class AutoScheduler:
                     n = self._place_pair_first_fit(
                         assignment, school_level, working_days, max_lessons
                     )
-                if not n:
+                if not n and not (strict_pairs and kind == 'pair'):
                     n = self._try_place_hour_by_relocating(
                         assignment, school_level, working_days, max_lessons
                     )
@@ -709,6 +706,25 @@ class AutoScheduler:
             return
 
         self.session.commit()
+
+        if strict_pairs:
+            unplaced = [
+                {
+                    "assignment_id": a.id,
+                    "remaining": remaining_for(a),
+                    "reason": "Сдвоенные уроки (ползунок 10): остаток не разбивается на одиночные",
+                }
+                for a in assignments
+                if remaining_for(a) > 0
+            ]
+            yield {
+                'type': 'done',
+                'count': scheduled_count,
+                'solver_used': False,
+                'unplaced': unplaced,
+                'diagnostics': unplaced,
+            }
+            return
 
         solver_result = self.graph_solver.solve_residuals(
             school_level=school_level,
@@ -778,30 +794,14 @@ class AutoScheduler:
                 return 1
         return 0
 
-    def auto_schedule_all(
-        self,
-        school_level='elementary',
-        shift_id=None,
-        time_limit_sec=60.0,
-        random_seed=1,
-    ):
-        """CP-SAT for one shift. Returns count of placed lessons."""
-        result = self.auto_schedule_all_result(
-            school_level,
-            shift_id=shift_id,
-            time_limit_sec=time_limit_sec,
-            random_seed=random_seed,
-        )
-        if result.get('type') == 'error':
-            return 0
-        return result.get('count', 0)
-
     def auto_schedule_all_result(
         self,
         school_level='elementary',
         shift_id=None,
         time_limit_sec=60.0,
         random_seed=1,
+        split=SPLIT_WHOLE_SHIFT,
+        hours_first="more",
     ):
         """Return last done- или error-event для не-stream маршрутов."""
         last = {'type': 'done', 'count': 0}
@@ -810,6 +810,8 @@ class AutoScheduler:
             shift_id=shift_id,
             time_limit_sec=time_limit_sec,
             random_seed=random_seed,
+            split=split,
+            hours_first=hours_first,
         ):
             if event.get('type') in ('done', 'error'):
                 last = event
@@ -821,51 +823,131 @@ class AutoScheduler:
         shift_id=None,
         time_limit_sec=60.0,
         random_seed=1,
+        split=SPLIT_WHOLE_SHIFT,
+        hours_first="more",
     ):
-        """Автозаполнение CP-SAT для одной смены."""
+        """Автозаполнение CP-SAT для одной смены (целиком или кусками по параллелям)."""
         if shift_id is None:
             yield {
                 'type': 'error',
                 'message': 'Укажите shift_id (смену)',
             }
             return
-        yield from self.cp_sat_schedule_shift_iter(
-            shift_id=int(shift_id),
-            school_level=school_level,
-            time_limit_sec=float(time_limit_sec),
-            random_seed=int(random_seed),
-        )
+        sid = int(shift_id)
+        limit = float(time_limit_sec)
+        seed = int(random_seed)
+        if split != SPLIT_GRADE_BANDS:
+            yield from self.cp_sat_schedule_shift_iter(
+                shift_id=sid,
+                school_level=school_level,
+                time_limit_sec=limit,
+                random_seed=seed,
+                hours_first=hours_first,
+            )
+            return
 
-    def clear_schedule(self, school_level=None, class_id=None, teacher_id=None):
-        """Clear schedule (delete cells) with optional filters."""
-        return self._schedule.clear_schedule(
-            school_level=school_level,
-            class_id=class_id,
-            teacher_id=teacher_id,
+        shift_classes = (
+            self.session.query(SchoolClass)
+            .filter_by(
+                shift_id=sid,
+                school_level=school_level,
+                school_id=self.school_id,
+            )
+            .order_by(SchoolClass.grade, SchoolClass.name)
+            .all()
         )
+        chunks = partition_classes_by_grade_bands(shift_classes, school_level)
+        if len(chunks) <= 1:
+            yield from self.cp_sat_schedule_shift_iter(
+                shift_id=sid,
+                school_level=school_level,
+                time_limit_sec=limit,
+                random_seed=seed,
+                hours_first=hours_first,
+            )
+            return
 
-    def build_unscheduled_diagnostics(
-        self, school_level='elementary', teacher_id=None, class_id=None, max_items=20
-    ):
-        """
-        Диагностика нераспределённых часов:
-        для каждого назначения с remaining_hours > 0 показывает топ причин,
-        почему слоты не проходят validate_cell.
-        """
-        return build_unplaced_diagnostics(
-            self.session,
-            self.school_id,
-            school_level=school_level,
-            teacher_id=teacher_id,
-            class_id=class_id,
-            max_items=max_items,
-            classroom_id_for=self._get_classroom_for_cell,
-            validator=self.validator,
-        )
+        n_chunks = len(chunks)
+        total_placed = 0
+        wall_sum = 0.0
+        diagnostics: list = []
+        last_status = None
+        last_solver_status = None
+        any_error = None
+        used = False
 
-    def get_classroom_warnings(self, school_level=None):
-        """
-        Собирает предупреждения об уроках без привязки к кабинету.
-        Returns: [(type, message, cell_or_entity), ...]
-        """
-        return get_classroom_warnings(self.session, self.school_id, school_level)
+        for i, (band, band_classes) in enumerate(chunks):
+            if self._stopped():
+                yield self._cancelled_event(total_placed)
+                return
+            prefix = f"Кусок {i + 1}/{n_chunks} ({band.label})"
+            yield {
+                "type": "progress",
+                "current": int(100 * i / n_chunks),
+                "total": 100,
+                "message": f"{prefix}: старт, {len(band_classes)} кл.",
+            }
+            self._report(
+                int(100 * i / n_chunks),
+                100,
+                f"{prefix}: старт, {len(band_classes)} кл.",
+            )
+            for event in self.cp_sat_schedule_shift_iter(
+                shift_id=sid,
+                school_level=school_level,
+                time_limit_sec=limit,
+                random_seed=seed,
+                class_ids=[c.id for c in band_classes],
+                progress_prefix=prefix,
+                hours_first=hours_first,
+            ):
+                if event.get("type") == "cancelled":
+                    yield self._cancelled_event(total_placed)
+                    return
+                if event.get("type") == "progress":
+                    yield event
+                    continue
+                if event.get("type") == "error":
+                    any_error = event
+                    diagnostics.extend(event.get("diagnostics") or [])
+                    last_status = event.get("cp_sat_status")
+                    last_solver_status = event.get("solver_status")
+                    wall_sum += float(event.get("wall_time_sec") or 0)
+                    yield {
+                        "type": "progress",
+                        "current": int(100 * (i + 1) / n_chunks),
+                        "total": 100,
+                        "message": event.get("message") or f"{prefix}: ошибка",
+                    }
+                    break
+                if event.get("type") == "done":
+                    total_placed += int(event.get("count") or 0)
+                    wall_sum += float(event.get("wall_time_sec") or 0)
+                    last_status = event.get("cp_sat_status")
+                    last_solver_status = event.get("solver_status")
+                    used = used or bool(event.get("solver_used"))
+                    diagnostics.extend(event.get("diagnostics") or [])
+            try:
+                self.session.expire_all()
+            except Exception:
+                pass
+
+        if any_error is not None and total_placed == 0:
+            yield {
+                **any_error,
+                "count": 0,
+                "diagnostics": diagnostics or any_error.get("diagnostics"),
+                "wall_time_sec": wall_sum,
+            }
+            return
+        yield {
+            "type": "done",
+            "count": total_placed,
+            "cp_sat_status": last_status,
+            "solver_status": last_solver_status,
+            "wall_time_sec": wall_sum,
+            "diagnostics": diagnostics or None,
+            "solver_used": used,
+            "split": SPLIT_GRADE_BANDS,
+            "chunks": n_chunks,
+        }

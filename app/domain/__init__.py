@@ -15,12 +15,16 @@ from app.domain.classroom_rules import (
 )
 from app.domain.days import DAY_NAMES, SHORT_DAY_NAMES, fmt_time, time_range_label
 from app.domain.names import normalize_person_name
+from app.domain.pair_epochs import MAX_PAIR_LESSON, freeze_keys_for_good_doubles
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
 from app.domain.schedule_rules import (
     classroom_at_capacity,
+    extra_singleton_days,
     groups_can_share_slot,
+    leftover_singles_allowed,
     occupancy_blocks_unit,
     overlapping_classroom_busy,
+    second_hour_is_split,
     slot_facts_conflict,
     slots_conflict,
     subject_day_limit_reached,
@@ -29,7 +33,15 @@ from app.domain.schedule_rules import (
     time_intervals_overlap,
     units_cannot_share_class_slot,
 )
-from app.domain.school_class import grade_from_name, level_from_grade
+from app.domain.school_class import (
+    SPLIT_GRADE_BANDS,
+    SPLIT_WHOLE_SHIFT,
+    GradeBand,
+    grade_bands_for_level,
+    grade_from_name,
+    level_from_grade,
+    partition_classes_by_grade_bands,
+)
 from app.domain.school_level import level_label
 
 __all__ = [
@@ -39,6 +51,11 @@ __all__ = [
     "time_range_label",
     "grade_from_name",
     "level_from_grade",
+    "GradeBand",
+    "SPLIT_WHOLE_SHIFT",
+    "SPLIT_GRADE_BANDS",
+    "grade_bands_for_level",
+    "partition_classes_by_grade_bands",
     "level_label",
     "normalize_person_name",
     "remaining_hours",
@@ -46,6 +63,9 @@ __all__ = [
     "slots_conflict",
     "slot_facts_conflict",
     "time_intervals_overlap",
+    "leftover_singles_allowed",
+    "extra_singleton_days",
+    "second_hour_is_split",
     "subject_day_limit_reached",
     "teacher_class_day_limit_reached",
     "groups_can_share_slot",
@@ -68,4 +88,6 @@ __all__ = [
     "placement_cost",
     "rank_candidate_rooms",
     "candidate_rooms_for",
+    "freeze_keys_for_good_doubles",
+    "MAX_PAIR_LESSON",
 ]

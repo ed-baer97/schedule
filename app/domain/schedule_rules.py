@@ -24,13 +24,18 @@ def slots_conflict(
 ) -> bool:
     """
     True if two slots cannot occur at the same time.
-    With intervals: overlap. Otherwise: same day and same lesson number.
+
+    Bell intervals are clock times without a date, so overlap is only
+    meaningful on the same weekday (Mon 08:00 must not block Tue 08:00).
+    Same day: overlapping bells, or the same lesson number if a bell is missing.
     """
+    if day_a != day_b:
+        return False
     if interval_a is not None and interval_b is not None:
         return time_intervals_overlap(
             interval_a[0], interval_a[1], interval_b[0], interval_b[1]
         )
-    return day_a == day_b and lesson_a == lesson_b
+    return lesson_a == lesson_b
 
 
 def slot_facts_conflict(a: SlotFact | BusySlotFact, b: SlotFact | BusySlotFact) -> bool:
@@ -43,6 +48,27 @@ def slot_facts_conflict(a: SlotFact | BusySlotFact, b: SlotFact | BusySlotFact) 
         lesson_b=b.lesson,
         interval_b=b.interval,
     )
+
+
+def leftover_singles_allowed(hours: int) -> int:
+    """Odd weekly hours may keep one singleton day; even hours must not."""
+    return max(0, int(hours)) % 2
+
+
+def extra_singleton_days(singleton_days: int, hours: int) -> int:
+    """How many singleton days exceed the one leftover allowed for odd hours."""
+    return max(0, int(singleton_days) - leftover_singles_allowed(hours))
+
+
+def second_hour_is_split(existing_lessons, new_lesson: int) -> bool:
+    """True if the subject already has one hour today and the new one is not adjacent.
+
+    Forbids English at 5 and 7 with another subject at 6.
+    """
+    existing = {int(n) for n in existing_lessons}
+    if len(existing) != 1:
+        return False
+    return abs(int(new_lesson) - next(iter(existing))) != 1
 
 
 def subject_day_limit_reached(placed_today: int, max_per_day: int) -> bool:

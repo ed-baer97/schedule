@@ -65,6 +65,7 @@ class ClassroomChoiceData:
     subject_ids: list[int] = field(default_factory=list)
     is_exclusive: bool = False
     school_level: str | None = None
+    classes_capacity: int = 1
 
 
 @dataclass
@@ -149,6 +150,7 @@ class SubjectData:
     color: str | None
     display_color: str
     requires_fixed_classroom: bool
+    difficulty: str = "medium"
     classrooms: list[ClassroomBriefData] | None = None
 
 
@@ -240,6 +242,7 @@ def classroom_choice(c) -> ClassroomChoiceData:
         subject_ids=[s.id for s in subjects],
         is_exclusive=bool(getattr(c, "is_exclusive", False)),
         school_level=getattr(c, "school_level", None),
+        classes_capacity=int(getattr(c, "classes_capacity", None) or 1),
     )
 
 
@@ -302,6 +305,7 @@ def subject_data(s) -> SubjectData:
         color=s.color,
         display_color=s.display_color,
         requires_fixed_classroom=bool(s.requires_fixed_classroom),
+        difficulty=getattr(s, "difficulty", "medium") or "medium",
         classrooms=[classroom_brief(r) for r in rooms],
     )
 

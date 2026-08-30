@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import School, User
 from app.services.job_service import JobService
+from app.services.schedule_assist import ScheduleAssistService
 from app.services.schedule_explain import ScheduleExplainService
 from app.services.schedule_service import ScheduleService
 from backend.deps import get_current_school, get_current_user, get_db
@@ -17,6 +18,9 @@ from backend.schemas.schedule import (
     AutoAllStreamBody,
     AutoByTeacherStreamBody,
     AutoPageData,
+    AssistBody,
+    AssistMoveOut,
+    AssistOut,
     ClassroomChoiceOut,
     ClassroomWarningOut,
     ClearScheduleBody,
@@ -84,8 +88,12 @@ def assignments_for_class(
     class_id: int,
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
+    day_of_week: int | None = None,
+    lesson_number: int | None = None,
 ) -> AssignmentsForClassOut:
-    data = ScheduleService(db, school.id).assignments_for_class(class_id)
+    data = ScheduleService(db, school.id).assignments_for_class(
+        class_id, day=day_of_week, lesson=lesson_number
+    )
     return AssignmentsForClassOut(
         assignments=[
             AssignmentChoiceOut.model_validate(asdict(a)) for a in data.assignments
@@ -299,4 +307,43 @@ def enqueue_repair(
         kind="repair",
         payload=body.model_dump(),
         created_by_id=user.id,
+    )
+
+
+def _assist_move_out(m) -> AssistMoveOut:
+    return AssistMoveOut(
+        cell_id=m.cell_id,
+        subject=m.subject,
+        class_name=m.class_name,
+        from_day=m.from_day,
+        from_lesson=m.from_lesson,
+        to_day=m.to_day,
+        to_lesson=m.to_lesson,
+        allowed=m.allowed,
+        applied=m.applied,
+        blockers=m.blockers,
+        label=m.label,
+    )
+
+
+@router.post("/assist", response_model=AssistOut)
+def assist_schedule(
+    body: AssistBody,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> AssistOut:
+    result = ScheduleAssistService(db, school.id).run(
+        message=body.message,
+        school_level=body.school_level,
+        shift_id=body.shift_id,
+        apply=body.apply,
+    )
+    return AssistOut(
+        interpretation=result.interpretation,
+        llm_used=result.llm_used,
+        preference_updates=result.preference_updates,
+        preferences_applied=result.preferences_applied,
+        moves=[_assist_move_out(m) for m in result.moves],
+        applied_moves=result.applied_moves,
+        rejected=[_assist_move_out(m) for m in result.rejected],
     )

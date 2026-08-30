@@ -78,6 +78,7 @@ class SubjectService:
         *,
         name: str,
         color: str,
+        difficulty: str = Subject.DIFFICULTY_MEDIUM,
         requires_fixed_classroom: bool = False,
         commit: bool = True,
     ) -> SubjectData | Subject:
@@ -85,6 +86,7 @@ class SubjectService:
             school_id=self.school_id,
             name=name.strip(),
             color=color,
+            difficulty=difficulty if difficulty in Subject.DIFFICULTIES else Subject.DIFFICULTY_MEDIUM,
             requires_fixed_classroom=requires_fixed_classroom,
         )
         self.db.add(s)
@@ -131,6 +133,7 @@ class SubjectService:
         *,
         name: str | None = None,
         color: str | None = None,
+        difficulty: str | None = None,
         requires_fixed_classroom: bool | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> SubjectData:
@@ -141,6 +144,8 @@ class SubjectService:
             s.name = str(name).strip()
         if "color" in fields_set and color is not None:
             s.color = color
+        if "difficulty" in fields_set and difficulty is not None:
+            s.difficulty = difficulty if difficulty in Subject.DIFFICULTIES else Subject.DIFFICULTY_MEDIUM
         if "requires_fixed_classroom" in fields_set and requires_fixed_classroom is not None:
             s.requires_fixed_classroom = bool(requires_fixed_classroom)
         self.db.commit()

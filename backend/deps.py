@@ -2,7 +2,7 @@
 from collections.abc import Generator
 
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import Config
@@ -10,9 +10,10 @@ from app.models import School, User
 from app.models.user import ROLE_PLATFORM_ADMIN
 from backend.security import decode_access_token
 
+_IS_SQLITE = str(Config.SQLALCHEMY_DATABASE_URI).startswith("sqlite")
 _connect_args = (
-    {"check_same_thread": False}
-    if str(Config.SQLALCHEMY_DATABASE_URI).startswith("sqlite")
+    {"check_same_thread": False, "timeout": 30}
+    if _IS_SQLITE
     else {}
 )
 
@@ -21,6 +22,15 @@ engine = create_engine(
     connect_args=_connect_args,
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+if _IS_SQLITE:
+    @event.listens_for(engine, "connect")
+    def _sqlite_on_connect(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.close()
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -19,6 +19,7 @@ from app.models.job import (
     JOB_TERMINAL_STATUSES,
 )
 from app.services.auto_scheduler import AutoScheduler
+from app.services.job_cancel import clear_cancel, is_cancel_requested
 from app.services.job_dispatch import set_dispatcher, set_revoker
 from backend.celery_app import broker_is_reachable, celery_app
 from backend.deps import SessionLocal
@@ -40,6 +41,10 @@ def _update_job(db, job_id: int, **fields) -> None:
     job = db.get(Job, job_id)
     if job is None:
         return
+    try:
+        db.refresh(job)
+    except Exception:
+        pass
     new_status = fields.get("status")
     if job.status in JOB_TERMINAL_STATUSES:
         return
@@ -75,6 +80,8 @@ def _update_job(db, job_id: int, **fields) -> None:
 def _job_wants_cancel(db, job_id: int) -> bool:
     from app.models import Job
 
+    if is_cancel_requested(job_id):
+        return True
     job = db.get(Job, job_id)
     if job is None:
         return False
@@ -104,6 +111,9 @@ def _make_should_stop(job_id: int):
     last = {"t": 0.0, "v": False}
 
     def should_stop() -> bool:
+        if is_cancel_requested(job_id):
+            last["v"] = True
+            return True
         now = time.monotonic()
         if now - last["t"] < 0.3:
             return bool(last["v"])
@@ -120,9 +130,9 @@ def _make_should_stop(job_id: int):
                     db.commit()
                 except Exception:
                     db.rollback()
-            return bool(last["v"])
+            return bool(last["v"]) or is_cancel_requested(job_id)
         except Exception:
-            return False
+            return bool(last["v"]) or is_cancel_requested(job_id)
         finally:
             db.close()
 
@@ -187,20 +197,32 @@ def _fail_enqueue(job_id: int, error: str) -> None:
         db.close()
 
 
+_QUEUE_REQUIRED_MSG = (
+    "Redis недоступен. Автосоставление в контейнере API не запускается "
+    "(лимит 512 МБ). Поднимите очередь: docker compose --profile queue up -d"
+)
+
+
 def _dispatch_auto_job(job_id: int) -> None:
-    """Celery delay when Redis is up; otherwise a daemon thread in this process.
+    """Celery delay when Redis is up; otherwise a daemon thread if allowed.
 
     Ping the broker first so a missing Redis does not burn ~20s of kombu retries.
     If Redis answers, never fall back to the API process (512 MB container).
-    Tests keep the in-process sync call so SQLite stays single-threaded.
+    Docker sets SOLVER_ALLOW_IN_PROCESS=false: missing Redis → job failed.
+    Local Windows (unset) still runs a thread. Tests keep the in-process sync
+    call so SQLite stays single-threaded.
     """
     if os.environ.get("PYTEST_CURRENT_TEST"):
         run_auto_schedule(job_id)
         return
     reachable = broker_is_reachable()
     if not reachable:
-        log.warning("Redis unreachable; auto-job %s runs in the API process", job_id)
-        _start_in_process(job_id)
+        if Config.solver_allow_in_process():
+            log.warning("Redis unreachable; auto-job %s runs in the API process", job_id)
+            _start_in_process(job_id)
+            return
+        log.warning("Redis unreachable; auto-job %s failed (in-process disabled)", job_id)
+        _fail_enqueue(job_id, _QUEUE_REQUIRED_MSG)
         return
     try:
         async_result = run_auto_schedule.delay(job_id)
@@ -286,6 +308,8 @@ def run_auto_schedule(self, job_id: int) -> dict:
                 shift_id=payload.get("shift_id"),
                 time_limit_sec=limit,
                 random_seed=payload.get("random_seed"),
+                split=payload.get("split") or "shift",
+                hours_first=payload.get("hours_first") or "more",
             )
         elif kind == "auto_by_teacher":
             iterator = scheduler.schedule_by_teacher_ladder_iter(
@@ -385,6 +409,7 @@ def run_auto_schedule(self, job_id: int) -> dict:
         raise
     finally:
         db.close()
+        clear_cancel(job_id)
 
 
 set_dispatcher(_dispatch_auto_job)

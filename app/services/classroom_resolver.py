@@ -108,6 +108,38 @@ def candidate_classrooms(
     return candidate_rooms_for(rooms, ctx)
 
 
+def classroom_free_at_slot(
+    classroom_id: int,
+    *,
+    slot: SlotFact,
+    classroom_busy: dict,
+    capacity: int,
+) -> bool:
+    """True if placing into this room at ``slot`` would not exceed capacity."""
+    return not classroom_at_capacity(
+        slot, classroom_id, classroom_busy, max(1, int(capacity or 1))
+    )
+
+
+def filter_free_classrooms(
+    rooms: list[Classroom],
+    *,
+    slot: SlotFact,
+    classroom_busy: dict,
+) -> list[Classroom]:
+    """Drop rooms that are already at capacity at ``slot``."""
+    return [
+        room
+        for room in rooms
+        if classroom_free_at_slot(
+            room.id,
+            slot=slot,
+            classroom_busy=classroom_busy,
+            capacity=room.classes_capacity or 1,
+        )
+    ]
+
+
 def pick_classroom(
     assignment: TeachingAssignment,
     settings: ScheduleSettings | None,

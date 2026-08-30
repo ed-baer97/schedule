@@ -39,6 +39,8 @@ export function AutoSchedulerPage() {
   const [shiftId, setShiftId] = useState<number | ''>('')
   const [timeLimit, setTimeLimit] = useState<number>(60)
   const [seed, setSeed] = useState<number>(1)
+  const [hoursFirst, setHoursFirst] = useState<'more' | 'fewer'>('more')
+  const [split, setSplit] = useState<'shift' | 'grade_bands'>('shift')
   const [diagnose, setDiagnose] = useState<boolean>(false)
   const [teacherId, setTeacherId] = useState<number | ''>('')
   const [running, setRunning] = useState<boolean>(false)
@@ -65,6 +67,7 @@ export function AutoSchedulerPage() {
     queryKey: ['jobs', 'active'],
     queryFn: fetchActiveJob,
     retry: false,
+    refetchInterval: (query) => (query.state.data ? 2000 : false),
   })
 
   useEffect(() => {
@@ -163,6 +166,10 @@ export function AutoSchedulerPage() {
     const count = e.count ?? '—'
     const wall = e.wall_time_sec as number | undefined
     appendLog(`Готово. В сетку записано уроков: ${count}.`)
+    const chunks = e.chunks as number | undefined
+    if (chunks != null && chunks > 1) {
+      appendLog(`Смена порезана на ${chunks} куска по параллелям.`)
+    }
     if (typeof wall === 'number') {
       appendLog(`Поиск занял ${Math.round(wall)} с.`)
     }
@@ -194,7 +201,9 @@ export function AutoSchedulerPage() {
     setStuckJobId(null)
     setRunning(true)
     setActiveJobId(jobId)
-    setStopping(false)
+    if (!opts?.resume) {
+      setStopping(false)
+    }
     if (opts?.resume) {
       appendLog(`Задача #${jobId} продолжается на сервере`)
     }
@@ -251,6 +260,7 @@ export function AutoSchedulerPage() {
     if (job == null) return
     if (attachedJobIdRef.current === job.id) return
     void attachToJob(job.id, { resume: true })
+    if (job.status === 'cancelling') setStopping(true)
     // attachToJob is recreated each render; resume only when the active id changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeQ.data?.id])
@@ -267,6 +277,8 @@ export function AutoSchedulerPage() {
         time_limit_sec: timeLimit,
         random_seed: seed,
         diagnose,
+        split,
+        hours_first: hoursFirst,
       }),
     )
   }
@@ -303,13 +315,28 @@ export function AutoSchedulerPage() {
     await startJob(() => enqueueRepair({ school_level: level }))
   }
 
-  async function stopRunning() {
-    if (activeJobId == null || stopping) return
+  const stopJobId = activeJobId ?? activeQ.data?.id ?? null
+
+  async function stopRunning(force = false) {
+    if (stopJobId == null) return
     setStopping(true)
     try {
-      await cancelJob(activeJobId)
-      appendLog('Запрошена остановка…')
+      await cancelJob(stopJobId, force)
+      appendLog(force ? 'Задача сброшена.' : 'Запрошена остановка…')
+      await qc.invalidateQueries({ queryKey: ['jobs'] })
     } catch (e) {
+      if (!force) {
+        try {
+          await cancelJob(stopJobId, true)
+          appendLog('Остановка не прошла — задача сброшена.')
+          await qc.invalidateQueries({ queryKey: ['jobs'] })
+          return
+        } catch (e2) {
+          setStopping(false)
+          setError(e2 instanceof Error ? e2.message : String(e2))
+          return
+        }
+      }
       setStopping(false)
       setError(e instanceof Error ? e.message : String(e))
     }
@@ -414,30 +441,94 @@ export function AutoSchedulerPage() {
                     value={timeLimit}
                     onChange={(e) => setTimeLimit(Number(e.target.value) || 60)}
                   />
-                  <div className="form-text">
-                    Сначала ищет любое допустимое расписание, затем улучшает его до этого лимита.
+                </div>
+                <div className="col-12">
+                  <label className="form-label small">Область CP-SAT</label>
+                  <div className="form-check">
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="cpSatSplit"
+                      id="splitWhole"
+                      checked={split === 'shift'}
+                      onChange={() => setSplit('shift')}
+                    />
+                    <label className="form-check-label" htmlFor="splitWhole">
+                      Вся смена
+                    </label>
+                  </div>
+                  <div className="form-check">
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="cpSatSplit"
+                      id="splitBands"
+                      checked={split === 'grade_bands'}
+                      onChange={() => setSplit('grade_bands')}
+                    />
+                    <label className="form-check-label" htmlFor="splitBands">
+                      Порезать смену
+                    </label>
                   </div>
                 </div>
-                <div className="col-md-6">
-                  <label className="form-label small">Random seed</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={seed}
-                    onChange={(e) => setSeed(Number(e.target.value) || 1)}
-                  />
-                </div>
-                <div className="col-12 form-check ms-2 mt-2">
-                  <input
-                    className="form-check-input"
-                    type="checkbox"
-                    id="diagnoseAll"
-                    checked={diagnose}
-                    onChange={(e) => setDiagnose(e.target.checked)}
-                  />
-                  <label className="form-check-label" htmlFor="diagnoseAll">
-                    Диагностика остатка
-                  </label>
+                <div className="col-12 mt-1">
+                  <details className="border rounded p-2 bg-light bg-opacity-50">
+                    <summary className="small text-muted fw-semibold" style={{ cursor: 'pointer' }}>
+                      Дополнительно (seed, порядок часов, диагностика)
+                    </summary>
+                    <div className="row g-2 mt-1 pt-1 border-top">
+                      <div className="col-md-6">
+                        <label className="form-label small">Random seed</label>
+                        <input
+                          type="number"
+                          className="form-control form-control-sm"
+                          value={seed}
+                          onChange={(e) => setSeed(Number(e.target.value) || 1)}
+                        />
+                      </div>
+                      <div className="col-md-6">
+                        <label className="form-label small">Порядок предметов</label>
+                        <div className="form-check">
+                          <input
+                            className="form-check-input"
+                            type="radio"
+                            name="hoursFirst"
+                            id="hoursMore"
+                            checked={hoursFirst === 'more'}
+                            onChange={() => setHoursFirst('more')}
+                          />
+                          <label className="form-check-label small" htmlFor="hoursMore">
+                            Сначала больше часов в неделю
+                          </label>
+                        </div>
+                        <div className="form-check">
+                          <input
+                            className="form-check-input"
+                            type="radio"
+                            name="hoursFirst"
+                            id="hoursFewer"
+                            checked={hoursFirst === 'fewer'}
+                            onChange={() => setHoursFirst('fewer')}
+                          />
+                          <label className="form-check-label small" htmlFor="hoursFewer">
+                            Сначала меньше часов в неделю
+                          </label>
+                        </div>
+                      </div>
+                      <div className="col-12 form-check ms-2 mt-1">
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          id="diagnoseAll"
+                          checked={diagnose}
+                          onChange={(e) => setDiagnose(e.target.checked)}
+                        />
+                        <label className="form-check-label small" htmlFor="diagnoseAll">
+                          Диагностика остатка
+                        </label>
+                      </div>
+                    </div>
+                  </details>
                 </div>
               </div>
               <div className="mt-3 d-flex gap-2">
@@ -523,10 +614,10 @@ export function AutoSchedulerPage() {
               <button
                 type="button"
                 className="btn btn-sm btn-outline-danger"
-                disabled={activeJobId == null || stopping}
-                onClick={stopRunning}
+                disabled={stopJobId == null}
+                onClick={() => void stopRunning(stopping)}
               >
-                Остановить
+                {stopping ? 'Сбросить' : 'Остановить'}
               </button>
             )}
           </div>
@@ -591,7 +682,6 @@ function RulesCard(props: {
 }) {
   const { level, initial, disabled, onSave } = props
   const showGroupLeave = level === 'elementary'
-  const [maxPerDay, setMaxPerDay] = useState(initial.max_lessons_per_subject_per_day)
   const [mode, setMode] = useState<ClassroomMode>(initial.classroom_mode)
   const [groupLeave, setGroupLeave] = useState(initial.elementary_group_subjects_leave)
   const [prefGaps, setPrefGaps] = useState(initial.pref_teacher_gaps ?? 5)
@@ -600,7 +690,6 @@ function RulesCard(props: {
   const [prefRooms, setPrefRooms] = useState(initial.pref_classroom_stability ?? 5)
 
   useEffect(() => {
-    setMaxPerDay(initial.max_lessons_per_subject_per_day)
     setMode(initial.classroom_mode)
     setGroupLeave(initial.elementary_group_subjects_leave)
     setPrefGaps(initial.pref_teacher_gaps ?? 5)
@@ -608,7 +697,6 @@ function RulesCard(props: {
     setPrefPairs(initial.pref_adjacent_pairs ?? 5)
     setPrefRooms(initial.pref_classroom_stability ?? 5)
   }, [
-    initial.max_lessons_per_subject_per_day,
     initial.classroom_mode,
     initial.elementary_group_subjects_leave,
     initial.pref_teacher_gaps,
@@ -627,20 +715,6 @@ function RulesCard(props: {
         </p>
         <div className="row g-2">
           <div className="col-md-6">
-            <label className="form-label small">Уроки одного предмета в день</label>
-            <select
-              className="form-select"
-              value={String(maxPerDay)}
-              onChange={(e) => setMaxPerDay(Number(e.target.value))}
-            >
-              <option value="1">1 урок</option>
-              <option value="2">2 урока подряд</option>
-            </select>
-            <div className="form-text">
-              При «2 урока подряд» лесенка сначала ставит сдвоенные уроки; если не умещается — сдвигает уже поставленный урок этого учителя.
-            </div>
-          </div>
-          <div className="col-md-6">
             <label className="form-label small">Режим кабинетов</label>
             <select
               className="form-select"
@@ -652,17 +726,19 @@ function RulesCard(props: {
             </select>
           </div>
           {showGroupLeave && (
-            <div className="col-12 form-check ms-2 mt-2">
-              <input
-                className="form-check-input"
-                type="checkbox"
-                id="group-leave-auto"
-                checked={groupLeave}
-                onChange={(e) => setGroupLeave(e.target.checked)}
-              />
-              <label className="form-check-label" htmlFor="group-leave-auto">
-                Групповые уроки: дети уходят к учителю
-              </label>
+            <div className="col-md-6 d-flex align-items-center mt-3 mt-md-0">
+              <div className="form-check ms-2 mt-md-3">
+                <input
+                  className="form-check-input"
+                  type="checkbox"
+                  id="group-leave-auto"
+                  checked={groupLeave}
+                  onChange={(e) => setGroupLeave(e.target.checked)}
+                />
+                <label className="form-check-label" htmlFor="group-leave-auto">
+                  Групповые уроки: дети уходят к учителю
+                </label>
+              </div>
             </div>
           )}
           <div className="col-12 mt-3">
@@ -693,9 +769,6 @@ function RulesCard(props: {
                 onChange={setPrefRooms}
               />
             </div>
-            <div className="form-text">
-              Веса сохраняются в настройках уровня и применяются при следующем прогоне CP-SAT.
-            </div>
           </div>
         </div>
         <button
@@ -704,7 +777,7 @@ function RulesCard(props: {
           disabled={disabled}
           onClick={() =>
             onSave({
-              max_lessons_per_subject_per_day: maxPerDay,
+              max_lessons_per_subject_per_day: 2,
               classroom_mode: mode,
               elementary_group_subjects_leave: showGroupLeave ? groupLeave : undefined,
               pref_teacher_gaps: prefGaps,

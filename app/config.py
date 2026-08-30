@@ -59,6 +59,16 @@ class Config:
     SOLVER_TIME_LIMIT_SEC = int(os.environ.get("SOLVER_TIME_LIMIT_SEC") or "90")
     # Match Docker worker cpus (default 4). Extra CP-SAT threads only contend.
     SOLVER_NUM_WORKERS = max(1, int(os.environ.get("SOLVER_NUM_WORKERS") or "4"))
+
+    @staticmethod
+    def solver_allow_in_process() -> bool:
+        """Windows/dev without Redis: run CP-SAT in the API process.
+
+        Docker compose sets SOLVER_ALLOW_IN_PROCESS=false so a missing
+        queue cannot OOM the 512 MB api container.
+        """
+        return _env_bool("SOLVER_ALLOW_IN_PROCESS", default=True)
+
     QWEN_API_KEY = (os.environ.get("QWEN_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or "").strip()
     QWEN_BASE_URL = (
         os.environ.get("QWEN_BASE_URL")

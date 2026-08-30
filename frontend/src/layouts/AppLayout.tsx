@@ -111,15 +111,19 @@ function ActiveJobBanner() {
         <button
           type="button"
           className="btn btn-sm btn-outline-danger"
-          disabled={stopping}
           onClick={() => {
             setStopping(true)
-            void cancelJob(job.id)
+            void cancelJob(job.id, job.status === 'cancelling' || stopping)
               .then(() => qc.invalidateQueries({ queryKey: ['jobs'] }))
+              .catch(() =>
+                cancelJob(job.id, true).then(() =>
+                  qc.invalidateQueries({ queryKey: ['jobs'] }),
+                ),
+              )
               .finally(() => setStopping(false))
           }}
         >
-          Остановить
+          {job.status === 'cancelling' || stopping ? 'Сбросить' : 'Остановить'}
         </button>
       </span>
     </div>

@@ -32,10 +32,16 @@ class Subject(Base):
         "#7f8c8d": "#3f5248",
     }
 
+    DIFFICULTY_EASY = "easy"
+    DIFFICULTY_MEDIUM = "medium"
+    DIFFICULTY_HARD = "hard"
+    DIFFICULTIES = (DIFFICULTY_EASY, DIFFICULTY_MEDIUM, DIFFICULTY_HARD)
+
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     color = Column(String(7), default=DEFAULT_COLOR)
+    difficulty = Column(String(20), default=DIFFICULTY_MEDIUM, nullable=False)
     requires_fixed_classroom = Column(Boolean, default=False)
 
     school = relationship("School")

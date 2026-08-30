@@ -10,7 +10,7 @@
 
 **Не входит в эти этапы:** S3/MinIO, Flower, второй Celery worker, несколько uvicorn workers.
 
-Подробности compose и бэкапов — [deploy.md](deploy.md).
+Подробности compose, `.env` и бэкапов — [deploy.md](deploy.md). Alembic head: `14subject_difficulty`.
 
 ---
 
@@ -139,11 +139,13 @@
 - [x] Фронт: поллинг вместо NDJSON
 - [x] Лимит solver (`SOLVER_TIME_LIMIT_SEC`, default 90)
 - [x] Одна активная задача на школу (409 если уже running)
+- [x] Docker: `SOLVER_ALLOW_IN_PROCESS=false` (без очереди job `failed`, не OOM в api)
+- [x] Worker `depends_on` healthy api; `QWEN_*` в контейнере api
 
 ### Готово, когда
 
 - [ ] С `--profile queue` справочники открываются во время автосоставления
-- [ ] Без Redis локально: sync fallback всё ещё считает задачу
+- [ ] `python run_api.py` без Redis: fallback в процесс API всё ещё считает задачу
 
 ---
 

@@ -143,6 +143,56 @@ def test_enqueue_abandons_dead_in_process_job() -> None:
     assert "прерван" in (got.json()["error"] or "")
 
 
+def test_cancel_sets_in_process_flag_for_live_thread() -> None:
+    """StopSearch path: Event is set even while a worker thread is alive."""
+    import threading
+    import time
+
+    from app.services.job_cancel import clear_cancel, is_cancel_requested
+    from backend.tasks import _make_should_stop
+
+    with SessionLocal() as session:
+        job = Job(
+            school_id=TEST_SCHOOL_ID,
+            kind="auto_all",
+            status="running",
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+    halt = threading.Event()
+
+    def _hold() -> None:
+        while not halt.is_set():
+            time.sleep(0.05)
+
+    worker = threading.Thread(target=_hold, name=f"auto-job-{job_id}", daemon=True)
+    worker.start()
+    try:
+        r = client.post(f"/api/jobs/{job_id}/cancel")
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "cancelling"
+        assert is_cancel_requested(job_id)
+        assert _make_should_stop(job_id)() is True
+    finally:
+        halt.set()
+        worker.join(timeout=2)
+        clear_cancel(job_id)
+
+
+def test_should_stop_sees_in_process_flag_without_db_row() -> None:
+    from app.services.job_cancel import clear_cancel, request_cancel
+    from backend.tasks import _make_should_stop
+
+    job_id = 9_000_001
+    request_cancel(job_id)
+    try:
+        assert _make_should_stop(job_id)() is True
+    finally:
+        clear_cancel(job_id)
+
+
 def test_cancel_dead_running_job_is_immediate() -> None:
     with SessionLocal() as session:
         job = Job(school_id=TEST_SCHOOL_ID, kind="auto_all", status="running")
@@ -337,3 +387,58 @@ def test_dispatch_fails_closed_when_redis_up_but_enqueue_errors(monkeypatch) -> 
         assert job is not None
         assert job.status == "failed"
         assert "Celery" in (job.error or "")
+
+
+def test_dispatch_fails_when_in_process_disabled_and_redis_down(monkeypatch) -> None:
+    from app.services.job_service import JobService
+    from backend import tasks
+
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.setenv("SOLVER_ALLOW_IN_PROCESS", "false")
+    monkeypatch.setattr(tasks, "broker_is_reachable", lambda: False)
+
+    def _should_not_run(_job_id: int) -> None:
+        raise AssertionError("in-process fallback must not run in Docker")
+
+    monkeypatch.setattr(tasks, "_start_in_process", _should_not_run)
+
+    with SessionLocal() as session:
+        queued = JobService(session, TEST_SCHOOL_ID).enqueue_auto(
+            kind="repair",
+            payload={"school_level": "elementary"},
+            created_by_id=TEST_USER_ID,
+            dispatch=False,
+        )
+        job_id = queued["job_id"]
+
+    tasks._dispatch_auto_job(job_id)
+
+    with SessionLocal() as session:
+        job = session.get(Job, job_id)
+        assert job is not None
+        assert job.status == "failed"
+        assert "profile queue" in (job.error or "")
+
+
+def test_dispatch_in_process_when_allowed_and_redis_down(monkeypatch) -> None:
+    from app.services.job_service import JobService
+    from backend import tasks
+
+    started: list[int] = []
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("SOLVER_ALLOW_IN_PROCESS", raising=False)
+    monkeypatch.setattr(tasks, "broker_is_reachable", lambda: False)
+    monkeypatch.setattr(tasks, "_start_in_process", started.append)
+
+    with SessionLocal() as session:
+        queued = JobService(session, TEST_SCHOOL_ID).enqueue_auto(
+            kind="repair",
+            payload={"school_level": "elementary"},
+            created_by_id=TEST_USER_ID,
+            dispatch=False,
+        )
+        job_id = queued["job_id"]
+
+    tasks._dispatch_auto_job(job_id)
+    assert started == [job_id]
+

@@ -103,6 +103,7 @@ class ClassroomChoiceOut(BaseModel):
     subject_ids: list[int] = []
     is_exclusive: bool = False
     school_level: str | None = None
+    classes_capacity: int = 1
 
 
 class AssignmentsForClassOut(BaseModel):
@@ -143,6 +144,8 @@ class AutoAllStreamBody(BaseModel):
     time_limit_sec: float = 60.0
     random_seed: int = 1
     diagnose: bool = False
+    split: str = Field("shift", pattern="^(shift|grade_bands)$")
+    hours_first: str = Field("more", pattern="^(more|fewer)$")
 
 
 class AutoByTeacherStreamBody(BaseModel):
@@ -196,3 +199,34 @@ class RepairBody(BaseModel):
     school_level: str = Field("elementary", pattern="^(elementary|secondary)$")
     teacher_id: int | None = None
     class_id: int | None = None
+
+
+class AssistBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+    school_level: str = Field("elementary", pattern="^(elementary|secondary)$")
+    shift_id: int | None = None
+    apply: bool = False
+
+
+class AssistMoveOut(BaseModel):
+    cell_id: int
+    subject: str
+    class_name: str
+    from_day: int
+    from_lesson: int
+    to_day: int
+    to_lesson: int
+    allowed: bool
+    applied: bool
+    blockers: list[str]
+    label: str
+
+
+class AssistOut(BaseModel):
+    interpretation: str
+    llm_used: bool
+    preference_updates: dict[str, int]
+    preferences_applied: bool
+    moves: list[AssistMoveOut]
+    applied_moves: int
+    rejected: list[AssistMoveOut]

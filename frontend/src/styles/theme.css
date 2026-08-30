@@ -422,6 +422,10 @@ body.schedule-grid-expanded .schedule-grid-chrome .schedule-grid-meta {
   margin-bottom: 0 !important;
 }
 
+body.schedule-grid-expanded .schedule-grid-view-controls {
+  margin-bottom: 0;
+}
+
 body.schedule-grid-expanded .schedule-grid-chrome .nav-link {
   padding: 0.2rem 0.65rem;
   font-size: 0.8125rem;
@@ -433,6 +437,55 @@ body.schedule-grid-expanded .schedule-grid-chrome .badge {
 
 .schedule-grid-actions {
   min-height: 2rem;
+}
+
+.schedule-grid-view-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  margin-bottom: 0.75rem;
+  width: fit-content;
+  flex-shrink: 0;
+}
+
+.schedule-density {
+  display: inline-flex;
+  border: 1px solid var(--kivi-line);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--kivi-surface);
+}
+
+.schedule-density button {
+  border: 0;
+  background: transparent;
+  color: var(--kivi-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  padding: 0.22rem 0.55rem;
+  cursor: pointer;
+}
+
+.schedule-density button + button {
+  border-left: 1px solid var(--kivi-line);
+}
+
+.schedule-density button.is-active {
+  background: color-mix(in srgb, var(--kivi-primary) 18%, var(--kivi-surface));
+  color: var(--kivi-ink);
+}
+
+.schedule-density button:hover:not(.is-active),
+.schedule-density button:focus-visible:not(.is-active) {
+  color: var(--kivi-ink);
+  outline: none;
+}
+
+body.schedule-grid-expanded .schedule-density button {
+  padding: 0.16rem 0.5rem;
+  font-size: 0.72rem;
 }
 
 .schedule-expand-btn {
@@ -582,7 +635,13 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 
 /* ——— Schedule grid (сетка) ——— */
 .schedule-grid-table {
+  --slot-index-width: 6.25rem;
   font-size: 0.85rem;
+}
+
+.schedule-grid-table.is-compact {
+  --slot-index-width: 4.85rem;
+  font-size: 0.8rem;
 }
 
 .schedule-grid-table th,
@@ -594,13 +653,22 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   position: sticky;
   left: 0;
   z-index: 1;
-  width: 6.25rem;
-  min-width: 6.25rem;
-  max-width: 6.5rem;
+  width: var(--slot-index-width);
+  min-width: var(--slot-index-width);
+  max-width: calc(var(--slot-index-width) + 0.25rem);
   padding: 0.45rem 0.4rem;
   background: var(--kivi-surface);
   box-shadow: 1px 0 0 var(--kivi-line);
   color: var(--kivi-ink);
+}
+
+.schedule-grid-table.is-compact .schedule-slot-index {
+  padding: 0.22rem 0.28rem;
+}
+
+.schedule-grid-table.is-compact thead th {
+  padding: 0.28rem 0.35rem;
+  font-size: 0.78rem;
 }
 
 .schedule-grid-scroll thead.table-light th.schedule-slot-index,
@@ -616,6 +684,10 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   color: var(--kivi-ink);
 }
 
+.schedule-grid-table.is-compact .schedule-slot-num {
+  font-size: 0.92rem;
+}
+
 .schedule-bell {
   display: flex;
   flex-direction: column;
@@ -629,11 +701,26 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   color: var(--kivi-ink);
 }
 
+.schedule-grid-table.is-compact .schedule-bell {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 0.12em;
+  margin-top: 0.08rem;
+  font-size: 0.6875rem;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+}
+
 .schedule-bell-dash {
   font-size: 0.7rem;
   font-weight: 600;
   line-height: 1;
   color: color-mix(in srgb, var(--kivi-ink) 55%, transparent);
+}
+
+.schedule-grid-table.is-compact .schedule-bell-dash {
+  font-size: 0.62rem;
 }
 
 .schedule-bell-end {
@@ -643,7 +730,54 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 .schedule-grid-table [id^='day-'] > td,
 .schedule-grid-table [id^='slot-'] {
   scroll-margin-top: 42px;
-  scroll-margin-left: 6.25rem;
+  scroll-margin-left: var(--slot-index-width);
+}
+
+.schedule-day-row {
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--kivi-ink);
+  background: color-mix(in srgb, var(--kivi-bg) 80%, var(--kivi-surface)) !important;
+  padding: 0.25rem 0.5rem;
+}
+
+.schedule-grid-table.is-compact .schedule-day-row {
+  padding: 0.1rem 0.35rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+}
+
+.schedule-slot-cell {
+  min-width: 8.125rem;
+  padding: 0.25rem !important;
+}
+
+.schedule-grid-table.is-compact .schedule-slot-cell {
+  min-width: 6.7rem;
+  padding: 2px !important;
+}
+
+.schedule-slot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3.5rem;
+  color: color-mix(in srgb, var(--kivi-muted) 45%, transparent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  user-select: none;
+}
+
+.schedule-grid-table.is-compact .schedule-slot-empty {
+  min-height: 2.2rem;
+  font-size: 0.8rem;
+}
+
+.schedule-slot-cell:hover .schedule-slot-empty,
+.schedule-slot-cell:focus-within .schedule-slot-empty {
+  color: var(--kivi-muted);
 }
 
 .schedule-slot {
@@ -674,6 +808,13 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   transition: box-shadow 0.12s ease, opacity 0.12s ease, background 0.12s ease;
 }
 
+.schedule-grid-table.is-compact .lesson-card {
+  padding: 3px 6px;
+  margin-bottom: 2px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+
 .lesson-card:active {
   cursor: grabbing;
 }
@@ -685,6 +826,37 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   z-index: 3;
   display: flex;
   gap: 2px;
+}
+
+.schedule-grid-table.is-compact .lesson-card-actions {
+  top: 2px;
+  right: 2px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .schedule-grid-table.is-compact .lesson-card-actions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .schedule-grid-table.is-compact .lesson-card:hover .lesson-card-actions,
+  .schedule-grid-table.is-compact .lesson-card:focus-within .lesson-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .schedule-grid-table.is-compact .lesson-card:hover .lesson-subject,
+  .schedule-grid-table.is-compact .lesson-card:focus-within .lesson-subject,
+  .schedule-grid-table.is-compact .lesson-card:hover .lesson-card-meta,
+  .schedule-grid-table.is-compact .lesson-card:focus-within .lesson-card-meta {
+    padding-right: 3.2rem;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .schedule-grid-table.is-compact .lesson-card {
+    padding-right: 3.5rem;
+  }
 }
 
 .lesson-card-action {
@@ -725,15 +897,71 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   border-color: color-mix(in srgb, #c0392b 35%, var(--kivi-line));
 }
 
-.lesson-card .lesson-subject,
 .lesson-card .lesson-subject {
   font-weight: 600;
   color: var(--kivi-ink);
+  min-width: 0;
 }
 
-.lesson-card .teacher-name {
+.schedule-grid-table.is-compact .lesson-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.lesson-card .lesson-subject .schedule-group-badge {
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+.schedule-grid-table.is-compact .schedule-group-badge {
+  font-size: 0.62rem;
+  padding: 0.12em 0.35em;
+}
+
+.lesson-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.35rem;
+  row-gap: 0;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.schedule-grid-table.is-comfortable .lesson-card-meta {
+  flex-direction: column;
+  gap: 0;
+}
+
+.schedule-grid-table.is-compact .lesson-card-meta {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.lesson-card .teacher-name,
+.lesson-card .lesson-room {
   font-size: 0.72rem;
   color: var(--kivi-muted);
+  min-width: 0;
+}
+
+.schedule-grid-table.is-compact .teacher-name,
+.schedule-grid-table.is-compact .lesson-room {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lesson-meta-sep {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--kivi-ink) 38%, transparent);
+  font-size: 0.72rem;
+}
+
+.schedule-grid-table.is-comfortable .lesson-meta-sep {
+  display: none;
 }
 
 .slot-add-subgroup {
@@ -749,6 +977,13 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
+}
+
+.schedule-grid-table.is-compact .slot-add-subgroup {
+  padding: 1px 0;
+  margin-top: 1px;
+  font-size: 0.8rem;
+  border-radius: 4px;
 }
 
 .slot-add-subgroup:hover,
@@ -1377,7 +1612,13 @@ html[data-theme='dark'] .overlay-scroll-thumb {
 
   .overlay-scroll-bar,
   .schedule-expand-btn,
-  .schedule-grid-actions {
+  .schedule-grid-actions,
+  .schedule-grid-view-controls,
+  .lesson-card-actions {
     display: none !important;
+  }
+
+  .lesson-card {
+    padding-right: 6px !important;
   }
 }

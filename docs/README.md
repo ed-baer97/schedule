@@ -4,20 +4,26 @@
 
 | Документ | Содержание |
 |----------|------------|
-| [Архитектура и структура](architecture.md) | Дерево репозитория, слои, модели, API, страницы UI, правила слота и кабинета |
-| [Продукт](product.md) | Цель, сущности, правила (в т.ч. пулы кабинетов), стек |
+| [Архитектура и структура](architecture.md) | Слои, дерево, модели, API, UI, правила слота/кабинета, зеркала Python↔TS |
+| [Продукт](product.md) | Цель, сущности, правила (кабинеты, сложность предмета), стек |
 | [Этапы выкладки](stages.md) | Чеклист стенда: хост, Docker, auth, админка, очередь |
 | [Локальная разработка (Windows)](local-windows.md) | Два процесса: FastAPI и Vite |
-| [Стенд / Docker](deploy.md) | Compose, Postgres, nginx, бэкапы |
+| [Стенд / Docker](deploy.md) | Compose, `.env`, Postgres, nginx, бэкапы, RAM |
+
+Alembic head: `14subject_difficulty`. Flask в runtime нет.
 
 ## Слои приложения
 
 ```
 браузер  →  Vite :5173 (dev) / nginx (прод)
                 ↓  /api
-            FastAPI :8000
+            FastAPI :8000  (SPA из frontend/dist на стенде)
                 ↓
-            SQLAlchemy  →  SQLite (dev) / PostgreSQL (стенд)
+            app/services → app/domain + app/models
                 ↓
-            OR-Tools  (локально sync; на стенде Celery + Redis)
+            SQLite (dev) / PostgreSQL (стенд)
+                ↓
+            OR-Tools  (локально поток API; на стенде Celery + Redis)
 ```
+
+Границы слоёв и write-path — в [architecture.md](architecture.md). Деплой — [deploy.md](deploy.md).
