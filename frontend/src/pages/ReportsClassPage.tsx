@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { exportClassUrl, fetchClassReport } from '../api/reports'
 import {
   ReportGrid,
+  buildTimetableRows,
   indexReportCells,
   renderClassReportCells,
 } from '../components/ReportGrid'
@@ -21,43 +22,16 @@ export function ReportsClassPage() {
   if (q.isLoading) return <p>Загрузка…</p>
   if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
   const r = q.data!
-  const cellsBy = indexReportCells(r.cells)
-
-  const rows = [
-    ...(r.class_hour_day != null && r.class_hour_time_label
-      ? [
-          {
-            key: 'class-hour',
-            label: (
-              <>
-                <div className="fw-bold">Классный час</div>
-                <div className="small text-muted text-nowrap">{r.class_hour_time_label}</div>
-              </>
-            ),
-            dayCells: r.day_names.slice(0, r.working_days).map((_, dayIdx) => {
-              const day = dayIdx + 1
-              if (day !== r.class_hour_day) return null
-              return renderClassReportCells(cellsBy.get(`${day}:0`) ?? [])
-            }),
-          },
-        ]
-      : []),
-    ...r.lessons_range.map((lesson) => ({
-      key: lesson,
-      label: <div className="fw-bold">{lesson}</div>,
-      dayCells: r.day_names.slice(0, r.working_days).map((_, dayIdx) => {
-        const day = dayIdx + 1
-        const matches = cellsBy.get(`${day}:${lesson}`) ?? []
-        const time = r.lesson_times_by_day[day]?.[lesson]
-        return (
-          <>
-            {time && <div className="small text-muted">{time}</div>}
-            {renderClassReportCells(matches)}
-          </>
-        )
-      }),
-    })),
-  ]
+  const rows = buildTimetableRows({
+    dayNames: r.day_names,
+    workingDays: r.working_days,
+    lessonsRange: r.lessons_range,
+    classHourDay: r.class_hour_day,
+    classHourTimeLabel: r.class_hour_time_label,
+    lessonTimesByDay: r.lesson_times_by_day,
+    cellsBy: indexReportCells(r.cells),
+    renderCells: renderClassReportCells,
+  })
 
   return (
     <div>
@@ -83,7 +57,7 @@ export function ReportsClassPage() {
       <ReportGrid
         dayNames={r.day_names}
         workingDays={r.working_days}
-        headerWidth={110}
+        headerWidth={120}
         rows={rows}
       />
     </div>

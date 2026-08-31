@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { exportTeacherUrl, fetchTeacherReport } from '../api/reports'
 import {
   ReportGrid,
+  buildTimetableRows,
   indexReportCells,
   renderTeacherReportCells,
 } from '../components/ReportGrid'
@@ -21,16 +22,21 @@ export function ReportsTeacherPage() {
   if (q.isLoading) return <p>Загрузка…</p>
   if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
   const r = q.data!
-  const cellsBy = indexReportCells(r.cells)
+  const lessonsRange =
+    r.lessons_range?.length > 0
+      ? r.lessons_range
+      : Array.from({ length: r.max_lessons }, (_, i) => i + 1)
 
-  const rows = Array.from({ length: r.max_lessons }, (_, i) => i + 1).map((lesson) => ({
-    key: lesson,
-    label: <span className="fw-bold">{lesson}</span>,
-    dayCells: r.day_names.slice(0, r.working_days).map((_, dayIdx) => {
-      const day = dayIdx + 1
-      return renderTeacherReportCells(cellsBy.get(`${day}:${lesson}`) ?? [])
-    }),
-  }))
+  const rows = buildTimetableRows({
+    dayNames: r.day_names,
+    workingDays: r.working_days,
+    lessonsRange,
+    classHourDay: r.class_hour_day,
+    classHourTimeLabel: r.class_hour_time_label,
+    lessonTimesByDay: r.lesson_times_by_day,
+    cellsBy: indexReportCells(r.cells),
+    renderCells: renderTeacherReportCells,
+  })
 
   return (
     <div>
@@ -53,7 +59,12 @@ export function ReportsTeacherPage() {
         </div>
       </div>
 
-      <ReportGrid dayNames={r.day_names} workingDays={r.working_days} rows={rows} />
+      <ReportGrid
+        dayNames={r.day_names}
+        workingDays={r.working_days}
+        headerWidth={120}
+        rows={rows}
+      />
     </div>
   )
 }

@@ -1,5 +1,5 @@
 """Reports API schemas."""
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReportCellOut(BaseModel):
@@ -34,4 +34,8 @@ class TeacherReportOut(BaseModel):
     day_names: list[str]
     working_days: int
     max_lessons: int
+    lessons_range: list[int] = Field(default_factory=list)
+    class_hour_day: int | None = None
+    class_hour_time_label: str | None = None
+    lesson_times_by_day: dict[int, dict[int, str]] = Field(default_factory=dict)
     cells: list[ReportCellOut]

@@ -795,6 +795,73 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   background-color: color-mix(in srgb, var(--kivi-primary) 10%, transparent);
 }
 
+.report-grid-table td {
+  min-width: 8.5rem;
+  vertical-align: top;
+}
+
+.report-lesson-index {
+  width: 110px;
+  color: var(--kivi-ink);
+}
+
+.report-lesson-num {
+  font-size: 1.05rem;
+  line-height: 1.2;
+}
+
+.lesson-card.report-lesson-card {
+  cursor: default;
+  padding: 6px 8px;
+  margin-bottom: 0.35rem;
+}
+
+.lesson-card.report-lesson-card:last-child {
+  margin-bottom: 0;
+}
+
+.lesson-card.report-lesson-card:active {
+  cursor: default;
+}
+
+.report-grid-table .lesson-card-meta {
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.report-bell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-top: 0.2rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0.03em;
+  line-height: 1.15;
+  color: var(--kivi-ink);
+}
+
+.report-bell-dash {
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1;
+  color: color-mix(in srgb, var(--kivi-ink) 55%, transparent);
+}
+
+html[data-theme='dark'] .report-bell {
+  color: #eef3ea;
+}
+
+html[data-theme='dark'] .report-bell-dash {
+  color: #a8b8ae;
+}
+
+html[data-theme='dark'] .report-lesson-index {
+  background-color: #1a2622;
+  color: #eef3ea;
+}
+
 .lesson-card {
   padding: 6px 8px;
   padding-right: 3.5rem;
@@ -1393,6 +1460,43 @@ html[data-theme='dark'] .schedule-grid-card.card {
   background: var(--kivi-surface);
 }
 
+/* Subject palette is forest/dust hexes meant for light paper. On dark
+   surfaces they vanish as a 3px bar and cards match the table fill.
+   Lift the fill with the subject tint and mix the bar toward cream. */
+html[data-theme='dark'] .lesson-card {
+  background: color-mix(
+    in srgb,
+    var(--lesson-color, var(--kivi-primary)) 28%,
+    #1e2c28
+  );
+  border: 1px solid
+    color-mix(in srgb, var(--lesson-color, var(--kivi-primary)) 40%, #3a4c46);
+  border-left: 4px solid
+    color-mix(in srgb, var(--lesson-color, var(--kivi-primary)) 52%, #f4fffd);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.3);
+}
+
+html[data-theme='dark'] .lesson-card .lesson-subject {
+  color: #f4fffd;
+}
+
+html[data-theme='dark'] .lesson-card .teacher-name,
+html[data-theme='dark'] .lesson-card .lesson-room {
+  color: #c5d4cc;
+}
+
+html[data-theme='dark'] .schedule-group-badge {
+  background: color-mix(in srgb, var(--kivi-amber) 44%, #2e2820);
+  color: #fff6e8;
+  border: 1px solid color-mix(in srgb, var(--kivi-amber) 58%, #4a4030);
+}
+
+html[data-theme='dark'] .schedule-grid-table.is-teacher-hover
+  .lesson-card.teacher-highlight
+  .teacher-name {
+  color: var(--kivi-primary);
+}
+
 html[data-theme='dark'] .table {
   --bs-table-bg: var(--kivi-surface);
   --bs-table-color: var(--kivi-ink);
@@ -1412,6 +1516,47 @@ html[data-theme='dark'] .table {
 html[data-theme='dark'] .table > thead.table-light th {
   background-color: #1c2a24;
   color: var(--kivi-muted);
+}
+
+html[data-theme='dark'] .table.report-grid-table {
+  --bs-table-bg: #101814;
+  --bs-table-border-color: #2c3a34;
+}
+
+html[data-theme='dark'] .table.report-grid-table > tbody > tr > td {
+  background-color: #101814;
+  color: var(--kivi-ink);
+}
+
+html[data-theme='dark'] .table.report-grid-table > thead.table-light th {
+  background-color: #1a2622;
+  color: #c5d4cc;
+  border-color: #2c3a34;
+}
+
+html[data-theme='dark'] .table.report-grid-table > tbody > tr > td.report-lesson-index {
+  background-color: #1a2622;
+  color: #eef3ea;
+}
+
+/* Legacy class-report cards used inline white fill; beat that in dark. */
+html[data-theme='dark'] .app-shell .table td > .border.rounded {
+  background: color-mix(in srgb, var(--kivi-coral) 22%, #1e2c28) !important;
+  color: #eef3ea !important;
+  border-left-width: 4px !important;
+}
+
+html[data-theme='dark'] .app-shell .table td > .border.rounded .fw-semibold {
+  color: #f4fffd !important;
+}
+
+html[data-theme='dark'] .app-shell .table td > .border.rounded .small,
+html[data-theme='dark'] .app-shell .table td > .border.rounded .small.text-muted {
+  color: #c5d4cc !important;
+}
+
+html[data-theme='dark'] .app-shell .table td > .small.text-muted {
+  color: #eef3ea !important;
 }
 
 /* Pin hover/active cells to ink. Table variants (warning, light) reset

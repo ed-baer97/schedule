@@ -32,6 +32,10 @@ export type TeacherReport = {
   day_names: string[]
   working_days: number
   max_lessons: number
+  lessons_range: number[]
+  class_hour_day: number | null
+  class_hour_time_label: string | null
+  lesson_times_by_day: Record<number, Record<number, string>>
   cells: ReportCell[]
 }
 
