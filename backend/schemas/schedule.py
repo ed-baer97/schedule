@@ -141,7 +141,7 @@ class AutoPageData(BaseModel):
 class AutoAllStreamBody(BaseModel):
     school_level: str = Field("elementary", pattern="^(elementary|secondary)$")
     shift_id: int
-    time_limit_sec: float = 60.0
+    time_limit_sec: float = Field(60.0, ge=1, le=86_400)
     random_seed: int = 1
     diagnose: bool = False
     split: str = Field("shift", pattern="^(shift|grade_bands)$")

@@ -300,7 +300,7 @@ def run_auto_schedule(self, job_id: int) -> dict:
         last_event: dict = {}
         last_progress_t = 0.0
         wrote_progress = False
-        limit = int(payload.get("time_limit_sec") or Config.SOLVER_TIME_LIMIT_SEC)
+        limit = Config.clamp_solver_time_limit(payload.get("time_limit_sec"))
 
         if kind == "auto_all":
             iterator = scheduler.auto_schedule_all_iter(

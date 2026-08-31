@@ -137,7 +137,7 @@
 - [x] `POST /api/schedule/auto` → `202` + `job_id`
 - [x] `GET /api/jobs/{id}`
 - [x] Фронт: поллинг вместо NDJSON
-- [x] Лимит solver (`SOLVER_TIME_LIMIT_SEC`, default 90)
+- [x] Лимит solver: UI `time_limit_sec`, потолок `SOLVER_TIME_LIMIT_SEC` (default 3600)
 - [x] Одна активная задача на школу (409 если уже running)
 - [x] Docker: `SOLVER_ALLOW_IN_PROCESS=false` (без очереди job `failed`, не OOM в api)
 - [x] Worker `depends_on` healthy api; `QWEN_*` в контейнере api

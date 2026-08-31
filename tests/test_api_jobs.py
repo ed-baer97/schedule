@@ -1,6 +1,8 @@
 """Cancel / stop auto-schedule jobs."""
 from __future__ import annotations
 
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete
@@ -441,4 +443,54 @@ def test_dispatch_in_process_when_allowed_and_redis_down(monkeypatch) -> None:
 
     tasks._dispatch_auto_job(job_id)
     assert started == [job_id]
+
+
+def test_enqueue_keeps_requested_time_limit(monkeypatch) -> None:
+    from app.config import Config
+    from app.services.job_service import JobService
+
+    monkeypatch.setattr(Config, "SOLVER_TIME_LIMIT_SEC", 3600)
+    with SessionLocal() as session:
+        queued = JobService(session, TEST_SCHOOL_ID).enqueue_auto(
+            kind="repair",
+            payload={"school_level": "elementary", "time_limit_sec": 180},
+            created_by_id=TEST_USER_ID,
+            dispatch=False,
+        )
+        job = session.get(Job, queued["job_id"])
+        body = json.loads(job.progress)
+        assert body["time_limit_sec"] == 180.0
+
+
+def test_enqueue_caps_time_limit_at_env_ceiling(monkeypatch) -> None:
+    from app.config import Config
+    from app.services.job_service import JobService
+
+    monkeypatch.setattr(Config, "SOLVER_TIME_LIMIT_SEC", 90)
+    with SessionLocal() as session:
+        queued = JobService(session, TEST_SCHOOL_ID).enqueue_auto(
+            kind="repair",
+            payload={"school_level": "elementary", "time_limit_sec": 500},
+            created_by_id=TEST_USER_ID,
+            dispatch=False,
+        )
+        job = session.get(Job, queued["job_id"])
+        body = json.loads(job.progress)
+        assert body["time_limit_sec"] == 90.0
+
+
+def test_enqueue_defaults_time_limit_when_omitted() -> None:
+    from app.config import Config
+    from app.services.job_service import JobService
+
+    with SessionLocal() as session:
+        queued = JobService(session, TEST_SCHOOL_ID).enqueue_auto(
+            kind="repair",
+            payload={"school_level": "elementary"},
+            created_by_id=TEST_USER_ID,
+            dispatch=False,
+        )
+        job = session.get(Job, queued["job_id"])
+        body = json.loads(job.progress)
+        assert body["time_limit_sec"] == float(Config.SOLVER_DEFAULT_TIME_LIMIT_SEC)
 

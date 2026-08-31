@@ -387,6 +387,7 @@ class AutoScheduler:
             day=day,
             lesson=lesson,
             classroom_id=classroom_id,
+            require_classroom=True,
         )
         if errors:
             return 0
@@ -495,6 +496,7 @@ class AutoScheduler:
                 lesson=new_lesson,
                 classroom_id=room,
                 exclude_cell_id=c.id,
+                require_classroom=True,
             )
             if errors:
                 return False
@@ -780,7 +782,8 @@ class AutoScheduler:
                 assignment=comp,
                 day=day,
                 lesson=lesson,
-                classroom_id=classroom_id
+                classroom_id=classroom_id,
+                require_classroom=True,
             )
             if not errors:
                 self._schedule.insert_cell(

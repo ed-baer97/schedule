@@ -85,6 +85,7 @@ def build_unplaced_diagnostics(
                     day=day,
                     lesson=lesson,
                     classroom_id=classroom_id,
+                    require_classroom=True,
                 )
                 if not errors:
                     feasible_slots += 1

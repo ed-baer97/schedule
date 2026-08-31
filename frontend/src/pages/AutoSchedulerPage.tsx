@@ -433,14 +433,23 @@ export function AutoSchedulerPage() {
                   </select>
                 </div>
                 <div className="col-md-6">
-                  <label className="form-label small">Time limit, сек</label>
+                  <label className="form-label small">Время поиска, сек</label>
                   <input
                     type="number"
                     className="form-control"
                     min={1}
+                    max={86400}
+                    step={1}
                     value={timeLimit}
-                    onChange={(e) => setTimeLimit(Number(e.target.value) || 60)}
+                    onChange={(e) => {
+                      const n = Number(e.target.value)
+                      setTimeLimit(Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1)
+                    }}
                   />
+                  <div className="form-text">
+                    Сколько секунд решатель ищет расписание. Если допустимое нашлось раньше —
+                    оставшееся время идёт на улучшение.
+                  </div>
                 </div>
                 <div className="col-12">
                   <label className="form-label small">Область CP-SAT</label>

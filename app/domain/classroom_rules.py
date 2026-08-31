@@ -10,6 +10,9 @@ COST_OTHER_SUBJECT = 50
 COST_GENERAL = 40
 COST_PREFERRED_BONUS = -5
 
+# Auto-scheduler hard rule: every placed lesson must have a concrete classroom.
+MSG_NO_CLASSROOM = "Нет доступного кабинета для урока"
+
 
 CLASSROOM_SCHOOL_LEVELS = frozenset({"elementary", "secondary"})
 

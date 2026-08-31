@@ -149,11 +149,19 @@ def pick_classroom(
     lesson: int | None = None,
     classroom_busy: dict | None = None,
     exclude_cell_id: int | None = None,
+    prefer_classroom_id: int | None = None,
 ) -> int | None:
-    """Best free classroom for assignment (optionally at a slot)."""
+    """Best free classroom for assignment (optionally at a slot).
+
+    ``prefer_classroom_id`` (paired hour's room) is tried first if still free.
+    """
     candidates = candidate_classrooms(assignment, settings, rooms)
     if not candidates:
         return None
+    if prefer_classroom_id is not None:
+        preferred = [c for c in candidates if c[0] == prefer_classroom_id]
+        if preferred:
+            candidates = preferred + [c for c in candidates if c[0] != prefer_classroom_id]
     if day is None or lesson is None or classroom_busy is None:
         return candidates[0][0]
 
@@ -181,6 +189,26 @@ def pick_classroom(
     return None
 
 
+def adjacent_pair_classroom_id(
+    db: Session,
+    assignment_id: int,
+    day: int,
+    lesson: int,
+    *,
+    exclude_cell_id: int | None = None,
+) -> int | None:
+    """Classroom of a neighbouring hour of the same assignment, if any."""
+    stmt = select(ScheduleCell.classroom_id).where(
+        ScheduleCell.assignment_id == assignment_id,
+        ScheduleCell.day_of_week == day,
+        ScheduleCell.lesson_number.in_((lesson - 1, lesson + 1)),
+        ScheduleCell.classroom_id.is_not(None),
+    )
+    if exclude_cell_id is not None:
+        stmt = stmt.where(ScheduleCell.id != exclude_cell_id)
+    return db.scalars(stmt).first()
+
+
 def pick_classroom_for(
     db: Session,
     school_id: int,
@@ -190,12 +218,21 @@ def pick_classroom_for(
     day: int,
     lesson: int,
     exclude_cell_id: int | None = None,
+    prefer_classroom_id: int | None = None,
 ) -> int | None:
     settings = load_settings(db, school_id, school_level)
     rooms = load_classroom_facts(db, school_id)
     candidates = candidate_classrooms(assignment, settings, rooms)
     if not candidates:
         return None
+    if prefer_classroom_id is None:
+        prefer_classroom_id = adjacent_pair_classroom_id(
+            db,
+            assignment.id,
+            day,
+            lesson,
+            exclude_cell_id=exclude_cell_id,
+        )
     room_ids = {rid for rid, _ in candidates}
     busy = load_classroom_busy(db, room_ids)
     return pick_classroom(
@@ -206,6 +243,7 @@ def pick_classroom_for(
         lesson=lesson,
         classroom_busy=busy,
         exclude_cell_id=exclude_cell_id,
+        prefer_classroom_id=prefer_classroom_id,
     )
 
 

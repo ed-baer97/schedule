@@ -35,7 +35,7 @@ docker compose --profile queue up -d --build
 | `SECRET_KEY` | JWT |
 | `BOOTSTRAP_ADMIN_EMAIL` / `PASSWORD` | первый `platform_admin` при пустой таблице `users` |
 | `COOKIE_SECURE=true` | HTTPS / Cloudflare Tunnel |
-| `SOLVER_TIME_LIMIT_SEC` | лимит CP-SAT (default 90) |
+| `SOLVER_TIME_LIMIT_SEC` | потолок `time_limit_sec` с формы (default 3600); само время поиска задаётся в UI |
 | `SOLVER_CPUS` / `SOLVER_NUM_WORKERS` | равны числу ядер worker |
 | `SOLVER_MEM_LIMIT` | default `4g` |
 | `QWEN_API_KEY` | опционально: панель «почему» и assist; пробрасывается в контейнер `api` |

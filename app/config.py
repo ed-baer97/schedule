@@ -56,9 +56,24 @@ class Config:
     CELERY_RESULT_BACKEND = (
         os.environ.get("CELERY_RESULT_BACKEND") or "redis://localhost:6379/1"
     )
-    SOLVER_TIME_LIMIT_SEC = int(os.environ.get("SOLVER_TIME_LIMIT_SEC") or "90")
+    # Search budget comes from the UI (`time_limit_sec`). This env value is only
+    # a safety ceiling so a request cannot hang the worker forever.
+    SOLVER_DEFAULT_TIME_LIMIT_SEC = 60
+    SOLVER_TIME_LIMIT_SEC = int(os.environ.get("SOLVER_TIME_LIMIT_SEC") or "3600")
     # Match Docker worker cpus (default 4). Extra CP-SAT threads only contend.
     SOLVER_NUM_WORKERS = max(1, int(os.environ.get("SOLVER_NUM_WORKERS") or "4"))
+
+    @staticmethod
+    def clamp_solver_time_limit(raw: object | None) -> float:
+        default = float(Config.SOLVER_DEFAULT_TIME_LIMIT_SEC)
+        try:
+            requested = float(raw) if raw is not None else default
+        except (TypeError, ValueError):
+            requested = default
+        if requested != requested:  # NaN
+            requested = default
+        ceiling = max(1.0, float(Config.SOLVER_TIME_LIMIT_SEC))
+        return max(1.0, min(requested, ceiling))
 
     @staticmethod
     def solver_allow_in_process() -> bool:

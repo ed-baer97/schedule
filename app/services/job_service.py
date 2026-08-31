@@ -187,12 +187,12 @@ class JobService:
                 "Остановите её или дождитесь завершения."
             )
 
-        if "time_limit_sec" not in body:
-            body["time_limit_sec"] = Config.SOLVER_TIME_LIMIT_SEC
-        else:
-            body["time_limit_sec"] = min(
-                float(body["time_limit_sec"]), float(Config.SOLVER_TIME_LIMIT_SEC)
-            )
+        raw_limit = (
+            body.get("time_limit_sec")
+            if "time_limit_sec" in body
+            else Config.SOLVER_DEFAULT_TIME_LIMIT_SEC
+        )
+        body["time_limit_sec"] = Config.clamp_solver_time_limit(raw_limit)
 
         job = Job(
             school_id=self.school_id,

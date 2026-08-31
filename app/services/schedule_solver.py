@@ -8,8 +8,9 @@ import threading
 import time
 from typing import Any, Callable
 
+from app.domain.classroom_rules import MSG_NO_CLASSROOM
 from app.domain.pair_epochs import PairFreezeSpec, freeze_keys_for_good_doubles
-from app.domain.schedule_facts import SlotFact
+from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
 from app.domain.schedule_rules import (
     classroom_at_capacity,
     leftover_singles_allowed,
@@ -39,7 +40,6 @@ from app.domain.preferences import (
     solver_scales,
     weights_from_settings,
 )
-from app.domain.schedule_facts import SlotFact, UnitFact
 from app.models import SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_counts, remaining_for
 from app.services.classroom_resolver import (
@@ -476,6 +476,93 @@ def _add_assignment_pair_packing(
             obj_terms.append(extra * w_extra)
 
 
+# Model per-hour room bools only for small pools (labs). Wide general-room
+# pools are assigned after Solve — otherwise y-vars blow up and phase 1
+# misses the time limit.
+_ROOM_MODEL_MAX_CANDIDATES = 4
+
+
+def _slot_busy_fact(slot: SlotFact, classroom_id: int) -> BusySlotFact:
+    return BusySlotFact(
+        shift_id=slot.shift_id,
+        day=slot.day,
+        lesson=slot.lesson,
+        interval=slot.interval,
+        classroom_id=classroom_id,
+    )
+
+
+def _room_free_at(room_id: int, slot: SlotFact, caps: dict[int, int], busy: dict) -> bool:
+    return not classroom_at_capacity(
+        slot, room_id, busy, caps.get(room_id, 1)
+    )
+
+
+def _first_free_room(
+    cands: list[tuple[int, int]],
+    slots: list[SlotFact],
+    caps: dict[int, int],
+    busy: dict,
+) -> int | None:
+    for rid, _cost in cands:
+        if all(_room_free_at(rid, s, caps, busy) for s in slots):
+            return rid
+    return None
+
+
+def _occupy_room(busy: dict, room_id: int, slot: SlotFact) -> None:
+    busy.setdefault(room_id, []).append(_slot_busy_fact(slot, room_id))
+
+
+def _assign_rooms_to_chosen(
+    chosen: list[tuple[int, Any, SlotFact]],
+    *,
+    candidates_by_assignment: dict[int, list[tuple[int, int]]],
+    rooms: list[Any],
+    busy: dict,
+) -> dict[int, int] | None:
+    """Greedy rooms for CP-SAT slots. Consecutive hours of one assignment
+    share a room when one is free on both; otherwise each hour is picked
+    separately. None if any hour has no free candidate.
+    """
+    caps = {r.id: (r.classes_capacity or 1) for r in rooms}
+    rows = sorted(
+        chosen,
+        key=lambda t: (t[1].id, t[2].day, t[2].lesson, t[0]),
+    )
+    by_ui: dict[int, int] = {}
+    i = 0
+    while i < len(rows):
+        ui, assignment, slot = rows[i]
+        cands = candidates_by_assignment.get(assignment.id, [])
+        paired = None
+        if i + 1 < len(rows):
+            ui2, a2, slot2 = rows[i + 1]
+            if (
+                a2.id == assignment.id
+                and slot2.day == slot.day
+                and slot2.lesson == slot.lesson + 1
+            ):
+                paired = (ui2, slot2)
+        if paired is not None:
+            ui2, slot2 = paired
+            rid = _first_free_room(cands, [slot, slot2], caps, busy)
+            if rid is not None:
+                by_ui[ui] = rid
+                by_ui[ui2] = rid
+                _occupy_room(busy, rid, slot)
+                _occupy_room(busy, rid, slot2)
+                i += 2
+                continue
+        rid = _first_free_room(cands, [slot], caps, busy)
+        if rid is None:
+            return None
+        by_ui[ui] = rid
+        _occupy_room(busy, rid, slot)
+        i += 1
+    return by_ui
+
+
 @dataclass
 class SolveResult:
     placed_count: int
@@ -543,11 +630,7 @@ class ResidualGraphSolver:
                     if not has_free:
                         reason = "Кабинет уже занят в это время"
                 elif reason is None and not candidates:
-                    # No room candidates (e.g. fixed subject with empty pool) —
-                    # still allow slot if classroom is optional for non-fixed.
-                    subj = assignment.subject
-                    if subj and subj.requires_fixed_classroom:
-                        reason = "Нет доступного кабинета для предмета"
+                    reason = MSG_NO_CLASSROOM
                 if reason is None:
                     subj_key = (unit.assignment_id, slot.day)
                     if subject_day_limit_reached(
@@ -720,6 +803,7 @@ class ResidualGraphSolver:
                 day=slot.day,
                 lesson=slot.lesson,
                 classroom_id=classroom_id,
+                require_classroom=True,
             )
             if errors:
                 for err in errors:
@@ -1095,6 +1179,27 @@ class CpSatScheduleSolver:
         candidates_by_assignment: dict[int, list[tuple[int, int]]] = {
             a.id: candidate_classrooms(a, settings, rooms) for a in assignments
         }
+        missing_rooms: list[dict[str, str]] = []
+        for a in assignments:
+            if candidates_by_assignment.get(a.id):
+                continue
+            class_name = a.school_class.name if a.school_class else "?"
+            subj_name = a.subject.display_name if a.subject else "?"
+            missing_rooms.append(
+                {
+                    "reason": (
+                        f"{class_name} «{subj_name}»: {MSG_NO_CLASSROOM}"
+                    )
+                }
+            )
+        if missing_rooms:
+            return (
+                CpSatSolveResult(
+                    status="INFEASIBLE",
+                    diagnostics=missing_rooms[:max_diag_items],
+                ),
+                None,
+            )
 
         unit_list = list(enumerate(units))
         unit_by_idx = {i: u for i, u in unit_list}
@@ -1172,7 +1277,6 @@ class CpSatScheduleSolver:
             feas = feasible_slots_by_unit[ui]
             model.AddExactlyOne([x[(ui, s.slot_id)] for s in feas])
 
-        _ROOM_MODEL_MAX_CANDIDATES = 4
         y: dict[tuple[int, str, int], Any] = {}
         modeled_room_ids: set[int] = set()
         for ui, unit in ctx.unit_list:
@@ -1258,7 +1362,7 @@ class CpSatScheduleSolver:
             _add_capacity_overlap_constraints(model, items, capacity=1)
 
         # Classroom: respect capacity only for small modeled pools
-        room_caps = {r.id: r.classes_capacity for r in ctx.rooms}
+        room_caps = {r.id: (r.classes_capacity or 1) for r in ctx.rooms}
         for room_id in modeled_room_ids:
             cap_n = room_caps.get(room_id, 1)
             if cap_n >= 10**5:
@@ -1270,6 +1374,40 @@ class CpSatScheduleSolver:
                     if ykey in y:
                         items.append((y[ykey], slot))
             _add_capacity_overlap_constraints(model, items, capacity=cap_n)
+
+        total_seats = sum(max(1, r.classes_capacity or 1) for r in ctx.rooms)
+        if total_seats:
+            by_dl: dict[tuple[int, int], list] = defaultdict(list)
+            for ui, unit in ctx.unit_list:
+                for slot in feasible_slots_by_unit[ui]:
+                    key = (ui, slot.slot_id)
+                    if key in x:
+                        by_dl[(slot.day, slot.lesson)].append(x[key])
+            for vars_ in by_dl.values():
+                model.Add(sum(vars_) <= total_seats)
+
+        fixed_pool_cap: dict[int, int] = {}
+        for a in ctx.assignments:
+            subj = a.subject
+            if not subj or not subj.requires_fixed_classroom:
+                continue
+            cands = ctx.candidates_by_assignment.get(a.id, [])
+            fixed_pool_cap[subj.id] = sum(
+                max(1, room_caps.get(rid, 1)) for rid, _ in cands
+            )
+        for sid, pool_cap in fixed_pool_cap.items():
+            if pool_cap <= 0:
+                continue
+            by_dl_s: dict[tuple[int, int], list] = defaultdict(list)
+            for ui, unit in ctx.unit_list:
+                if unit.subject_id != sid:
+                    continue
+                for slot in feasible_slots_by_unit[ui]:
+                    key = (ui, slot.slot_id)
+                    if key in x:
+                        by_dl_s[(slot.day, slot.lesson)].append(x[key])
+            for vars_ in by_dl_s.values():
+                model.Add(sum(vars_) <= pool_cap)
 
         # Max lessons per subject per day (per assignment)
         for a in ctx.assignments:
@@ -1617,7 +1755,7 @@ class CpSatScheduleSolver:
             self._notify(on_progress, 90, 100, "Запись расписания в сетку…")
             self._schedule.delete_cells(class_ids=ctx.class_ids, commit=False)
 
-            placements = []
+            chosen_rows: list[tuple[int, Any, SlotFact]] = []
             for ui, unit in ctx.unit_list:
                 a = ctx.assignment_map[unit.assignment_id]
                 chosen = None
@@ -1634,19 +1772,40 @@ class CpSatScheduleSolver:
                         status="ERROR",
                         error_message=f"CP-SAT не выбрал слот для часа {unit.unit_id}",
                     )
+                chosen_rows.append((ui, a, chosen))
 
-                classroom_id = None
-                cands = ctx.candidates_by_assignment.get(a.id, [])
-                for rid, _cost in cands:
-                    ykey = (ui, chosen.slot_id, rid)
-                    if ykey in hard_ctx.y and solver.Value(hard_ctx.y[ykey]) == 1:
-                        classroom_id = rid
-                        break
-                if classroom_id is None and cands:
-                    classroom_id = self._classroom_resolver(
-                        a, school_level, day=chosen.day, lesson=chosen.lesson
+            room_ids = {
+                rid
+                for cands in ctx.candidates_by_assignment.values()
+                for rid, _ in cands
+            }
+            busy = load_classroom_busy(self.session, room_ids)
+            rooms_by_ui = _assign_rooms_to_chosen(
+                chosen_rows,
+                candidates_by_assignment=ctx.candidates_by_assignment,
+                rooms=ctx.rooms,
+                busy=busy,
+            )
+            if rooms_by_ui is None:
+                self.session.rollback()
+                return CpSatSolveResult(
+                    status="ERROR",
+                    error_message=MSG_NO_CLASSROOM,
+                )
+
+            placements = []
+            for ui, a, chosen in chosen_rows:
+                classroom_id = rooms_by_ui.get(ui)
+                if classroom_id is None:
+                    self.session.rollback()
+                    class_name = a.school_class.name if a.school_class else "?"
+                    subj_name = a.subject.display_name if a.subject else "?"
+                    return CpSatSolveResult(
+                        status="ERROR",
+                        error_message=(
+                            f"{class_name} «{subj_name}»: {MSG_NO_CLASSROOM}"
+                        ),
                     )
-
                 self._schedule.insert_cell(
                     class_id=a.class_id,
                     day_of_week=chosen.day,

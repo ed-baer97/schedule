@@ -269,4 +269,33 @@ def test_deterrent_penalty_avoids_seventh_lessons_when_earlier_available():
     assert solver.Value(x_lesson6) == 1
 
 
+def test_assign_rooms_pairs_share_classroom():
+    from types import SimpleNamespace
+
+    from app.domain.schedule_facts import SlotFact
+    from app.services.schedule_solver import _assign_rooms_to_chosen, _slot_busy_fact
+
+    s1 = SlotFact(slot_id="d1l1", class_id=1, day=1, lesson=1, shift_id=1)
+    s2 = SlotFact(slot_id="d1l2", class_id=1, day=1, lesson=2, shift_id=1)
+    assignment = SimpleNamespace(id=10)
+    rooms = [
+        SimpleNamespace(id=1, classes_capacity=1),
+        SimpleNamespace(id=2, classes_capacity=1),
+    ]
+    cands = {10: [(1, 40), (2, 40)]}
+    chosen = [(0, assignment, s1), (1, assignment, s2)]
+    result = _assign_rooms_to_chosen(
+        chosen, candidates_by_assignment=cands, rooms=rooms, busy={}
+    )
+    assert result is not None
+    assert result[0] == result[1] == 1
+
+    busy = {1: [_slot_busy_fact(s2, 1)]}
+    result = _assign_rooms_to_chosen(
+        chosen, candidates_by_assignment=cands, rooms=rooms, busy=busy
+    )
+    assert result is not None
+    assert result[0] == result[1] == 2
+
+
 

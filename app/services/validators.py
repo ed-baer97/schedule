@@ -17,7 +17,7 @@ from app.domain.schedule_rules import (
 from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass, Shift
 from app.services.assignment_hours import placed_count
 from app.services.classroom_resolver import classroom_fact, load_settings
-from app.domain.classroom_rules import room_denial_message
+from app.domain.classroom_rules import MSG_NO_CLASSROOM, room_denial_message
 from app.services.schedule_fact_loader import (
     candidate_slot_fact,
     candidate_unit_fact,
@@ -79,13 +79,26 @@ class ScheduleValidator:
             return None
         return self.session.get(ScheduleCell, cell_id)
 
-    def validate_cell(self, assignment, day, lesson, classroom_id=None, exclude_cell_id=None):
+    def validate_cell(
+        self,
+        assignment,
+        day,
+        lesson,
+        classroom_id=None,
+        exclude_cell_id=None,
+        require_classroom=False,
+    ):
         """
         Validate if a lesson can be placed at the given slot.
         Returns list of error messages (empty if valid).
+
+        ``require_classroom`` is for auto-scheduler write paths: a concrete
+        room is mandatory. Manual grid still allows «Без кабинета».
         """
         errors = []
         class_id = assignment.class_id
+        if require_classroom and not classroom_id:
+            errors.append(MSG_NO_CLASSROOM)
 
         if lesson == 0:
             sc = assignment.school_class
