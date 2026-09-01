@@ -31,6 +31,7 @@ export type ScheduleCell = {
   teacher_name: string | null
   group_number: number | null
   classroom_name: string | null
+  requires_fixed_classroom?: boolean
 }
 
 export type SchoolClassRow = {
@@ -127,7 +128,9 @@ export type CreateCellPayload = {
 export type MoveCellPayload = {
   day_of_week: number
   lesson_number: number
-  class_id: number
+  class_id?: number
+  classroom_id?: number | null
+  set_classroom?: boolean
 }
 
 export type ClearScheduleFilter = {
@@ -157,6 +160,16 @@ export function updateScheduleCell(cellId: number, payload: MoveCellPayload) {
 
 export function deleteScheduleCell(cellId: number) {
   return apiJson<void>(`/api/schedule/cells/${cellId}`, { method: 'DELETE' })
+}
+
+export function swapScheduleClassrooms(cellId: number, otherCellId: number) {
+  return apiJson<{ cell: ScheduleCell; other: ScheduleCell }>(
+    `/api/schedule/cells/${cellId}/swap-classroom`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ other_cell_id: otherCellId }),
+    },
+  )
 }
 
 export function fetchAssignmentsForClass(

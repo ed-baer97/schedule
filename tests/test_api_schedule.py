@@ -1960,3 +1960,172 @@ def test_assist_moves_late_physics_to_early_slot() -> None:
         assert cell is not None
         assert cell.lesson_number <= 5
 
+
+def test_patch_cell_changes_classroom() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Сидоров С.С.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1Б", grade=1, school_level="elementary"
+        )
+        room = Classroom(school_id=TEST_SCHOOL_ID, number="12")
+        session.add_all([shift, subject, teacher, cls, room])
+        session.flush()
+        cls.shift_id = shift.id
+        assignment = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=subject.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=4,
+        )
+        session.add(assignment)
+        session.commit()
+        class_id, assignment_id, room_id = cls.id, assignment.id, room.id
+
+    created = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    cell_id = created.json()["id"]
+    assert created.json()["classroom_id"] is None
+
+    changed = client.patch(
+        f"/api/schedule/cells/{cell_id}",
+        json={
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "class_id": class_id,
+            "classroom_id": room_id,
+            "set_classroom": True,
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["classroom_id"] == room_id
+    assert changed.json()["classroom_name"] == "12"
+    assert changed.json()["day_of_week"] == 1
+    assert changed.json()["lesson_number"] == 1
+
+
+def test_swap_classrooms_exchanges_rooms() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        phys = Subject(school_id=TEST_SCHOOL_ID, name="Физика")
+        teacher_a = Teacher(school_id=TEST_SCHOOL_ID, full_name="Иванов И.И.")
+        teacher_b = Teacher(school_id=TEST_SCHOOL_ID, full_name="Петров П.П.")
+        cls_a = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="7А", grade=7, school_level="secondary"
+        )
+        cls_b = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="8Б", grade=8, school_level="secondary"
+        )
+        room_12 = Classroom(school_id=TEST_SCHOOL_ID, number="12")
+        room_45 = Classroom(school_id=TEST_SCHOOL_ID, number="45")
+        session.add_all(
+            [shift, math, phys, teacher_a, teacher_b, cls_a, cls_b, room_12, room_45]
+        )
+        session.flush()
+        cls_a.shift_id = shift.id
+        cls_b.shift_id = shift.id
+        asg_a = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher_a.id,
+            class_id=cls_a.id,
+            hours_per_week=4,
+        )
+        asg_b = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=phys.id,
+            teacher_id=teacher_b.id,
+            class_id=cls_b.id,
+            hours_per_week=4,
+        )
+        session.add_all([asg_a, asg_b])
+        session.commit()
+        ids = {
+            "class_a": cls_a.id,
+            "class_b": cls_b.id,
+            "asg_a": asg_a.id,
+            "asg_b": asg_b.id,
+            "room_12": room_12.id,
+            "room_45": room_45.id,
+        }
+
+    a = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["class_a"],
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": ids["asg_a"],
+            "classroom_id": ids["room_12"],
+        },
+    )
+    assert a.status_code == 201, a.text
+    b = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["class_b"],
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": ids["asg_b"],
+            "classroom_id": ids["room_45"],
+        },
+    )
+    assert b.status_code == 201, b.text
+    cell_a, cell_b = a.json()["id"], b.json()["id"]
+
+    occupied = client.patch(
+        f"/api/schedule/cells/{cell_a}",
+        json={
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "class_id": ids["class_a"],
+            "classroom_id": ids["room_45"],
+            "set_classroom": True,
+        },
+    )
+    assert occupied.status_code == 422, occupied.text
+
+    swapped = client.post(
+        f"/api/schedule/cells/{cell_a}/swap-classroom",
+        json={"other_cell_id": cell_b},
+    )
+    assert swapped.status_code == 200, swapped.text
+    body = swapped.json()
+    assert body["cell"]["id"] == cell_a
+    assert body["cell"]["classroom_id"] == ids["room_45"]
+    assert body["other"]["id"] == cell_b
+    assert body["other"]["classroom_id"] == ids["room_12"]
+
+    denied = client.post(
+        f"/api/schedule/cells/{cell_a}/swap-classroom",
+        json={"other_cell_id": cell_a},
+    )
+    assert denied.status_code == 422, denied.text
+

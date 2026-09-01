@@ -44,6 +44,7 @@ class ScheduleCellOut(BaseModel):
     teacher_name: str | None = None
     group_number: int | None = None
     classroom_name: str | None = None
+    requires_fixed_classroom: bool = False
 
 
 class ScheduleSettingsOut(BaseModel):
@@ -127,6 +128,15 @@ class ScheduleCellMove(BaseModel):
     class_id: int | None = None
     classroom_id: int | None = None
     set_classroom: bool = False
+
+
+class ScheduleCellSwapClassroom(BaseModel):
+    other_cell_id: int
+
+
+class ScheduleCellSwapOut(BaseModel):
+    cell: ScheduleCellOut
+    other: ScheduleCellOut
 
 
 class AutoPageData(BaseModel):

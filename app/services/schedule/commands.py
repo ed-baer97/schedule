@@ -203,6 +203,59 @@ class ScheduleCommandsMixin:
         )
         return cell_to_schedule_dict(reload_cell(self.db, cell.id))
 
+    def swap_classrooms(self, cell_id: int, other_cell_id: int) -> dict:
+        """Exchange classroom_id between two cells, then validate both."""
+        if cell_id == other_cell_id:
+            raise ValidationConflict(["Нельзя поменять ячейку саму с собой"])
+        cell = require_owned(self.db, ScheduleCell, cell_id, self.school_id)
+        other = require_owned(self.db, ScheduleCell, other_cell_id, self.school_id)
+        if other.classroom_id is None:
+            raise ValidationConflict(["У второго урока нет кабинета для обмена"])
+
+        cell_assignment = cell.assignment
+        other_assignment = other.assignment
+        _ = (
+            cell_assignment.school_class,
+            cell_assignment.teacher,
+            cell_assignment.subject,
+        )
+        _ = (
+            other_assignment.school_class,
+            other_assignment.teacher,
+            other_assignment.subject,
+        )
+
+        cell.classroom_id, other.classroom_id = other.classroom_id, cell.classroom_id
+        self.db.flush()
+
+        errors: list[str] = []
+        errors.extend(
+            self.validator.validate_cell(
+                assignment=cell_assignment,
+                day=cell.day_of_week,
+                lesson=cell.lesson_number,
+                classroom_id=cell.classroom_id,
+                exclude_cell_id=cell.id,
+            )
+        )
+        errors.extend(
+            self.validator.validate_cell(
+                assignment=other_assignment,
+                day=other.day_of_week,
+                lesson=other.lesson_number,
+                classroom_id=other.classroom_id,
+                exclude_cell_id=other.id,
+            )
+        )
+        if errors:
+            self.db.rollback()
+            raise ValidationConflict(errors)
+        self.db.commit()
+        return {
+            "cell": cell_to_schedule_dict(reload_cell(self.db, cell.id)),
+            "other": cell_to_schedule_dict(reload_cell(self.db, other.id)),
+        }
+
     def delete_cell(self, cell_id: int) -> None:
         cell = require_owned(self.db, ScheduleCell, cell_id, self.school_id)
         self.db.delete(cell)

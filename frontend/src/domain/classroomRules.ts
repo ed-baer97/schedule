@@ -55,9 +55,24 @@ export function roomAllows(
 }
 
 type OccupyingCell = {
+  id?: number
   classroom_id: number | null
   day_of_week: number
   lesson_number: number
+}
+
+function occupiesSlot(
+  cell: OccupyingCell,
+  slot: { day: number; lesson: number },
+  classroomId: number,
+  excludeCellId?: number | null,
+): boolean {
+  if (excludeCellId != null && cell.id === excludeCellId) return false
+  return (
+    cell.classroom_id === classroomId &&
+    cell.day_of_week === slot.day &&
+    cell.lesson_number === slot.lesson
+  )
 }
 
 /** True if another class can still take this room at the slot (mirrors classroom_at_capacity). */
@@ -65,18 +80,24 @@ export function roomFreeAtSlot(
   room: { id: number; classes_capacity?: number | null },
   cells: OccupyingCell[],
   slot: { day: number; lesson: number },
+  excludeCellId?: number | null,
 ): boolean {
   const cap = Math.max(1, room.classes_capacity ?? 1)
   let occupying = 0
   for (const cell of cells) {
-    if (
-      cell.classroom_id === room.id &&
-      cell.day_of_week === slot.day &&
-      cell.lesson_number === slot.lesson
-    ) {
+    if (occupiesSlot(cell, slot, room.id, excludeCellId)) {
       occupying += 1
       if (occupying >= cap) return false
     }
   }
   return true
+}
+
+export function occupantsAtSlot<T extends OccupyingCell>(
+  cells: T[],
+  slot: { day: number; lesson: number },
+  classroomId: number,
+  excludeCellId?: number | null,
+): T[] {
+  return cells.filter((cell) => occupiesSlot(cell, slot, classroomId, excludeCellId))
 }

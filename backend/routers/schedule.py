@@ -31,6 +31,8 @@ from backend.schemas.schedule import (
     ScheduleCellCreate,
     ScheduleCellMove,
     ScheduleCellOut,
+    ScheduleCellSwapClassroom,
+    ScheduleCellSwapOut,
     ScheduleGridOut,
     ScheduleSettingsOut,
     SchoolClassRow,
@@ -136,6 +138,25 @@ def move_cell(
         set_classroom=body.set_classroom,
     )
     return ScheduleCellOut(**cell)
+
+
+@router.post(
+    "/cells/{cell_id}/swap-classroom",
+    response_model=ScheduleCellSwapOut,
+)
+def swap_classrooms(
+    cell_id: int,
+    body: ScheduleCellSwapClassroom,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> ScheduleCellSwapOut:
+    data = ScheduleService(db, school.id).swap_classrooms(
+        cell_id, body.other_cell_id
+    )
+    return ScheduleCellSwapOut(
+        cell=ScheduleCellOut(**data["cell"]),
+        other=ScheduleCellOut(**data["other"]),
+    )
 
 
 @router.delete("/cells/{cell_id}", status_code=204, response_class=Response)

@@ -57,6 +57,9 @@ def _cell_projection(cell: ScheduleCell) -> dict:
         "group_number": a.group_number if a else None,
         "classroom_name": cell.classroom.display_name if cell.classroom else None,
         "class_name": cell.school_class.name if cell.school_class else "?",
+        "requires_fixed_classroom": bool(
+            subj.requires_fixed_classroom if subj else False
+        ),
     }
 
 
@@ -74,6 +77,7 @@ _SCHEDULE_KEYS = (
     "teacher_name",
     "group_number",
     "classroom_name",
+    "requires_fixed_classroom",
 )
 
 _REPORT_KEYS = (

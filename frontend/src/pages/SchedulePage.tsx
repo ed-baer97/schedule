@@ -10,16 +10,21 @@ import {
   explainSlot,
   fetchAssignmentsForClass,
   fetchGrid,
+  swapScheduleClassrooms,
   updateScheduleCell,
+  type ClassroomChoice,
   type ScheduleCell as CellOut,
 } from '../api/schedule'
 import type { SchoolLevel } from '../domain/schoolLevel'
 import { assignmentCanJoinSlot, slotAcceptsAnotherLesson } from '../domain/scheduleRules'
-import { roomAllows, roomFreeAtSlot } from '../domain/classroomRules'
+import { occupantsAtSlot, roomAllows, roomFreeAtSlot } from '../domain/classroomRules'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
 type ScheduleDensity = 'compact' | 'comfortable'
+
+const SHOW_OCCUPIED_VALUE = '__show_occupied__'
+const SWAP_VALUE_PREFIX = 'swap:'
 
 const DENSITY_KEY = 'schedule:density'
 
@@ -298,7 +303,9 @@ export function SchedulePage() {
   const [density, setDensity] = useState<ScheduleDensity>(loadDensity)
   const { expanded, setExpanded } = useScheduleExpand()
   const [slot, setSlot] = useState<SlotKey | null>(null)
+  const [editCell, setEditCell] = useState<CellOut | null>(null)
   const [whyCell, setWhyCell] = useState<CellOut | null>(null)
+  const draggedCellId = useRef<number | null>(null)
   const hashTimer = useRef<number>(0)
   const restoreDone = useRef(false)
   const syncAllowed = useRef(false)
@@ -465,6 +472,12 @@ export function SchedulePage() {
     )
   }, [slot, gridQ.data])
 
+  const classNameById = useMemo(() => {
+    const m: Record<number, string> = {}
+    for (const c of gridQ.data?.classes ?? []) m[c.id] = c.name
+    return m
+  }, [gridQ.data])
+
   const addM = useMutation({
     mutationFn: async (p: {
       class_id: number
@@ -515,6 +528,39 @@ export function SchedulePage() {
     onError: (e) => setToast({ kind: 'danger', text: extractApiError(e) }),
   })
 
+  const changeRoomM = useMutation({
+    mutationFn: async (p: {
+      cell: CellOut
+      classroom_id: number | null
+    }) =>
+      updateScheduleCell(p.cell.id, {
+        day_of_week: p.cell.day_of_week,
+        lesson_number: p.cell.lesson_number,
+        class_id: p.cell.class_id,
+        classroom_id: p.classroom_id,
+        set_classroom: true,
+      }),
+    onSuccess: async (_cell, p) => {
+      setEditCell(null)
+      setToast({ kind: 'success', text: 'Кабинет изменён' })
+      replaceHash(slotAnchor(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number))
+      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+      stayAt(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number)
+    },
+  })
+
+  const swapRoomM = useMutation({
+    mutationFn: async (p: { cell: CellOut; other: CellOut }) =>
+      swapScheduleClassrooms(p.cell.id, p.other.id),
+    onSuccess: async (_ok, p) => {
+      setEditCell(null)
+      setToast({ kind: 'success', text: 'Учителя поменялись кабинетами' })
+      replaceHash(slotAnchor(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number))
+      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+      stayAt(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number)
+    },
+  })
+
   useEffect(() => {
     restoreDone.current = false
     syncAllowed.current = false
@@ -553,6 +599,7 @@ export function SchedulePage() {
   }
 
   function onDragStartCell(e: React.DragEvent, cell: CellOut) {
+    draggedCellId.current = cell.id
     e.dataTransfer.setData('text/cell-id', String(cell.id))
     e.dataTransfer.effectAllowed = 'move'
   }
@@ -835,7 +882,7 @@ export function SchedulePage() {
                                     key={cell.id}
                                     draggable
                                     data-teacher-key={teacherHoverKey(cell) || undefined}
-                                    title={lessonCardTitle(cell)}
+                                    title={`${lessonCardTitle(cell)} · нажмите, чтобы сменить кабинет`}
                                     onDragStart={(e) => {
                                       applyTeacherHover(
                                         e.currentTarget.closest('.schedule-grid-table'),
@@ -846,6 +893,14 @@ export function SchedulePage() {
                                     className="lesson-card position-relative"
                                     style={{
                                       ['--lesson-color' as string]: cell.subject_color,
+                                    }}
+                                    onClick={(ev) => {
+                                      ev.stopPropagation()
+                                      if (draggedCellId.current === cell.id) {
+                                        draggedCellId.current = null
+                                        return
+                                      }
+                                      setEditCell(cell)
                                     }}
                                   >
                                     {i > 0 && density === 'comfortable' && <hr className="my-1" />}
@@ -943,6 +998,7 @@ export function SchedulePage() {
           occupied={occupiedForModal}
           cells={grid.cells}
           classSchoolLevel={level}
+          classNameById={classNameById}
           dayNames={grid.day_names}
           error={addM.isError ? extractApiError(addM.error) : null}
           onClose={() => {
@@ -962,10 +1018,229 @@ export function SchedulePage() {
         />
       )}
 
+      {editCell && (
+        <ChangeClassroomModal
+          cell={editCell}
+          cells={grid.cells}
+          classSchoolLevel={level}
+          classNameById={classNameById}
+          dayNames={grid.day_names}
+          error={
+            changeRoomM.isError
+              ? extractApiError(changeRoomM.error)
+              : swapRoomM.isError
+                ? extractApiError(swapRoomM.error)
+                : null
+          }
+          onClose={() => {
+            changeRoomM.reset()
+            swapRoomM.reset()
+            setEditCell(null)
+          }}
+          onChangeClassroom={(classroom_id) =>
+            changeRoomM.mutate({ cell: editCell, classroom_id })
+          }
+          onSwap={(other) => swapRoomM.mutate({ cell: editCell, other })}
+          submitting={changeRoomM.isPending || swapRoomM.isPending}
+        />
+      )}
+
       {whyCell && (
         <WhyCellModal cell={whyCell} onClose={() => setWhyCell(null)} />
       )}
     </div>
+  )
+}
+
+function classroomAllows(
+  room: ClassroomChoice,
+  opts: {
+    subject_id: number
+    requires_fixed_classroom: boolean
+    class_school_level: SchoolLevel
+    is_subgroup: boolean
+  },
+) {
+  return roomAllows(
+    {
+      id: room.id,
+      subject_ids: room.subject_ids ?? [],
+      is_exclusive: Boolean(room.is_exclusive),
+      school_level: room.school_level ?? null,
+      subgroup_only: Boolean(room.subgroup_only),
+    },
+    opts,
+  )
+}
+
+function occupantLabel(cell: CellOut, classNameById: Record<number, string>): string {
+  const cls = classNameById[cell.class_id] ?? `класс ${cell.class_id}`
+  const teacher = cell.teacher_name ?? '?'
+  return `${cls}, ${teacher}, ${cell.subject_name}`
+}
+
+function swapOptionValue(cellId: number) {
+  return `${SWAP_VALUE_PREFIX}${cellId}`
+}
+
+function parseSwapOption(raw: string): number | null {
+  if (!raw.startsWith(SWAP_VALUE_PREFIX)) return null
+  const id = Number(raw.slice(SWAP_VALUE_PREFIX.length))
+  return Number.isFinite(id) && id > 0 ? id : null
+}
+
+function swapConfirmText(
+  cell: CellOut,
+  other: CellOut,
+  classNameById: Record<number, string>,
+): string {
+  const otherClass = classNameById[other.class_id] ?? `класс ${other.class_id}`
+  const room = other.classroom_name ?? '?'
+  const yours = cell.classroom_name
+  const extra = yours
+    ? `\nВаш кабинет ${yours} отойдёт ${otherClass}.`
+    : `\nУрок ${otherClass} останется без кабинета.`
+  return (
+    `Кабинет ${room} занят: ${occupantLabel(other, classNameById)}.` +
+    extra +
+    '\n\nПоменять учителей местами?'
+  )
+}
+
+type OccupiedRoomOption = {
+  id: number
+  display_name: string
+  occupants: CellOut[]
+  allowed: boolean
+}
+
+function occupiedRoomsFromCells(
+  cells: CellOut[],
+  slot: { day: number; lesson: number },
+  excludeCellId?: number | null,
+): OccupiedRoomOption[] {
+  const byRoom = new Map<number, OccupiedRoomOption>()
+  for (const cell of cells) {
+    if (!cell.classroom_id) continue
+    if (excludeCellId != null && cell.id === excludeCellId) continue
+    if (cell.day_of_week !== slot.day || cell.lesson_number !== slot.lesson) continue
+    const existing = byRoom.get(cell.classroom_id)
+    if (existing) {
+      existing.occupants.push(cell)
+    } else {
+      byRoom.set(cell.classroom_id, {
+        id: cell.classroom_id,
+        display_name: cell.classroom_name ?? String(cell.classroom_id),
+        occupants: [cell],
+        allowed: false,
+      })
+    }
+  }
+  return [...byRoom.values()]
+}
+
+function ClassroomPicker(props: {
+  classroomId: number | ''
+  selectedOccupantId?: number | null
+  freeRooms: ClassroomChoice[]
+  occupiedRooms: OccupiedRoomOption[]
+  classNameById: Record<number, string>
+  allowSelectOccupied: boolean
+  onChangeFree: (id: number | '') => void
+  onPickOccupied?: (occupant: CellOut) => void
+}) {
+  const {
+    classroomId,
+    selectedOccupantId,
+    freeRooms,
+    occupiedRooms,
+    classNameById,
+    allowSelectOccupied,
+    onChangeFree,
+    onPickOccupied,
+  } = props
+  const [showOccupied, setShowOccupied] = useState(Boolean(selectedOccupantId))
+  const selectValue =
+    selectedOccupantId != null
+      ? swapOptionValue(selectedOccupantId)
+      : classroomId === ''
+        ? ''
+        : String(classroomId)
+
+  return (
+    <>
+    <select
+      className="form-select"
+      value={selectValue}
+      onChange={(e) => {
+        const raw = e.target.value
+        if (raw === SHOW_OCCUPIED_VALUE) {
+          setShowOccupied(true)
+          return
+        }
+        if (raw.startsWith('occ-')) return
+        const swapId = parseSwapOption(raw)
+        if (swapId != null) {
+          const occupant = occupiedRooms.flatMap((r) => r.occupants).find((c) => c.id === swapId)
+          if (occupant && allowSelectOccupied) onPickOccupied?.(occupant)
+          return
+        }
+        onChangeFree(raw === '' ? '' : Number(raw))
+      }}
+    >
+      <option value="">Без кабинета</option>
+      {freeRooms.map((c) => (
+        <option key={c.id} value={c.id}>
+          {c.display_name}
+        </option>
+      ))}
+      {!showOccupied && occupiedRooms.length > 0 && (
+        <option value={SHOW_OCCUPIED_VALUE}>Посмотреть занятые…</option>
+      )}
+      {showOccupied && occupiedRooms.length > 0 && (
+        <optgroup label="Занятые">
+          {occupiedRooms.flatMap((room) =>
+            room.occupants.map((occ) => {
+              const selectable = allowSelectOccupied && room.allowed
+              return (
+                <option
+                  key={occ.id}
+                  value={selectable ? swapOptionValue(occ.id) : `occ-${occ.id}`}
+                  disabled={!selectable}
+                >
+                  {room.display_name} — {occupantLabel(occ, classNameById)}
+                  {selectable ? '' : ' (занят)'}
+                </option>
+              )
+            }),
+          )}
+        </optgroup>
+      )}
+    </select>
+    {showOccupied && occupiedRooms.length > 0 && (
+      <div className="form-text mt-2">
+        {occupiedRooms.flatMap((room) =>
+          room.occupants.map((occ) => (
+            <div key={occ.id}>
+              {room.display_name} — {occupantLabel(occ, classNameById)}
+              {allowSelectOccupied && room.allowed ? (
+                <>
+                  {' '}
+                  <button
+                    type="button"
+                    className="btn btn-link btn-sm p-0 align-baseline"
+                    onClick={() => onPickOccupied?.(occ)}
+                  >
+                    поменять местами
+                  </button>
+                </>
+              ) : null}
+            </div>
+          )),
+        )}
+      </div>
+    )}
+    </>
   )
 }
 
@@ -974,13 +1249,14 @@ function AddLessonModal(props: {
   occupied: CellOut[]
   cells: CellOut[]
   classSchoolLevel: SchoolLevel
+  classNameById: Record<number, string>
   dayNames: string[]
   error: string | null
   onClose: () => void
   onSubmit: (assignment_id: number, classroom_id: number | null) => void
   submitting: boolean
 }) {
-  const { slot, occupied, cells, classSchoolLevel, dayNames, error, onClose, onSubmit, submitting } = props
+  const { slot, occupied, cells, classSchoolLevel, classNameById, dayNames, error, onClose, onSubmit, submitting } = props
   const occupiedSubject =
     occupied.length > 0 && occupied.every((c) => c.subject_name === occupied[0].subject_name)
       ? occupied[0].subject_name
@@ -1027,23 +1303,19 @@ function AddLessonModal(props: {
     )
     if (!selectedAssignment) return free
     return free.filter((c) =>
-      roomAllows(
-        {
-          id: c.id,
-          subject_ids: c.subject_ids ?? [],
-          is_exclusive: Boolean(c.is_exclusive),
-          school_level: c.school_level ?? null,
-          subgroup_only: Boolean(c.subgroup_only),
-        },
-        {
-          subject_id: selectedAssignment.subject_id,
-          requires_fixed_classroom: Boolean(selectedAssignment.requires_fixed_classroom),
-          class_school_level: classSchoolLevel,
-          is_subgroup: selectedAssignment.group_number != null,
-        },
-      ),
+      classroomAllows(c, {
+        subject_id: selectedAssignment.subject_id,
+        requires_fixed_classroom: Boolean(selectedAssignment.requires_fixed_classroom),
+        class_school_level: classSchoolLevel,
+        is_subgroup: selectedAssignment.group_number != null,
+      }),
     )
   }, [q.data?.classrooms, selectedAssignment, classSchoolLevel, cells, slot.day, slot.lesson])
+
+  const occupiedRooms = useMemo(
+    () => occupiedRoomsFromCells(cells, { day: slot.day, lesson: slot.lesson }),
+    [cells, slot.day, slot.lesson],
+  )
 
   useEffect(() => {
     if (filteredAssignments.length === 1) {
@@ -1156,20 +1428,14 @@ function AddLessonModal(props: {
                 </div>
                 <div className="mb-3">
                   <label className="form-label fw-bold">Кабинет</label>
-                  <select
-                    className="form-select"
-                    value={classroomId === '' ? '' : String(classroomId)}
-                    onChange={(e) =>
-                      setClassroomId(e.target.value === '' ? '' : Number(e.target.value))
-                    }
-                  >
-                    <option value="">Без кабинета</option>
-                    {allowedClassrooms.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.display_name}
-                      </option>
-                    ))}
-                  </select>
+                  <ClassroomPicker
+                    classroomId={classroomId}
+                    freeRooms={allowedClassrooms}
+                    occupiedRooms={occupiedRooms}
+                    classNameById={classNameById}
+                    allowSelectOccupied={false}
+                    onChangeFree={setClassroomId}
+                  />
                 </div>
                 {assignmentId !== '' && (
                   <WhyPanel
@@ -1201,6 +1467,169 @@ function AddLessonModal(props: {
         </div>
       </div>
     </div>
+    </ModalPortal>
+  )
+}
+
+function ChangeClassroomModal(props: {
+  cell: CellOut
+  cells: CellOut[]
+  classSchoolLevel: SchoolLevel
+  classNameById: Record<number, string>
+  dayNames: string[]
+  error: string | null
+  onClose: () => void
+  onChangeClassroom: (classroom_id: number | null) => void
+  onSwap: (other: CellOut) => void
+  submitting: boolean
+}) {
+  const {
+    cell,
+    cells,
+    classSchoolLevel,
+    classNameById,
+    dayNames,
+    error,
+    onClose,
+    onChangeClassroom,
+    onSwap,
+    submitting,
+  } = props
+  const [classroomId, setClassroomId] = useState<number | ''>(cell.classroom_id ?? '')
+  const [swapWith, setSwapWith] = useState<CellOut | null>(null)
+
+  const q = useQuery({
+    queryKey: ['schedule', 'assignments-for-class', cell.class_id],
+    queryFn: () => fetchAssignmentsForClass(cell.class_id),
+  })
+
+  const allowOpts = {
+    subject_id: cell.subject_id,
+    requires_fixed_classroom: Boolean(cell.requires_fixed_classroom),
+    class_school_level: classSchoolLevel,
+    is_subgroup: cell.group_number != null,
+  }
+  const slot = { day: cell.day_of_week, lesson: cell.lesson_number }
+
+  const allowedRooms = useMemo(() => {
+    const rooms = q.data?.classrooms ?? []
+    return rooms.filter((c) => classroomAllows(c, allowOpts))
+  }, [q.data?.classrooms, cell.subject_id, cell.requires_fixed_classroom, cell.group_number, classSchoolLevel])
+
+  const freeRooms = useMemo(
+    () => allowedRooms.filter((c) => roomFreeAtSlot(c, cells, slot, cell.id)),
+    [allowedRooms, cells, cell.id, cell.day_of_week, cell.lesson_number],
+  )
+
+  const occupiedRooms = useMemo(() => {
+    const byId = new Map<number, OccupiedRoomOption>()
+    for (const room of occupiedRoomsFromCells(cells, slot, cell.id)) {
+      byId.set(room.id, room)
+    }
+    for (const room of allowedRooms) {
+      if (roomFreeAtSlot(room, cells, slot, cell.id)) continue
+      const occ = occupantsAtSlot(cells, slot, room.id, cell.id)
+      if (occ.length === 0) continue
+      const existing = byId.get(room.id)
+      if (existing) {
+        existing.allowed = true
+        existing.display_name = room.display_name
+      } else {
+        byId.set(room.id, {
+          id: room.id,
+          display_name: room.display_name,
+          occupants: occ,
+          allowed: true,
+        })
+      }
+    }
+    return [...byId.values()]
+  }, [allowedRooms, cells, cell.id, cell.day_of_week, cell.lesson_number])
+
+  const className = classNameById[cell.class_id] ?? `класс ${cell.class_id}`
+  const slotLabel = cell.lesson_number === 0 ? 'классный час' : `урок ${cell.lesson_number}`
+  const title = `${className}, ${dayNames[cell.day_of_week - 1]}, ${slotLabel}`
+
+  function save() {
+    if (swapWith) {
+      if (!confirm(swapConfirmText(cell, swapWith, classNameById))) return
+      onSwap(swapWith)
+      return
+    }
+    onChangeClassroom(classroomId === '' ? null : classroomId)
+  }
+
+  return (
+    <ModalPortal>
+      <div className="modal show d-block" tabIndex={-1} style={{ background: 'rgba(0,0,0,.35)' }}>
+        <div className="modal-dialog">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h5 className="modal-title">Изменить кабинет</h5>
+              <button type="button" className="btn-close" aria-label="Закрыть" onClick={onClose} />
+            </div>
+            <div className="modal-body">
+              <div className="text-muted small mb-2">{title}</div>
+              <div className="mb-3">
+                {cell.subject_name}
+                {cell.group_number != null ? ` · гр.${cell.group_number}` : ''}
+                {cell.teacher_name ? ` · ${cell.teacher_name}` : ''}
+              </div>
+              {error && (
+                <div className="alert alert-danger py-2" style={{ whiteSpace: 'pre-line' }}>
+                  <strong>Нельзя сменить кабинет</strong>
+                  <div className="mt-1">{error}</div>
+                </div>
+              )}
+              {q.isLoading && <div>Загрузка…</div>}
+              {q.isError && <div className="text-danger">{(q.error as Error).message}</div>}
+              {q.data && (
+                <div className="mb-3">
+                  <label className="form-label fw-bold">Кабинет</label>
+                  <ClassroomPicker
+                    classroomId={classroomId}
+                    selectedOccupantId={swapWith?.id ?? null}
+                    freeRooms={freeRooms}
+                    occupiedRooms={occupiedRooms}
+                    classNameById={classNameById}
+                    allowSelectOccupied
+                    onChangeFree={(id) => {
+                      setSwapWith(null)
+                      setClassroomId(id)
+                    }}
+                    onPickOccupied={(occupant) => {
+                      setClassroomId(occupant.classroom_id ?? '')
+                      setSwapWith(occupant)
+                    }}
+                  />
+                </div>
+              )}
+              <WhyPanel
+                assignmentId={cell.assignment_id}
+                day={cell.day_of_week}
+                lesson={cell.lesson_number}
+                classroomId={
+                  swapWith?.classroom_id ?? (classroomId === '' ? null : classroomId)
+                }
+                cellId={cell.id}
+              />
+            </div>
+            <div className="modal-footer">
+              <button type="button" className="btn btn-secondary" onClick={onClose}>
+                Отмена
+              </button>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={submitting || q.isLoading}
+                onClick={save}
+              >
+                {submitting ? 'Сохранение…' : swapWith ? 'Поменять местами' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     </ModalPortal>
   )
 }
