@@ -6,19 +6,21 @@ type ReportGridProps = {
   workingDays: number
   headerWidth?: number
   /** Rows: first cell is lesson label; then one cell per day. */
-  rows: Array<{ key: string | number; label: ReactNode; dayCells: ReactNode[] }>
+  rows: Array<{
+    key: string | number
+    label: ReactNode
+    dayCells: ReactNode[]
+    variant?: 'lesson' | 'break' | 'class-hour'
+  }>
 }
 
 export function ReportGrid(props: ReportGridProps) {
-  const { dayNames, workingDays, headerWidth = 120, rows } = props
+  const { dayNames, workingDays, headerWidth = 132, rows } = props
   return (
-    <div className="card">
+    <div className="card report-grid-card">
       <div className="table-responsive">
-        <table
-          className="table table-bordered mb-0 report-grid-table"
-          style={{ fontSize: '0.85rem' }}
-        >
-          <thead className="table-light">
+        <table className="table table-bordered mb-0 report-grid-table">
+          <thead>
             <tr>
               <th style={{ width: headerWidth }}>Урок</th>
               {dayNames.slice(0, workingDays).map((d, i) => (
@@ -30,7 +32,16 @@ export function ReportGrid(props: ReportGridProps) {
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.key}>
+              <tr
+                key={row.key}
+                className={
+                  row.variant === 'break'
+                    ? 'report-break-row'
+                    : row.variant === 'class-hour'
+                      ? 'report-class-hour-row'
+                      : undefined
+                }
+              >
                 <td className="text-center align-middle report-lesson-index">{row.label}</td>
                 {row.dayCells.map((cell, i) => (
                   <td key={i} className="align-top">
@@ -105,6 +116,34 @@ function splitBellLabel(label: string): [string, string] | null {
   return [start, end]
 }
 
+function parseHM(value: string): number | null {
+  const m = /^(\d{1,2}):(\d{2})/.exec(value.trim())
+  if (!m) return null
+  const h = Number(m[1])
+  const min = Number(m[2])
+  if (h > 23 || min > 59) return null
+  return h * 60 + min
+}
+
+type BreakSlot = { minutes: number; range: string }
+
+function breakBetween(prev?: string, next?: string): BreakSlot | null {
+  if (!prev || !next) return null
+  const a = splitBellLabel(prev)
+  const b = splitBellLabel(next)
+  if (!a || !b) return null
+  const start = parseHM(a[1])
+  const end = parseHM(b[0])
+  if (start == null || end == null) return null
+  const minutes = end - start
+  if (minutes <= 0) return null
+  return { minutes, range: `${a[1]}–${b[0]}` }
+}
+
+function sameBreak(a: BreakSlot, b: BreakSlot) {
+  return a.minutes === b.minutes && a.range === b.range
+}
+
 export function ReportBell({ time }: { time: string }) {
   const parts = splitBellLabel(time)
   return (
@@ -120,6 +159,16 @@ export function ReportBell({ time }: { time: string }) {
       ) : (
         <span>{time}</span>
       )}
+    </div>
+  )
+}
+
+function BreakLabel({ slot }: { slot: BreakSlot }) {
+  return (
+    <div className="report-break-label">
+      <span className="report-break-title">Перемена</span>
+      <span className="report-break-mins">{slot.minutes} мин</span>
+      <span className="report-break-range">{slot.range}</span>
     </div>
   )
 }
@@ -150,6 +199,7 @@ export function buildTimetableRows(opts: {
   if (classHourDay != null || classHourTimeLabel) {
     rows.push({
       key: 'class-hour',
+      variant: 'class-hour',
       label: (
         <>
           <div className="fw-bold">Кл. час</div>
@@ -163,12 +213,28 @@ export function buildTimetableRows(opts: {
         return renderCells(cellsBy.get(`${day}:0`) ?? [])
       }),
     })
+    const firstLesson = lessonsRange[0]
+    const afterClassHour =
+      classHourDay != null && firstLesson != null
+        ? reportLessonTime(lessonTimesByDay, classHourDay, firstLesson)
+        : undefined
+    const classHourBreak = breakBetween(classHourTimeLabel ?? undefined, afterClassHour)
+    if (classHourBreak) {
+      rows.push({
+        key: 'break-class-hour',
+        variant: 'break',
+        label: <BreakLabel slot={classHourBreak} />,
+        dayCells: days.map(() => null),
+      })
+    }
   }
 
-  for (const lesson of lessonsRange) {
+  for (let i = 0; i < lessonsRange.length; i += 1) {
+    const lesson = lessonsRange[i]
     const time = firstLessonTime(lessonTimesByDay, workingDays, lesson, classHourDay)
     rows.push({
       key: lesson,
+      variant: 'lesson',
       label: (
         <>
           <div className="fw-bold report-lesson-num">{lesson}</div>
@@ -188,6 +254,26 @@ export function buildTimetableRows(opts: {
             {content}
           </>
         )
+      }),
+    })
+
+    const nextLesson = lessonsRange[i + 1]
+    if (nextLesson == null) continue
+    const nextTime = firstLessonTime(lessonTimesByDay, workingDays, nextLesson, classHourDay)
+    const gap = breakBetween(time, nextTime)
+    if (!gap) continue
+    rows.push({
+      key: `break-${lesson}`,
+      variant: 'break',
+      label: <BreakLabel slot={gap} />,
+      dayCells: days.map((_, dayIdx) => {
+        const day = dayIdx + 1
+        const dayGap = breakBetween(
+          reportLessonTime(lessonTimesByDay, day, lesson),
+          reportLessonTime(lessonTimesByDay, day, nextLesson),
+        )
+        if (!dayGap || sameBreak(dayGap, gap)) return null
+        return <BreakLabel slot={dayGap} />
       }),
     })
   }

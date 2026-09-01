@@ -23,8 +23,10 @@ from app.models import (
     TeachingAssignment,
     classroom_subjects,
 )
+from app.domain.days import break_between_labels
 from app.services.report_service import (
     format_grid_export_cell,
+    format_teacher_export_cell,
     ordinary_lesson_time,
     unique_sheet_name,
 )
@@ -110,6 +112,34 @@ def test_ordinary_lesson_time_skips_class_hour_day() -> None:
     }
     assert ordinary_lesson_time(times, 1, 5, 1) == "08:00–08:45"
     assert ordinary_lesson_time(times, 1, 5, None) == "08:25–09:10"
+
+
+def test_break_between_labels_uses_gap_after_lesson() -> None:
+    assert break_between_labels("08:00–08:45", "08:55–09:40") == (10, "08:45–08:55")
+    assert break_between_labels("08:00–08:20", "08:25–09:10") == (5, "08:20–08:25")
+    assert break_between_labels("08:00–08:45", "08:40–09:25") is None
+
+
+def test_format_teacher_export_cell() -> None:
+    class _Class:
+        name = "1Б"
+
+    class _Subj:
+        display_name = "Математика"
+
+    class _Room:
+        display_name = "12"
+
+    class _Assignment:
+        group_number = None
+
+    class _Cell:
+        school_class = _Class()
+        subject = _Subj()
+        classroom = _Room()
+        assignment = _Assignment()
+
+    assert format_teacher_export_cell(_Cell()) == "1Б / Математика / каб. 12"
 
 
 def test_export_all_cell_contains_subject_classroom_teacher() -> None:
@@ -283,10 +313,26 @@ def test_class_and_teacher_reports_include_class_hour_and_bells() -> None:
                 ShiftLessonTime(
                     school_id=TEST_SCHOOL_ID,
                     shift_id=shift.id,
+                    day_of_week=1,
+                    lesson_number=2,
+                    time_start=dt_time(9, 20),
+                    time_end=dt_time(10, 5),
+                ),
+                ShiftLessonTime(
+                    school_id=TEST_SCHOOL_ID,
+                    shift_id=shift.id,
                     day_of_week=2,
                     lesson_number=1,
                     time_start=dt_time(8, 0),
                     time_end=dt_time(8, 45),
+                ),
+                ShiftLessonTime(
+                    school_id=TEST_SCHOOL_ID,
+                    shift_id=shift.id,
+                    day_of_week=2,
+                    lesson_number=2,
+                    time_start=dt_time(8, 55),
+                    time_end=dt_time(9, 40),
                 ),
             ]
         )
@@ -327,16 +373,35 @@ def test_class_and_teacher_reports_include_class_hour_and_bells() -> None:
     xlsx = client.get(f"/api/reports/export/class/{class_id}")
     assert xlsx.status_code == 200, xlsx.text
     sheet = load_workbook(io.BytesIO(xlsx.content)).active
-    # Row 1 headers, row 2 class hour, row 3 lesson 1
-    lesson_col = str(sheet["A3"].value or "")
-    assert "1" in lesson_col
-    assert "08:00–08:45" in lesson_col
-    assert "08:25–09:10" not in lesson_col
-    monday = str(sheet["B3"].value or "")
+    col_a = [str(sheet.cell(row, 1).value or "") for row in range(1, sheet.max_row + 1)]
+    assert any("Кл. час" in v and "08:00–08:20" in v for v in col_a)
+    assert any("Перемена" in v and "5 мин" in v and "08:20–08:25" in v for v in col_a)
+    assert any("Перемена" in v and "10 мин" in v and "08:45–08:55" in v for v in col_a)
+    lesson1_row = next(i for i, v in enumerate(col_a, start=1) if v.startswith("1\n"))
+    assert "08:00–08:45" in col_a[lesson1_row - 1]
+    assert "08:25–09:10" not in col_a[lesson1_row - 1]
+    monday = str(sheet.cell(lesson1_row, 2).value or "")
     assert "08:25–09:10" in monday
     assert "Математика" in monday
-    tuesday = str(sheet["C3"].value or "")
+    tuesday = str(sheet.cell(lesson1_row, 3).value or "")
     assert "08:00–08:45" not in tuesday
+
+    teacher_xlsx = client.get(f"/api/reports/export/teacher/{teacher_id}")
+    assert teacher_xlsx.status_code == 200, teacher_xlsx.text
+    teacher_sheet = load_workbook(io.BytesIO(teacher_xlsx.content)).active
+    assert teacher_sheet["A1"].value == "Урок"
+    assert teacher_sheet["B1"].value == "Понедельник"
+    t_col_a = [
+        str(teacher_sheet.cell(row, 1).value or "")
+        for row in range(1, teacher_sheet.max_row + 1)
+    ]
+    assert any("08:00–08:45" in v for v in t_col_a)
+    assert any("Перемена" in v and "10 мин" in v for v in t_col_a)
+    t_lesson1 = next(i for i, v in enumerate(t_col_a, start=1) if v.startswith("1\n"))
+    monday_teacher = str(teacher_sheet.cell(t_lesson1, 2).value or "")
+    assert "1Б" in monday_teacher
+    assert "Математика" in monday_teacher
+    assert "08:25–09:10" in monday_teacher
 
 
 def test_unique_sheet_name_sanitizes_and_dedupes() -> None:

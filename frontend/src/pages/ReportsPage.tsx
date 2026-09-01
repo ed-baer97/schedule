@@ -8,10 +8,12 @@ import {
   exportClassUrl,
   exportTeacherUrl,
 } from '../api/reports'
+import { PageHeader } from '../components/PageHeader'
 
 export function ReportsPage() {
   const [classId, setClassId] = useState<number | ''>('')
   const [teacherId, setTeacherId] = useState<number | ''>('')
+  const [teacherQuery, setTeacherQuery] = useState('')
 
   const classesQ = useQuery({
     queryKey: ['school-classes'],
@@ -24,19 +26,33 @@ export function ReportsPage() {
 
   const classes = useMemo(() => classesQ.data ?? [], [classesQ.data])
   const teachers = teachersQ.data ?? []
+  const teacherOptions = useMemo(() => {
+    const q = teacherQuery.trim().toLowerCase()
+    const list = q
+      ? teachers.filter((t) => t.full_name.toLowerCase().includes(q))
+      : teachers
+    if (teacherId !== '' && !list.some((t) => t.id === teacherId)) {
+      const selected = teachers.find((t) => t.id === teacherId)
+      if (selected) return [selected, ...list]
+    }
+    return list
+  }, [teachers, teacherQuery, teacherId])
 
   return (
     <div>
-      <h1 className="h3 mb-3">Отчёты и экспорт</h1>
+      <PageHeader
+        title="Отчёты и экспорт"
+        subtitle="Печать и Excel: полное расписание, класс или учитель"
+      />
       <div className="row g-3">
         <div className="col-md-6">
-          <div className="card shadow-sm h-100">
-            <div className="card-header fw-semibold">Экспорт полного расписания</div>
+          <div className="card shadow-sm h-100 report-pick-card">
+            <div className="card-header fw-semibold">
+              <i className="bi bi-file-earmark-spreadsheet" />
+              Экспорт полного расписания
+            </div>
             <div className="card-body d-grid gap-2">
-              <a
-                className="btn btn-success"
-                href={exportAllUrl('elementary')}
-              >
+              <a className="btn btn-success" href={exportAllUrl('elementary')}>
                 Начальная школа (Excel)
               </a>
               <a
@@ -51,9 +67,13 @@ export function ReportsPage() {
         </div>
 
         <div className="col-md-6">
-          <div className="card shadow-sm h-100">
-            <div className="card-header fw-semibold">Расписание класса</div>
+          <div className="card shadow-sm h-100 report-pick-card">
+            <div className="card-header fw-semibold">
+              <i className="bi bi-people" />
+              Расписание класса
+            </div>
             <div className="card-body">
+              <p className="report-pick-hint">Звонки и перемены в сетке просмотра.</p>
               <select
                 className="form-select mb-3"
                 value={classId === '' ? '' : String(classId)}
@@ -87,9 +107,23 @@ export function ReportsPage() {
         </div>
 
         <div className="col-md-6">
-          <div className="card shadow-sm h-100">
-            <div className="card-header fw-semibold">Расписание учителя</div>
+          <div className="card shadow-sm h-100 report-pick-card">
+            <div className="card-header fw-semibold">
+              <i className="bi bi-person-badge" />
+              Расписание учителя
+            </div>
             <div className="card-body">
+              <p className="report-pick-hint">
+                В сетке — время уроков и перемен; в Excel та же недельная таблица.
+              </p>
+              <input
+                className="form-control mb-2"
+                type="search"
+                placeholder="Поиск по ФИО…"
+                value={teacherQuery}
+                onChange={(e) => setTeacherQuery(e.target.value)}
+                aria-label="Поиск учителя"
+              />
               <select
                 className="form-select mb-3"
                 value={teacherId === '' ? '' : String(teacherId)}
@@ -98,7 +132,7 @@ export function ReportsPage() {
                 }
               >
                 <option value="">Выберите учителя…</option>
-                {teachers.map((t) => (
+                {teacherOptions.map((t) => (
                   <option key={t.id} value={t.id}>
                     {t.full_name}
                   </option>
@@ -123,8 +157,11 @@ export function ReportsPage() {
         </div>
 
         <div className="col-md-6">
-          <div className="card shadow-sm h-100">
-            <div className="card-header fw-semibold">Печать</div>
+          <div className="card shadow-sm h-100 report-pick-card">
+            <div className="card-header fw-semibold">
+              <i className="bi bi-printer" />
+              Печать
+            </div>
             <div className="card-body">
               <p className="text-muted small mb-2">
                 Откройте просмотр класса/учителя и нажмите <kbd>Ctrl</kbd>+<kbd>P</kbd>.

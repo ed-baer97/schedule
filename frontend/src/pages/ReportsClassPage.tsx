@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 import { exportClassUrl, fetchClassReport } from '../api/reports'
+import { PageHeader } from '../components/PageHeader'
 import {
   ReportGrid,
   buildTimetableRows,
@@ -35,31 +36,29 @@ export function ReportsClassPage() {
 
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-3 no-print">
-        <h1 className="h3 mb-0">Расписание класса {r.class_name}</h1>
-        <div className="d-flex gap-2">
-          <a href={exportClassUrl(r.class_id)} className="btn btn-success btn-sm">
-            Скачать Excel
-          </a>
-          <button
-            type="button"
-            className="btn btn-outline-secondary btn-sm"
-            onClick={() => window.print()}
-          >
-            Печать
-          </button>
-          <Link to="/reports" className="btn btn-outline-secondary btn-sm">
-            ← Отчёты
-          </Link>
-        </div>
-      </div>
-
-      <ReportGrid
-        dayNames={r.day_names}
-        workingDays={r.working_days}
-        headerWidth={120}
-        rows={rows}
+      <PageHeader
+        title={`Класс ${r.class_name}`}
+        subtitle="Недельное расписание · звонки и перемены"
+        actions={
+          <>
+            <a href={exportClassUrl(r.class_id)} className="btn btn-success btn-sm">
+              Скачать Excel
+            </a>
+            <button
+              type="button"
+              className="btn btn-outline-secondary btn-sm"
+              onClick={() => window.print()}
+            >
+              Печать
+            </button>
+            <Link to="/reports" className="btn btn-outline-secondary btn-sm">
+              ← Отчёты
+            </Link>
+          </>
+        }
       />
+
+      <ReportGrid dayNames={r.day_names} workingDays={r.working_days} rows={rows} />
     </div>
   )
 }

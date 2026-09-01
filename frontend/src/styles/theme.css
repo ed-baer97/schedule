@@ -233,10 +233,21 @@ h6 {
   font-weight: 600;
 }
 
-.page-header .page-subtitle {
-  color: color-mix(in srgb, var(--kivi-ink) 62%, transparent);
-  font-size: 0.9rem;
-  margin: 0;
+.report-pick-card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.report-pick-card .card-header i {
+  color: var(--kivi-primary);
+  font-size: 1.15rem;
+}
+
+.report-pick-hint {
+  color: var(--kivi-muted);
+  font-size: 0.8rem;
+  margin: 0 0 0.75rem;
 }
 
 /* ——— Cards & tables ——— */
@@ -795,6 +806,18 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   background-color: color-mix(in srgb, var(--kivi-primary) 10%, transparent);
 }
 
+.report-grid-table {
+  font-size: 0.85rem;
+}
+
+.report-grid-table thead th {
+  background: color-mix(in srgb, var(--kivi-primary) 12%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  border-color: var(--kivi-line);
+}
+
 .report-grid-table td {
   min-width: 8.5rem;
   vertical-align: top;
@@ -808,6 +831,61 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 .report-lesson-num {
   font-size: 1.05rem;
   line-height: 1.2;
+}
+
+.report-class-hour-row td {
+  background: color-mix(in srgb, var(--kivi-accent) 12%, var(--kivi-surface));
+}
+
+.report-class-hour-row td.report-lesson-index {
+  background: color-mix(in srgb, var(--kivi-accent) 18%, var(--kivi-surface));
+}
+
+.report-break-row td {
+  background: color-mix(in srgb, var(--kivi-primary) 7%, var(--kivi-surface));
+  padding: 0.28rem 0.45rem;
+  vertical-align: middle;
+  min-width: 0;
+}
+
+.report-break-row td.report-lesson-index {
+  background: color-mix(in srgb, var(--kivi-primary) 11%, var(--kivi-surface));
+}
+
+.report-break-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  line-height: 1.15;
+  color: var(--kivi-muted);
+}
+
+.report-break-title {
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.report-break-mins {
+  font-size: 0.78rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--kivi-ink);
+}
+
+.report-break-range {
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.report-break-row td .report-break-label {
+  align-items: flex-start;
+}
+
+.report-break-row td.report-lesson-index .report-break-label {
+  align-items: center;
 }
 
 .lesson-card.report-lesson-card {
@@ -1535,7 +1613,7 @@ html[data-theme='dark'] .table.report-grid-table > tbody > tr > td {
   color: var(--kivi-ink);
 }
 
-html[data-theme='dark'] .table.report-grid-table > thead.table-light th {
+html[data-theme='dark'] .table.report-grid-table > thead th {
   background-color: #1a2622;
   color: #c5d4cc;
   border-color: #2c3a34;
@@ -1544,6 +1622,31 @@ html[data-theme='dark'] .table.report-grid-table > thead.table-light th {
 html[data-theme='dark'] .table.report-grid-table > tbody > tr > td.report-lesson-index {
   background-color: #1a2622;
   color: #eef3ea;
+}
+
+html[data-theme='dark'] .table.report-grid-table > tbody > tr.report-class-hour-row > td {
+  background-color: #2a2418;
+}
+
+html[data-theme='dark'] .table.report-grid-table > tbody > tr.report-class-hour-row > td.report-lesson-index {
+  background-color: #332b1c;
+}
+
+html[data-theme='dark'] .table.report-grid-table > tbody > tr.report-break-row > td {
+  background-color: #16221e;
+}
+
+html[data-theme='dark'] .table.report-grid-table > tbody > tr.report-break-row > td.report-lesson-index {
+  background-color: #1c2c26;
+}
+
+html[data-theme='dark'] .report-break-mins {
+  color: #eef3ea;
+}
+
+html[data-theme='dark'] .report-break-title,
+html[data-theme='dark'] .report-break-range {
+  color: #a8b8ae;
 }
 
 /* Legacy class-report cards used inline white fill; beat that in dark. */
@@ -1772,5 +1875,12 @@ html[data-theme='dark'] .overlay-scroll-thumb {
 
   .lesson-card {
     padding-right: 6px !important;
+  }
+
+  .report-break-row td,
+  .report-class-hour-row td,
+  .report-grid-table thead th {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 }

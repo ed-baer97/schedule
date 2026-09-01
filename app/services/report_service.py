@@ -52,6 +52,7 @@ _LESSON_NUM_FONT = Font(bold=True, size=_CELL_FONT_SIZE, color=_INK, name="Calib
 _SUBJECT_FONT = Font(size=_CELL_FONT_SIZE, color=_INK, name="Calibri")
 _META_FONT = Font(size=_CELL_FONT_SIZE, color=_MUTED, name="Calibri")
 _CLASS_HOUR_FONT = Font(size=_CELL_FONT_SIZE, color=_INK, name="Calibri")
+_BREAK_FONT = Font(size=_CELL_FONT_SIZE, italic=True, color=_MUTED, name="Calibri")
 
 _TITLE_ALIGN = Alignment(horizontal="left", vertical="center", indent=1)
 _HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -72,6 +73,16 @@ def format_grid_export_cell(cell: ScheduleCell) -> str:
     room = cell.classroom.display_name if cell.classroom else "—"
     teacher = cell.teacher.display_name if cell.teacher else "—"
     return f"{subject} / каб. {room} / {teacher}"
+
+
+def format_teacher_export_cell(cell: ScheduleCell) -> str:
+    """Class, subject and classroom — teacher timetable cell."""
+    class_name = cell.school_class.name if cell.school_class else "?"
+    subject = cell.subject.display_name if cell.subject else "?"
+    if cell.assignment and cell.assignment.group_number:
+        subject = f"{subject} · гр.{cell.assignment.group_number}"
+    room = cell.classroom.display_name if cell.classroom else "—"
+    return f"{class_name} / {subject} / каб. {room}"
 
 
 def _lighten_hex(color: str, white: float = 0.78) -> str:
@@ -110,12 +121,13 @@ def _write_grid_value(
     col: int,
     match: list[ScheduleCell],
     time_label: str | None = None,
+    format_cell: Callable[[ScheduleCell], str] = format_grid_export_cell,
 ) -> None:
     parts: list[str] = []
     if time_label:
         parts.append(time_label)
     if match:
-        parts.extend(format_grid_export_cell(c) for c in match)
+        parts.extend(format_cell(c) for c in match)
     value = "\n".join(parts)
     excel_cell = ws.cell(row, col, value)
     if match:
@@ -127,6 +139,36 @@ def _write_grid_value(
         )
     else:
         _paint(excel_cell, fill=_EMPTY_FILL, font=_META_FONT, alignment=_CELL_ALIGN)
+
+
+def _write_break_row(
+    ws: Worksheet,
+    row: int,
+    last_col: int,
+    minutes: int,
+    range_label: str,
+    day_overrides: dict[int, tuple[int, str]],
+) -> None:
+    index_cell = ws.cell(row, 1, f"Перемена\n{minutes} мин\n{range_label}")
+    _paint(
+        index_cell,
+        fill=_BREAK_FILL,
+        font=_BREAK_FONT,
+        alignment=_NUM_ALIGN,
+    )
+    for day in range(1, last_col):
+        override = day_overrides.get(day)
+        text = ""
+        if override and (override[0] != minutes or override[1] != range_label):
+            text = f"{override[0]} мин\n{override[1]}"
+        day_cell = ws.cell(row, 1 + day, text)
+        _paint(
+            day_cell,
+            fill=_BREAK_FILL,
+            font=_BREAK_FONT,
+            alignment=_CELL_ALIGN,
+        )
+    ws.row_dimensions[row].height = 28
 
 
 def ordinary_lesson_time(
@@ -164,6 +206,122 @@ def _style_sheet_chrome(ws: Worksheet, last_col: int, lesson_col_width: float = 
     ws.page_setup.orientation = "landscape"
     ws.page_setup.paperSize = ws.PAPERSIZE_A4
     ws.print_options.horizontalCentered = True
+
+
+def _write_person_week_sheet(
+    ws: Worksheet,
+    *,
+    working_days: int,
+    lessons: list[int],
+    bells: dict,
+    cell_index: dict[tuple[int, int], list[ScheduleCell]],
+    format_cell: Callable[[ScheduleCell], str] = format_grid_export_cell,
+    class_hour_day_text: str = "Классный час",
+) -> None:
+    times_by_day: dict[int, dict[int, str]] = bells["lesson_times_by_day"]
+    class_hour_day = bells["class_hour_day"]
+    last_col = 1 + working_days
+
+    header = ws.cell(1, 1, "Урок")
+    _paint(header, fill=_HEADER_FILL, font=_HEADER_FONT, alignment=_HEADER_ALIGN)
+    for day in range(1, working_days + 1):
+        day_header = ws.cell(1, 1 + day, DAY_NAMES[day - 1])
+        _paint(
+            day_header,
+            fill=_HEADER_FILL,
+            font=_HEADER_FONT,
+            alignment=_HEADER_ALIGN,
+        )
+    ws.row_dimensions[1].height = 16
+    row_idx = 2
+
+    if class_hour_day:
+        ch_time = bells["class_hour_time_label"]
+        ch_label = f"Кл. час\n{ch_time}" if ch_time else "Кл. час"
+        index_cell = ws.cell(row_idx, 1, ch_label)
+        _paint(
+            index_cell,
+            fill=_CLASS_HOUR_FILL,
+            font=_LESSON_NUM_FONT,
+            alignment=_NUM_ALIGN,
+        )
+        for day in range(1, working_days + 1):
+            hour_text = class_hour_day_text if class_hour_day == day else ""
+            hour_cell = ws.cell(row_idx, 1 + day, hour_text)
+            _paint(
+                hour_cell,
+                fill=_CLASS_HOUR_FILL if hour_text else _EMPTY_FILL,
+                font=_CLASS_HOUR_FONT,
+                alignment=_CELL_ALIGN,
+            )
+        ws.row_dimensions[row_idx].height = 24
+        row_idx += 1
+
+        first_lesson = lessons[0] if lessons else None
+        ch_next = (
+            times_by_day.get(class_hour_day, {}).get(first_lesson)
+            if first_lesson is not None
+            else None
+        )
+        ch_break = break_between_labels(ch_time, ch_next)
+        if ch_break:
+            _write_break_row(ws, row_idx, last_col, ch_break[0], ch_break[1], {})
+            row_idx += 1
+
+    for index, lesson in enumerate(lessons):
+        time_label = ordinary_lesson_time(
+            times_by_day, lesson, working_days, class_hour_day
+        )
+        index_cell = ws.cell(row_idx, 1, _lesson_index_label(lesson, time_label))
+        _paint(
+            index_cell,
+            fill=_LESSON_COL_FILL,
+            font=_LESSON_NUM_FONT,
+            alignment=_NUM_ALIGN,
+        )
+        max_groups = 1
+        extra_time = False
+        for day in range(1, working_days + 1):
+            match = cell_index.get((day, lesson), [])
+            max_groups = max(max_groups, len(match) or 1)
+            day_time = times_by_day.get(day, {}).get(lesson)
+            day_bell = day_time if day_time and day_time != time_label else None
+            if day_bell:
+                extra_time = True
+            _write_grid_value(
+                ws,
+                row_idx,
+                1 + day,
+                match,
+                day_bell,
+                format_cell=format_cell,
+            )
+        ws.row_dimensions[row_idx].height = _lesson_row_height(
+            max_groups + (1 if extra_time else 0)
+        )
+        row_idx += 1
+
+        if index + 1 >= len(lessons):
+            continue
+        nxt = lessons[index + 1]
+        next_label = ordinary_lesson_time(
+            times_by_day, nxt, working_days, class_hour_day
+        )
+        gap = break_between_labels(time_label, next_label)
+        if not gap:
+            continue
+        overrides: dict[int, tuple[int, str]] = {}
+        for day in range(1, working_days + 1):
+            day_gap = break_between_labels(
+                times_by_day.get(day, {}).get(lesson),
+                times_by_day.get(day, {}).get(nxt),
+            )
+            if day_gap:
+                overrides[day] = day_gap
+        _write_break_row(ws, row_idx, last_col, gap[0], gap[1], overrides)
+        row_idx += 1
+
+    _style_sheet_chrome(ws, last_col)
 
 
 def unique_sheet_name(raw: str, used: set[str]) -> str:
@@ -348,9 +506,8 @@ class ReportService:
             "cells": [cell_to_report_dict(c) for c in cells],
         }
 
-    def teacher_report(self, teacher_id: int) -> dict:
+    def _teacher_occupancy(self, teacher_id: int):
         teacher = require_owned(self.db, Teacher, teacher_id, self.school_id)
-
         cells = list(
             self.db.execute(
                 select(ScheduleCell)
@@ -377,18 +534,19 @@ class ReportService:
                 max_lessons = max(max_lessons, sh.max_lessons_per_day)
                 shift_counts[sh.id] = shift_counts.get(sh.id, 0) + 1
                 shift_by_id[sh.id] = sh
+        shift = shift_by_id[max(shift_counts, key=lambda sid: shift_counts[sid])] if shift_counts else None
+        return teacher, cells, shift, working_days, max_lessons
 
-        shift = None
-        if shift_counts:
-            best_id = max(shift_counts, key=lambda sid: shift_counts[sid])
-            shift = shift_by_id[best_id]
+    def teacher_report(self, teacher_id: int) -> dict:
+        teacher, cells, shift, working_days, max_lessons = self._teacher_occupancy(
+            teacher_id
+        )
         bells = shift_bell_fields(shift)
         lessons_range = (
             list(range(shift.start_lesson, shift.start_lesson + shift.lessons_count))
             if shift
             else list(range(1, max_lessons + 1))
         )
-
         return {
             "teacher_id": teacher.id,
             "teacher_name": teacher.full_name,
@@ -407,13 +565,7 @@ class ReportService:
         shift = school_class.shift if school_class.shift_id else None
         working_days = shift.working_days if shift else 5
         lessons = _shift_lesson_numbers(shift)
-
-        times_by_day: dict[int, dict[int, str]] = {}
-        if shift:
-            for lt in shift.lesson_times.all():
-                label = time_range_label(lt.time_start, lt.time_end)
-                if label:
-                    times_by_day.setdefault(lt.day_of_week, {})[lt.lesson_number] = label
+        bells = shift_bell_fields(shift)
 
         cells = load_cells(
             self.db,
@@ -428,130 +580,40 @@ class ReportService:
         workbook = Workbook()
         ws = workbook.active
         ws.title = unique_sheet_name(f"Расписание {school_class.name}", set())
-        last_col = 1 + working_days
-        bells = shift_bell_fields(shift)
-
-        header = ws.cell(1, 1, "Урок")
-        _paint(header, fill=_HEADER_FILL, font=_HEADER_FONT, alignment=_HEADER_ALIGN)
-        for day in range(1, working_days + 1):
-            day_header = ws.cell(1, 1 + day, DAY_NAMES[day - 1])
-            _paint(
-                day_header,
-                fill=_HEADER_FILL,
-                font=_HEADER_FONT,
-                alignment=_HEADER_ALIGN,
-            )
-        ws.row_dimensions[1].height = 16
-        row_idx = 2
-
-        if bells["class_hour_day"]:
-            ch_time = bells["class_hour_time_label"]
-            ch_label = f"Кл. час\n{ch_time}" if ch_time else "Кл. час"
-            index_cell = ws.cell(row_idx, 1, ch_label)
-            _paint(
-                index_cell,
-                fill=_CLASS_HOUR_FILL,
-                font=_LESSON_NUM_FONT,
-                alignment=_NUM_ALIGN,
-            )
-            for day in range(1, working_days + 1):
-                hour_text = (
-                    "Классный час" if bells["class_hour_day"] == day else ""
-                )
-                hour_cell = ws.cell(row_idx, 1 + day, hour_text)
-                _paint(
-                    hour_cell,
-                    fill=_CLASS_HOUR_FILL if hour_text else _EMPTY_FILL,
-                    font=_CLASS_HOUR_FONT,
-                    alignment=_CELL_ALIGN,
-                )
-            ws.row_dimensions[row_idx].height = 24
-            row_idx += 1
-
-        for lesson in lessons:
-            time_label = ordinary_lesson_time(
-                times_by_day,
-                lesson,
-                working_days,
-                bells["class_hour_day"],
-            )
-            index_cell = ws.cell(row_idx, 1, _lesson_index_label(lesson, time_label))
-            _paint(
-                index_cell,
-                fill=_LESSON_COL_FILL,
-                font=_LESSON_NUM_FONT,
-                alignment=_NUM_ALIGN,
-            )
-            max_groups = 1
-            extra_time = False
-            for day in range(1, working_days + 1):
-                match = cell_index.get((day, lesson), [])
-                max_groups = max(max_groups, len(match) or 1)
-                day_time = times_by_day.get(day, {}).get(lesson)
-                day_bell = day_time if day_time and day_time != time_label else None
-                if day_bell:
-                    extra_time = True
-                _write_grid_value(ws, row_idx, 1 + day, match, day_bell)
-            ws.row_dimensions[row_idx].height = _lesson_row_height(
-                max_groups + (1 if extra_time else 0)
-            )
-            row_idx += 1
-
-        _style_sheet_chrome(ws, last_col)
-
+        _write_person_week_sheet(
+            ws,
+            working_days=working_days,
+            lessons=lessons,
+            bells=bells,
+            cell_index=cell_index,
+        )
         buf = io.BytesIO()
         workbook.save(buf)
         return ExportFile(buf, f"расписание_{school_class.name}.xlsx")
 
     def export_teacher(self, teacher_id: int) -> ExportFile:
-        teacher = require_owned(self.db, Teacher, teacher_id, self.school_id)
-        cells = list(
-            self.db.execute(
-                select(ScheduleCell)
-                .join(TeachingAssignment)
-                .options(*CELL_LOAD_WITH_CLASS)
-                .where(
-                    TeachingAssignment.teacher_id == teacher_id,
-                    ScheduleCell.school_id == self.school_id,
-                )
-            )
-            .scalars()
-            .unique()
-            .all()
+        teacher, cells, shift, working_days, max_lessons = self._teacher_occupancy(
+            teacher_id
         )
-        working_days = 5
-        max_lessons = 7
+        bells = shift_bell_fields(shift)
+        lessons = _shift_lesson_numbers(shift) if shift else list(range(1, max_lessons + 1))
+        cell_index: dict[tuple[int, int], list[ScheduleCell]] = defaultdict(list)
         for cell in cells:
-            sh = cell.school_class.shift if cell.school_class.shift_id else None
-            if sh:
-                working_days = max(working_days, sh.working_days)
-                max_lessons = max(max_lessons, sh.max_lessons_per_day)
+            cell_index[(cell.day_of_week, cell.lesson_number)].append(cell)
 
-        data = []
-        for day in range(1, working_days + 1):
-            for lesson in range(1, max_lessons + 1):
-                row = {"День": DAY_NAMES[day - 1], "Урок": lesson}
-                match = [
-                    c for c in cells if c.day_of_week == day and c.lesson_number == lesson
-                ]
-                if match:
-                    row["Класс"] = " / ".join(c.school_class.name for c in match)
-                    row["Предмет"] = " / ".join(c.subject.display_name for c in match)
-                    row["Кабинет"] = " / ".join(
-                        (c.classroom.number if c.classroom else "—") for c in match
-                    )
-                else:
-                    row["Класс"] = ""
-                    row["Предмет"] = ""
-                    row["Кабинет"] = ""
-                data.append(row)
-
-        df = pd.DataFrame(data)
+        workbook = Workbook()
+        ws = workbook.active
+        ws.title = unique_sheet_name(f"Расписание {teacher.full_name}", set())
+        _write_person_week_sheet(
+            ws,
+            working_days=working_days,
+            lessons=lessons,
+            bells=bells,
+            cell_index=cell_index,
+            format_cell=format_teacher_export_cell,
+        )
         buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            df.to_excel(
-                writer, sheet_name=f"Расписание {teacher.full_name}"[:31], index=False
-            )
+        workbook.save(buf)
         filename = teacher.full_name.replace(" ", "_").replace(".", "")
         return ExportFile(buf, f"расписание_{filename}.xlsx")
 
