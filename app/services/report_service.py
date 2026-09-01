@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import io
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 
-import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -13,7 +13,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain import DAY_NAMES, lesson_end_exclusive, time_range_label
+from app.domain import DAY_NAMES, break_between_labels, lesson_end_exclusive, time_range_label
 from app.models import ScheduleCell, SchoolClass, Shift, Subject, Teacher, TeachingAssignment
 from app.services.errors import BadRequestError
 from app.services.schedule_mapping import (
@@ -44,6 +44,7 @@ _HEADER_FILL = PatternFill("solid", fgColor=_TEAL)
 _LESSON_COL_FILL = PatternFill("solid", fgColor="DCE8E4")
 _EMPTY_FILL = PatternFill("solid", fgColor="F7FAF8")
 _CLASS_HOUR_FILL = PatternFill("solid", fgColor="F6E8D4")
+_BREAK_FILL = PatternFill("solid", fgColor="EEF3EA")
 
 _TITLE_FONT = Font(bold=True, size=11, color=_WHITE, name="Calibri")
 _HEADER_FONT = Font(bold=True, size=9, color=_WHITE, name="Calibri")

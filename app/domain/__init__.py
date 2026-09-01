@@ -14,7 +14,13 @@ from app.domain.classroom_rules import (
     room_denial_message,
     room_has_subject,
 )
-from app.domain.days import DAY_NAMES, SHORT_DAY_NAMES, fmt_time, time_range_label
+from app.domain.days import (
+    DAY_NAMES,
+    SHORT_DAY_NAMES,
+    break_between_labels,
+    fmt_time,
+    time_range_label,
+)
 from app.domain.names import normalize_person_name
 from app.domain.pair_epochs import MAX_PAIR_LESSON, freeze_keys_for_good_doubles
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
@@ -55,6 +61,7 @@ __all__ = [
     "SHORT_DAY_NAMES",
     "fmt_time",
     "time_range_label",
+    "break_between_labels",
     "grade_from_name",
     "level_from_grade",
     "GradeBand",
