@@ -203,7 +203,7 @@ class AssignmentSubjectMatrixMixin:
                 for i, a in enumerate(existing):
                     if i == 0:
                         a.teacher_id = checked_teachers[0]
-                        a.group_number = 1 if subject.requires_subgroup else None
+                        a.group_number = None
                     else:
                         self._reassign_cells_and_delete(a, existing[0].id)
             else:

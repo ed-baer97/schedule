@@ -31,6 +31,7 @@ class ClassroomFact:
     is_exclusive: bool = False
     classes_capacity: int = 1
     school_level: str | None = None
+    subgroup_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,8 @@ class PlacementContext:
     force_teacher_home: bool = False
     # Elementary non-fixed subjects stay in the class home room.
     force_class_home: bool = False
+    # True when the assignment is a subgroup (group_number set).
+    is_subgroup: bool = False
 
 
 def room_has_subject(room: ClassroomFact, subject_id: int) -> bool:
@@ -88,14 +91,24 @@ def room_allows_level(room: ClassroomFact, class_school_level: str | None) -> bo
     return tagged == class_school_level
 
 
+def room_allows_subgroup(room: ClassroomFact, is_subgroup: bool) -> bool:
+    """Hard: subgroup_only rooms accept only subgroup lessons."""
+    if not room.subgroup_only:
+        return True
+    return bool(is_subgroup)
+
+
 def room_allows(
     room: ClassroomFact,
     *,
     subject_id: int,
     requires_fixed_classroom: bool,
     class_school_level: str | None = None,
+    is_subgroup: bool = False,
 ) -> bool:
     if not room_allows_level(room, class_school_level):
+        return False
+    if not room_allows_subgroup(room, is_subgroup):
         return False
     return room_allows_subject(
         room,
@@ -113,6 +126,7 @@ def room_denial_message(
     room_display_name: str,
     room_subject_name: str | None = None,
     class_school_level: str | None = None,
+    is_subgroup: bool = False,
 ) -> str | None:
     """Human-readable reason if the room cannot host this lesson."""
     if room_allows(
@@ -120,6 +134,7 @@ def room_denial_message(
         subject_id=subject_id,
         requires_fixed_classroom=requires_fixed_classroom,
         class_school_level=class_school_level,
+        is_subgroup=is_subgroup,
     ):
         return None
     if not room_allows_level(room, class_school_level):
@@ -134,6 +149,11 @@ def room_denial_message(
                 "уроки начальной сюда нельзя"
             )
         return f"Кабинет {room_display_name} недоступен для этого уровня школы"
+    if not room_allows_subgroup(room, is_subgroup):
+        return (
+            f"Кабинет {room_display_name} только для подгрупп — "
+            "целый класс сюда нельзя"
+        )
     if requires_fixed_classroom:
         return (
             f"Предмет «{subject_name}» требует фиксированный кабинет — "
@@ -162,6 +182,7 @@ def placement_cost(
         subject_id=ctx.subject_id,
         requires_fixed_classroom=ctx.requires_fixed_classroom,
         class_school_level=ctx.class_school_level,
+        is_subgroup=ctx.is_subgroup,
     ):
         return None
 
@@ -240,6 +261,7 @@ def candidate_rooms_for(
             subject_id=ctx.subject_id,
             requires_fixed_classroom=False,
             class_school_level=ctx.class_school_level,
+            is_subgroup=ctx.is_subgroup,
         ):
             return [(home.id, COST_OWNER_SUBJECT)]
     if (
@@ -255,6 +277,7 @@ def candidate_rooms_for(
             subject_id=ctx.subject_id,
             requires_fixed_classroom=False,
             class_school_level=ctx.class_school_level,
+            is_subgroup=ctx.is_subgroup,
         ):
             return [(home.id, COST_OWNER_SUBJECT)]
     return rank_candidate_rooms(rooms, ctx)

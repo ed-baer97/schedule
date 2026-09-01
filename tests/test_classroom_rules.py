@@ -25,6 +25,7 @@ def _room(
     subject_id: int | None = None,
     exclusive: bool = False,
     school_level: str | None = None,
+    subgroup_only: bool = False,
 ) -> ClassroomFact:
     return ClassroomFact(
         id=rid,
@@ -32,6 +33,7 @@ def _room(
         is_exclusive=exclusive,
         classes_capacity=1,
         school_level=school_level,
+        subgroup_only=subgroup_only,
     )
 
 
@@ -260,4 +262,62 @@ def test_force_teacher_home_wins_over_force_class_home():
     assert candidate_rooms_for([class_home, teacher_home], ctx) == [
         (20, COST_OWNER_SUBJECT)
     ]
+
+
+def test_subgroup_only_room_blocks_whole_class():
+    small = _room(5, subgroup_only=True)
+    gym = _room(1)
+    whole = PlacementContext(
+        subject_id=MATH,
+        requires_fixed_classroom=False,
+        class_school_level="secondary",
+        is_subgroup=False,
+    )
+    assert (
+        room_allows(
+            small,
+            subject_id=MATH,
+            requires_fixed_classroom=False,
+            class_school_level="secondary",
+            is_subgroup=False,
+        )
+        is False
+    )
+    assert room_allows(
+        gym,
+        subject_id=MATH,
+        requires_fixed_classroom=False,
+        class_school_level="secondary",
+        is_subgroup=False,
+    )
+    ranked = rank_candidate_rooms([small, gym], whole)
+    assert ranked == [(1, COST_GENERAL)]
+    msg = room_denial_message(
+        small,
+        subject_id=MATH,
+        subject_name="Математика",
+        requires_fixed_classroom=False,
+        room_display_name="5",
+        is_subgroup=False,
+    )
+    assert msg is not None and "подгрупп" in msg
+
+
+def test_subgroup_only_room_allows_subgroup():
+    small = _room(5, subgroup_only=True)
+    ctx = PlacementContext(
+        subject_id=MATH,
+        requires_fixed_classroom=False,
+        class_school_level="secondary",
+        is_subgroup=True,
+    )
+    assert room_allows(
+        small,
+        subject_id=MATH,
+        requires_fixed_classroom=False,
+        class_school_level="secondary",
+        is_subgroup=True,
+    )
+    ranked = candidate_rooms_for([small], ctx)
+    assert ranked == [(5, COST_GENERAL)]
 

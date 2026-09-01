@@ -31,7 +31,6 @@ export type ScheduleCell = {
   teacher_name: string | null
   group_number: number | null
   classroom_name: string | null
-  requires_subgroup?: boolean
 }
 
 export type SchoolClassRow = {
@@ -74,6 +73,7 @@ export type ClassroomChoice = {
   is_exclusive: boolean
   school_level?: string | null
   classes_capacity?: number | null
+  subgroup_only?: boolean
 }
 
 export type AssignmentChoice = {
@@ -87,7 +87,6 @@ export type AssignmentChoice = {
   remaining_hours: number
   preferred_classroom_id: number | null
   requires_fixed_classroom?: boolean
-  requires_subgroup?: boolean
 }
 
 export type AssignmentsData = {

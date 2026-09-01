@@ -40,7 +40,6 @@ class AssignmentChoiceData:
     remaining_hours: int
     preferred_classroom_id: int | None
     requires_fixed_classroom: bool = False
-    requires_subgroup: bool = False
 
 
 @dataclass

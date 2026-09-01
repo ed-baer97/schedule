@@ -80,7 +80,6 @@ class SubjectService:
         color: str,
         difficulty: str = Subject.DIFFICULTY_MEDIUM,
         requires_fixed_classroom: bool = False,
-        requires_subgroup: bool = False,
         commit: bool = True,
     ) -> SubjectData | Subject:
         s = Subject(
@@ -89,7 +88,6 @@ class SubjectService:
             color=color,
             difficulty=difficulty if difficulty in Subject.DIFFICULTIES else Subject.DIFFICULTY_MEDIUM,
             requires_fixed_classroom=requires_fixed_classroom,
-            requires_subgroup=requires_subgroup,
         )
         self.db.add(s)
         if commit:
@@ -137,7 +135,6 @@ class SubjectService:
         color: str | None = None,
         difficulty: str | None = None,
         requires_fixed_classroom: bool | None = None,
-        requires_subgroup: bool | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> SubjectData:
         s = require_owned(self.db, Subject, subject_id, self.school_id)
@@ -151,8 +148,6 @@ class SubjectService:
             s.difficulty = difficulty if difficulty in Subject.DIFFICULTIES else Subject.DIFFICULTY_MEDIUM
         if "requires_fixed_classroom" in fields_set and requires_fixed_classroom is not None:
             s.requires_fixed_classroom = bool(requires_fixed_classroom)
-        if "requires_subgroup" in fields_set and requires_subgroup is not None:
-            s.requires_subgroup = bool(requires_subgroup)
         self.db.commit()
         self.db.refresh(s)
         return subject_data(self._load_one(s.id))

@@ -65,6 +65,7 @@ class ClassroomChoiceData:
     subject_ids: list[int] = field(default_factory=list)
     is_exclusive: bool = False
     school_level: str | None = None
+    subgroup_only: bool = False
     classes_capacity: int = 1
 
 
@@ -139,6 +140,7 @@ class ClassroomData:
     subject_ids: list[int] = field(default_factory=list)
     is_exclusive: bool = False
     school_level: str | None = None
+    subgroup_only: bool = False
     subjects: list[SubjectBriefData] = field(default_factory=list)
     teachers: list[TeacherBriefData] = field(default_factory=list)
 
@@ -150,7 +152,6 @@ class SubjectData:
     color: str | None
     display_color: str
     requires_fixed_classroom: bool
-    requires_subgroup: bool = False
     difficulty: str = "medium"
     classrooms: list[ClassroomBriefData] | None = None
 
@@ -243,6 +244,7 @@ def classroom_choice(c) -> ClassroomChoiceData:
         subject_ids=[s.id for s in subjects],
         is_exclusive=bool(getattr(c, "is_exclusive", False)),
         school_level=getattr(c, "school_level", None),
+        subgroup_only=bool(getattr(c, "subgroup_only", False)),
         classes_capacity=int(getattr(c, "classes_capacity", None) or 1),
     )
 
@@ -293,6 +295,7 @@ def classroom_data(c) -> ClassroomData:
         subject_ids=[s.id for s in subjects],
         is_exclusive=bool(getattr(c, "is_exclusive", False)),
         school_level=getattr(c, "school_level", None),
+        subgroup_only=bool(getattr(c, "subgroup_only", False)),
         subjects=[subject_brief(s) for s in subjects],
         teachers=[teacher_brief(t) for t in teachers],
     )
@@ -306,7 +309,6 @@ def subject_data(s) -> SubjectData:
         color=s.color,
         display_color=s.display_color,
         requires_fixed_classroom=bool(s.requires_fixed_classroom),
-        requires_subgroup=bool(getattr(s, "requires_subgroup", False)),
         difficulty=getattr(s, "difficulty", "medium") or "medium",
         classrooms=[classroom_brief(r) for r in rooms],
     )

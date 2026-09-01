@@ -50,6 +50,7 @@ def create_classroom(
         subject_ids=body.subject_ids,
         is_exclusive=body.is_exclusive,
         school_level=body.school_level,
+        subgroup_only=body.subgroup_only,
         teacher_ids=body.teacher_ids,
     )
     return ClassroomOut.model_validate(asdict(c))
@@ -74,6 +75,7 @@ def update_classroom(
         subject_ids=data.get("subject_ids"),
         is_exclusive=data.get("is_exclusive"),
         school_level=data.get("school_level"),
+        subgroup_only=data.get("subgroup_only"),
         teacher_ids=data.get("teacher_ids"),
         fields_set=frozenset(data.keys()),
     )

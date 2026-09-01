@@ -22,6 +22,7 @@ export type Classroom = {
   subject_ids: number[]
   is_exclusive: boolean
   school_level: string | null
+  subgroup_only: boolean
   subjects: ClassroomSubject[]
   teachers: ClassroomTeacher[]
 }
@@ -37,6 +38,7 @@ export type ClassroomPayload = {
   subject_ids: number[]
   is_exclusive: boolean
   school_level: string | null
+  subgroup_only: boolean
   teacher_ids: number[]
 }
 

@@ -186,6 +186,7 @@ class ScheduleValidator:
                         if assignment.school_class
                         else None
                     ),
+                    is_subgroup=assignment.group_number is not None,
                 )
                 if denial:
                     errors.append(denial)

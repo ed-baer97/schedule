@@ -123,6 +123,7 @@ class ClassroomService:
         subject_ids: list[int] | None = None,
         is_exclusive: bool = False,
         school_level: str | None = None,
+        subgroup_only: bool = False,
         teacher_ids: list[int] | None = None,
         commit: bool = True,
     ) -> ClassroomData | Classroom:
@@ -138,6 +139,7 @@ class ClassroomService:
             building=(building or "").strip() or None,
             is_exclusive=bool(is_exclusive) if ids else False,
             school_level=normalize_classroom_school_level(school_level),
+            subgroup_only=bool(subgroup_only),
         )
         self.db.add(c)
         self.db.flush()
@@ -196,6 +198,7 @@ class ClassroomService:
         subject_ids: list[int] | None = None,
         is_exclusive: bool | None = None,
         school_level: str | None = None,
+        subgroup_only: bool | None = None,
         teacher_ids: list[int] | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> ClassroomData:
@@ -216,6 +219,8 @@ class ClassroomService:
             c.building = (building or "").strip() or None
         if "school_level" in fields_set:
             c.school_level = normalize_classroom_school_level(school_level)
+        if "subgroup_only" in fields_set and subgroup_only is not None:
+            c.subgroup_only = bool(subgroup_only)
 
         new_ids = [s.id for s in (c.subjects or [])]
         new_exclusive = bool(c.is_exclusive)

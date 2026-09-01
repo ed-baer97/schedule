@@ -37,6 +37,8 @@ class Classroom(Base):
     is_exclusive = Column(Boolean, default=False, nullable=False)
     # NULL = shared (gym, lab); 'elementary' / 'secondary' = tagged for that level.
     school_level = Column(String(20), nullable=True)
+    # True = only subgroup lessons may be placed here (small split rooms).
+    subgroup_only = Column(Boolean, default=False, nullable=False)
 
     school = relationship("School")
     subjects = relationship(

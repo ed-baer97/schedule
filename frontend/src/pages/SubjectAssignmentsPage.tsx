@@ -153,13 +153,6 @@ export function SubjectAssignmentsPage() {
         {view.subject.name}
         <small className="text-muted fs-6">— Назначения учителей</small>
       </h1>
-      {view.subject.requires_subgroup ? (
-        <p className="small text-muted mb-3">
-          Предмет помечен «только подгруппа»: даже один учитель не занимает весь класс, слот можно делить
-          с другой такой подгруппой.
-        </p>
-      ) : null}
-
       <ul className="nav nav-tabs mb-3">
         <li className="nav-item">
           <button

@@ -25,7 +25,7 @@ _CORE_TABLES = frozenset(
 )
 
 _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
-    "classrooms": frozenset({"classes_capacity", "is_exclusive", "school_level"}),
+    "classrooms": frozenset({"classes_capacity", "is_exclusive", "school_level", "subgroup_only"}),
     "shifts": frozenset(
         {
             "working_days",
@@ -48,7 +48,7 @@ _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     ),
     "teachers": frozenset({"home_classroom_id"}),
     "school_classes": frozenset({"homeroom_teacher_id"}),
-    "subjects": frozenset({"difficulty", "requires_fixed_classroom", "requires_subgroup"}),
+    "subjects": frozenset({"difficulty", "requires_fixed_classroom"}),
 }
 
 _SCHEMA_HINT = "Схема неполная. Из корня проекта: alembic upgrade head"

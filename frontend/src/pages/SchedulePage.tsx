@@ -1033,11 +1033,13 @@ function AddLessonModal(props: {
           subject_ids: c.subject_ids ?? [],
           is_exclusive: Boolean(c.is_exclusive),
           school_level: c.school_level ?? null,
+          subgroup_only: Boolean(c.subgroup_only),
         },
         {
           subject_id: selectedAssignment.subject_id,
           requires_fixed_classroom: Boolean(selectedAssignment.requires_fixed_classroom),
           class_school_level: classSchoolLevel,
+          is_subgroup: selectedAssignment.group_number != null,
         },
       ),
     )

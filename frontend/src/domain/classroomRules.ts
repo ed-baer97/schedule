@@ -5,6 +5,7 @@ export type ClassroomFact = {
   subject_ids: number[]
   is_exclusive: boolean
   school_level?: string | null
+  subgroup_only?: boolean
 }
 
 export function roomHasSubject(room: ClassroomFact, subjectId: number): boolean {
@@ -34,15 +35,22 @@ export function roomAllowsLevel(
   return tagged === classSchoolLevel
 }
 
+export function roomAllowsSubgroup(room: ClassroomFact, isSubgroup: boolean): boolean {
+  if (!room.subgroup_only) return true
+  return Boolean(isSubgroup)
+}
+
 export function roomAllows(
   room: ClassroomFact,
   opts: {
     subject_id: number
     requires_fixed_classroom: boolean
     class_school_level?: string | null
+    is_subgroup?: boolean
   },
 ): boolean {
   if (!roomAllowsLevel(room, opts.class_school_level ?? null)) return false
+  if (!roomAllowsSubgroup(room, Boolean(opts.is_subgroup))) return false
   return roomAllowsSubject(room, opts)
 }
 

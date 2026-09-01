@@ -493,7 +493,7 @@ class ExcelImporter:
                     commit=False,
                 )
             elif n == 1:
-                group = 1 if getattr(subject, "requires_subgroup", False) else None
+                group = None
                 self._assignments.set_group_numbers(
                     [ordered[0].id], [group], commit=False
                 )

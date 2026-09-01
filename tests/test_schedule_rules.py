@@ -45,24 +45,6 @@ def test_different_subjects_groups_conflict():
     assert units_cannot_share_class_slot(a, b) is True
 
 
-def test_subgroup_only_subjects_can_share_slot():
-    a = _unit(assignment_id=1, group_number=1, subject_id=5, requires_subgroup=True)
-    b = _unit(assignment_id=2, group_number=1, subject_id=9, requires_subgroup=True)
-    assert units_cannot_share_class_slot(a, b) is False
-    assert (
-        groups_can_share_slot(
-            1, 1, 5, 9, requires_subgroup_a=True, requires_subgroup_b=True
-        )
-        is True
-    )
-
-
-def test_subgroup_only_does_not_share_with_ordinary_group():
-    a = _unit(assignment_id=1, group_number=1, subject_id=5, requires_subgroup=True)
-    b = _unit(assignment_id=2, group_number=2, subject_id=9, requires_subgroup=False)
-    assert units_cannot_share_class_slot(a, b) is True
-
-
 def test_whole_class_conflicts_with_group():
     a = _unit(assignment_id=1, group_number=None)
     b = _unit(assignment_id=2, group_number=1)

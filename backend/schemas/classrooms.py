@@ -24,6 +24,7 @@ class ClassroomOut(BaseModel):
     subject_ids: list[int] = []
     is_exclusive: bool = False
     school_level: str | None = None
+    subgroup_only: bool = False
     subjects: list[SubjectBrief] = []
     teachers: list[TeacherBrief] = []
 
@@ -38,6 +39,7 @@ class ClassroomCreate(BaseModel):
     subject_ids: list[int] = []
     is_exclusive: bool = False
     school_level: str | None = None
+    subgroup_only: bool = False
     teacher_ids: list[int] = []
 
     @field_validator("school_level", mode="before")
@@ -67,6 +69,7 @@ class ClassroomUpdate(BaseModel):
     subject_ids: list[int] | None = None
     is_exclusive: bool | None = None
     school_level: str | None = None
+    subgroup_only: bool | None = None
     teacher_ids: list[int] | None = None
 
     @field_validator("school_level", mode="before")

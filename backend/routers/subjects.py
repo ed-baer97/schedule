@@ -63,7 +63,6 @@ def create_subject(
         color=body.color,
         difficulty=body.difficulty,
         requires_fixed_classroom=body.requires_fixed_classroom,
-        requires_subgroup=body.requires_subgroup,
     )
     return SubjectOut.model_validate(asdict(s))
 
@@ -82,7 +81,6 @@ def update_subject(
         color=data.get("color"),
         difficulty=data.get("difficulty"),
         requires_fixed_classroom=data.get("requires_fixed_classroom"),
-        requires_subgroup=data.get("requires_subgroup"),
         fields_set=frozenset(data.keys()),
     )
     return SubjectOut.model_validate(asdict(s))

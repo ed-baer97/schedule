@@ -15,11 +15,6 @@ from app.services.assignment_hours import remaining_for
 from app.services.bell_schedule import get_interval_for_slot
 
 
-def _requires_subgroup(assignment: TeachingAssignment | None) -> bool:
-    subj = getattr(assignment, "subject", None) if assignment else None
-    return bool(getattr(subj, "requires_subgroup", False))
-
-
 def unit_fact_from_assignment(
     assignment: TeachingAssignment,
     *,
@@ -38,7 +33,6 @@ def unit_fact_from_assignment(
         subject_id=assignment.subject_id,
         group_number=assignment.group_number,
         school_level=level,
-        requires_subgroup=_requires_subgroup(assignment),
     )
 
 
@@ -210,7 +204,6 @@ def occupancy_fact_from_cell(
         class_id=cell.class_id,
         classroom_id=cell.classroom_id,
         source_cell_id=cell.id,
-        requires_subgroup=_requires_subgroup(asg),
     )
 
 

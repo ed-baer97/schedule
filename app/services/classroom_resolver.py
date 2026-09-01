@@ -42,6 +42,7 @@ def classroom_fact(room: Classroom) -> ClassroomFact:
         is_exclusive=bool(room.is_exclusive),
         classes_capacity=room.classes_capacity or 1,
         school_level=getattr(room, "school_level", None),
+        subgroup_only=bool(getattr(room, "subgroup_only", False)),
     )
 
 
@@ -93,6 +94,7 @@ def placement_context_for(
         class_school_level=class_level,
         force_teacher_home=leave,
         force_class_home=force_class_home,
+        is_subgroup=assignment.group_number is not None,
     )
 
 

@@ -426,6 +426,20 @@ def test_classroom_school_level_roundtrip() -> None:
     assert bad.status_code == 422
 
 
+def test_classroom_subgroup_only_roundtrip() -> None:
+    created = client.post(
+        "/api/classrooms/",
+        json={"number": "5а", "subgroup_only": True},
+    )
+    assert created.status_code == 200, created.text
+    cid = created.json()["id"]
+    assert created.json()["subgroup_only"] is True
+
+    cleared = client.put(f"/api/classrooms/{cid}", json={"subgroup_only": False})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["subgroup_only"] is False
+
+
 def test_elementary_class_home_tags_general_room() -> None:
     room = client.post("/api/classrooms/", json={"number": "1А-каб"})
     assert room.status_code == 200, room.text

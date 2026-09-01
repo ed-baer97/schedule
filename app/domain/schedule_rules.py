@@ -84,27 +84,23 @@ def groups_can_share_slot(
     group_b: int | None,
     subject_id_a: int | None = None,
     subject_id_b: int | None = None,
-    *,
-    requires_subgroup_a: bool = False,
-    requires_subgroup_b: bool = False,
 ) -> bool:
     """
     True if two assignments may occupy the same (class, day, lesson) slot.
 
     Whole-class lessons (group None) conflict with everything.
-    Same subject: different group numbers may share; the same group may not.
-    Different subjects share only when both are marked «только подгруппа».
+    Groups of the same subject may share only when group numbers differ.
+    Different subjects never share a slot (even if both are groups).
     """
     if group_a is None or group_b is None:
         return False
-    same_subject = (
+    if (
         subject_id_a is not None
         and subject_id_b is not None
-        and subject_id_a == subject_id_b
-    )
-    if same_subject:
-        return group_a != group_b
-    return bool(requires_subgroup_a and requires_subgroup_b)
+        and subject_id_a != subject_id_b
+    ):
+        return False
+    return group_a != group_b
 
 
 def units_cannot_share_class_slot(a: UnitFact, b: UnitFact) -> bool:
@@ -121,8 +117,6 @@ def units_cannot_share_class_slot(a: UnitFact, b: UnitFact) -> bool:
         b.group_number,
         a.subject_id,
         b.subject_id,
-        requires_subgroup_a=a.requires_subgroup,
-        requires_subgroup_b=b.requires_subgroup,
     )
 
 
@@ -148,7 +142,6 @@ def occupancy_blocks_unit(
         subject_id=occupied.subject_id,
         group_number=occupied.group_number,
         school_level=unit.school_level,
-        requires_subgroup=occupied.requires_subgroup,
     )
     return units_cannot_share_class_slot(unit, other)
 

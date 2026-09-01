@@ -10,6 +10,7 @@ from app.domain.classroom_rules import (
     room_allows,
     room_allows_level,
     room_allows_subject,
+    room_allows_subgroup,
     room_denial_message,
     room_has_subject,
 )
@@ -91,6 +92,7 @@ __all__ = [
     "room_allows",
     "room_allows_level",
     "room_allows_subject",
+    "room_allows_subgroup",
     "room_denial_message",
     "room_has_subject",
     "placement_cost",

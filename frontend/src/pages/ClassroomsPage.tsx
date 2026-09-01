@@ -35,6 +35,7 @@ const emptyForm = {
   subject_ids: [] as number[],
   is_exclusive: false,
   school_level: '' as ClassroomLevel,
+  subgroup_only: false,
   teacher_ids: [] as number[],
 }
 
@@ -112,6 +113,7 @@ export function ClassroomsPage() {
         subject_ids: form.subject_ids,
         is_exclusive: form.subject_ids.length === 0 ? false : form.is_exclusive,
         school_level: form.school_level || null,
+        subgroup_only: form.subgroup_only,
         teacher_ids: form.teacher_ids,
       }
       if (!payload.number) throw new Error('Укажите номер кабинета')
@@ -180,6 +182,7 @@ export function ClassroomsPage() {
         c.school_level === 'elementary' || c.school_level === 'secondary'
           ? c.school_level
           : '',
+      subgroup_only: Boolean(c.subgroup_only),
       teacher_ids: (c.teachers ?? []).map((t) => t.id),
     })
     setEditingId(c.id)
@@ -292,6 +295,9 @@ export function ClassroomsPage() {
                                 {c.is_exclusive && (c.subjects ?? []).length > 0 ? (
                                   <span className="badge text-bg-secondary ms-1">фикс.</span>
                                 ) : null}
+                                {c.subgroup_only ? (
+                                  <span className="badge text-bg-secondary ms-1">подгр.</span>
+                                ) : null}
                               </td>
                               <td>
                                 {(c.teachers ?? []).length === 0
@@ -371,9 +377,6 @@ export function ClassroomsPage() {
                               {s.requires_fixed_classroom ? (
                                 <span className="text-muted"> · фикс.</span>
                               ) : null}
-                              {s.requires_subgroup ? (
-                                <span className="text-muted"> · подгр.</span>
-                              ) : null}
                             </label>
                           </div>
                         )
@@ -393,6 +396,21 @@ export function ClassroomsPage() {
                   <label className="form-check-label" htmlFor="roomExclusive">
                     Фиксированный — только выбранные предметы
                   </label>
+                </div>
+                <div className="form-check mb-2">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    id="roomSubgroupOnly"
+                    checked={form.subgroup_only}
+                    onChange={(e) => setForm((f) => ({ ...f, subgroup_only: e.target.checked }))}
+                  />
+                  <label className="form-check-label" htmlFor="roomSubgroupOnly">
+                    Только подгруппа
+                  </label>
+                  <div className="form-text">
+                    В этот кабинет помещаются только уроки подгрупп, не целый класс.
+                  </div>
                 </div>
                 <div className="mb-2">
                   <label className="form-label" htmlFor="roomSchoolLevel">

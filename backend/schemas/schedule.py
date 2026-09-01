@@ -44,7 +44,6 @@ class ScheduleCellOut(BaseModel):
     teacher_name: str | None = None
     group_number: int | None = None
     classroom_name: str | None = None
-    requires_subgroup: bool = False
 
 
 class ScheduleSettingsOut(BaseModel):
@@ -93,7 +92,6 @@ class AssignmentChoiceOut(BaseModel):
     remaining_hours: int
     preferred_classroom_id: int | None = None
     requires_fixed_classroom: bool = False
-    requires_subgroup: bool = False
 
 
 class ClassroomChoiceOut(BaseModel):
@@ -106,6 +104,7 @@ class ClassroomChoiceOut(BaseModel):
     subject_ids: list[int] = []
     is_exclusive: bool = False
     school_level: str | None = None
+    subgroup_only: bool = False
     classes_capacity: int = 1
 
 

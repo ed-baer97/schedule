@@ -322,59 +322,6 @@ def test_subject_assignments_split_flow() -> None:
         assert all(r.hours_per_week == 3 for r in rows)
 
 
-def test_subgroup_only_subject_keeps_group_with_one_teacher() -> None:
-    created = client.post(
-        "/api/subjects/",
-        json={"name": "Информатика КЧ", "requires_subgroup": True},
-    )
-    assert created.status_code == 200, created.text
-    assert created.json()["requires_subgroup"] is True
-    subject_id = created.json()["id"]
-
-    teacher = client.post("/api/teachers/", json={"full_name": "Козлова К.К."})
-    assert teacher.status_code == 200, teacher.text
-    tid = teacher.json()["id"]
-
-    cls = client.post(
-        "/api/school-classes/",
-        json={"name": "7Б", "school_level": "secondary"},
-    )
-    assert cls.status_code == 200, cls.text
-    class_id = cls.json()["id"]
-
-    with SessionLocal() as session:
-        session.add(
-            TeachingAssignment(
-                school_id=TEST_SCHOOL_ID,
-                subject_id=subject_id,
-                class_id=class_id,
-                teacher_id=tid,
-                hours_per_week=2,
-            )
-        )
-        session.commit()
-
-    save = client.post(
-        f"/api/subjects/{subject_id}/assignments",
-        json={
-            "school_level": "secondary",
-            "teacher_ids": [tid],
-            "selections": {str(class_id): [tid]},
-        },
-    )
-    assert save.status_code == 200, save.text
-    assert save.json()["ok"] is True
-
-    with SessionLocal() as session:
-        row = (
-            session.query(TeachingAssignment)
-            .filter(TeachingAssignment.subject_id == subject_id)
-            .one()
-        )
-        assert row.teacher_id == tid
-        assert row.group_number == 1
-
-
 def test_subject_color_patch() -> None:
     with SessionLocal() as session:
         subject = Subject(school_id=TEST_SCHOOL_ID, name="ИЗО")
@@ -1605,6 +1552,96 @@ def test_elementary_classroom_blocks_secondary() -> None:
         },
     )
     assert ok.status_code == 201, ok.text
+
+
+def test_subgroup_only_classroom_blocks_whole_class() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Баер Э.В.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="7А", grade=7, school_level="secondary"
+        )
+        session.add_all([shift, math, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        small = Classroom(
+            school_id=TEST_SCHOOL_ID,
+            number="5а",
+            subgroup_only=True,
+        )
+        gym = Classroom(school_id=TEST_SCHOOL_ID, number="СЗ")
+        session.add_all([small, gym])
+        session.flush()
+        whole = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=2,
+            group_number=None,
+        )
+        group = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=2,
+            group_number=1,
+        )
+        session.add_all([whole, group])
+        session.commit()
+        class_id = cls.id
+        whole_id = whole.id
+        group_id = group.id
+        small_id = small.id
+        gym_id = gym.id
+
+    denied = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": whole_id,
+            "classroom_id": small_id,
+        },
+    )
+    assert denied.status_code == 422, denied.text
+    errors = denied.json()["detail"]["errors"]
+    assert any("подгрупп" in e for e in errors)
+
+    gym_ok = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": whole_id,
+            "classroom_id": gym_id,
+        },
+    )
+    assert gym_ok.status_code == 201, gym_ok.text
+
+    group_ok = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 2,
+            "lesson_number": 1,
+            "assignment_id": group_id,
+            "classroom_id": small_id,
+        },
+    )
+    assert group_ok.status_code == 201, group_ok.text
 
 
 def test_assist_phrase_saves_early_pref() -> None:
