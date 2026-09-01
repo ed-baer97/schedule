@@ -1,6 +1,7 @@
 /** Mirrors app/domain/schedule_rules.py second_hour_is_split. */
 export function secondHourIsSplit(existingLessons: number[], newLesson: number): boolean {
   const existing = [...new Set(existingLessons.map((n) => n))]
+  if (existing.includes(newLesson)) return false
   if (existing.length !== 1) return false
   return Math.abs(newLesson - existing[0]) !== 1
 }

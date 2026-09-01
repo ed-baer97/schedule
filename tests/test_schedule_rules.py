@@ -89,11 +89,43 @@ def test_teacher_busy_at_slot():
         shift_id=1,
         interval=None,
     )
-    busy = {
+    busy_same_shift = {
+        10: [BusySlotFact(shift_id=1, day=1, lesson=3, interval=None)],
+    }
+    busy_other_shift = {
         10: [BusySlotFact(shift_id=2, day=1, lesson=3, interval=None)],
     }
-    assert teacher_busy_at_slot(slot, 10, busy) is True
-    assert teacher_busy_at_slot(slot, 11, busy) is False
+    assert teacher_busy_at_slot(slot, 10, busy_same_shift) is True
+    assert teacher_busy_at_slot(slot, 10, busy_other_shift) is False
+    assert teacher_busy_at_slot(slot, 11, busy_same_shift) is False
+
+
+def test_slot_facts_conflict_different_shifts_no_bells():
+    """Same lesson number on two shifts is not a clash when bells are missing."""
+    a = SlotFact(
+        slot_id="c1:d1:l1",
+        class_id=1,
+        day=1,
+        lesson=1,
+        shift_id=1,
+        interval=None,
+    )
+    b = BusySlotFact(shift_id=2, day=1, lesson=1, interval=None)
+    assert slot_facts_conflict(a, b) is False
+
+
+def test_slot_facts_conflict_unknown_shift_no_bells():
+    """A slot with no shift still collides by lesson number."""
+    a = SlotFact(
+        slot_id="c1:d1:l1",
+        class_id=1,
+        day=1,
+        lesson=1,
+        shift_id=None,
+        interval=None,
+    )
+    b = BusySlotFact(shift_id=2, day=1, lesson=1, interval=None)
+    assert slot_facts_conflict(a, b) is True
 
 
 def test_slot_facts_conflict_overlapping_intervals_different_lessons():
@@ -314,3 +346,4 @@ def test_second_hour_is_split():
     assert second_hour_is_split([5], 4) is False
     assert second_hour_is_split([5], 7) is True
     assert second_hour_is_split([5, 6], 7) is False
+    assert second_hour_is_split([1], 1) is False

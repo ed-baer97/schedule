@@ -21,13 +21,17 @@ def slots_conflict(
     day_b: int,
     lesson_b: int,
     interval_b: tuple[Any, Any] | None,
+    shift_id_a: int | None = None,
+    shift_id_b: int | None = None,
 ) -> bool:
     """
     True if two slots cannot occur at the same time.
 
     Bell intervals are clock times without a date, so overlap is only
     meaningful on the same weekday (Mon 08:00 must not block Tue 08:00).
-    Same day: overlapping bells, or the same lesson number if a bell is missing.
+    Same day: overlapping bells when both exist. If a bell is missing,
+    the same lesson number conflicts only inside one shift — different
+    shifts do not share a grid (урок 1 of shift 1 is not урок 1 of shift 2).
     """
     if day_a != day_b:
         return False
@@ -35,6 +39,12 @@ def slots_conflict(
         return time_intervals_overlap(
             interval_a[0], interval_a[1], interval_b[0], interval_b[1]
         )
+    if (
+        shift_id_a is not None
+        and shift_id_b is not None
+        and shift_id_a != shift_id_b
+    ):
+        return False
     return lesson_a == lesson_b
 
 
@@ -47,6 +57,8 @@ def slot_facts_conflict(a: SlotFact | BusySlotFact, b: SlotFact | BusySlotFact) 
         day_b=b.day,
         lesson_b=b.lesson,
         interval_b=b.interval,
+        shift_id_a=a.shift_id,
+        shift_id_b=b.shift_id,
     )
 
 
@@ -64,11 +76,15 @@ def second_hour_is_split(existing_lessons, new_lesson: int) -> bool:
     """True if the subject already has one hour today and the new one is not adjacent.
 
     Forbids English at 5 and 7 with another subject at 6.
+    Placing into a lesson number that is already occupied is occupancy, not a split.
     """
     existing = {int(n) for n in existing_lessons}
+    new = int(new_lesson)
+    if new in existing:
+        return False
     if len(existing) != 1:
         return False
-    return abs(int(new_lesson) - next(iter(existing))) != 1
+    return abs(new - next(iter(existing))) != 1
 
 
 def subject_day_limit_reached(placed_today: int, max_per_day: int) -> bool:

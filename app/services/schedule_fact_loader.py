@@ -98,9 +98,8 @@ def _interval_for(
         cached = lesson_time_cache.get((shift_id, day, lesson))
         if cached is not None:
             return cached
-        # Miss: may be class hour or missing row — fall through
-        if lesson != 0:
-            return None
+        # Miss may be an incomplete cache (class hour lives on Shift, not
+        # ShiftLessonTime). Resolve through ORM instead of treating as no bells.
     return get_interval_for_slot(shift_id, lesson, day, session=session)
 
 
@@ -211,7 +210,7 @@ def _busy_query(session: Session):
     return (
         session.query(ScheduleCell)
         .options(
-            joinedload(ScheduleCell.school_class),
+            joinedload(ScheduleCell.school_class).joinedload(SchoolClass.shift),
             joinedload(ScheduleCell.assignment).joinedload(TeachingAssignment.subject),
         )
     )

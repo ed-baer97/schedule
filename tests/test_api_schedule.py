@@ -573,6 +573,229 @@ def test_manual_cell_teacher_conflict_returns_reason() -> None:
         "Петров" in e and "занят" in e and "1А" in e and "Понедельник" in e
         for e in errors
     )
+    assert any("1 смена" in e for e in errors)
+
+
+def test_manual_cell_other_shift_same_lesson_without_bells_is_free() -> None:
+    with SessionLocal() as session:
+        s1 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        s2 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="2 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Назырбаев А.А.")
+        c1 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5А", grade=5, school_level="elementary"
+        )
+        c2 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5Б", grade=5, school_level="elementary"
+        )
+        session.add_all([s1, s2, math, teacher, c1, c2])
+        session.flush()
+        c1.shift_id = s1.id
+        c2.shift_id = s2.id
+        a1 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c1.id,
+            hours_per_week=4,
+        )
+        a2 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c2.id,
+            hours_per_week=4,
+        )
+        session.add_all([a1, a2])
+        session.commit()
+        ids = {"c1": c1.id, "c2": c2.id, "a1": a1.id, "a2": a2.id}
+
+    first = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+            "assignment_id": ids["a1"],
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    explained = client.post(
+        "/api/schedule/explain",
+        json={
+            "assignment_id": ids["a2"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+        },
+    )
+    assert explained.status_code == 200, explained.text
+    assert explained.json()["allowed"] is True
+
+    second = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c2"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+            "assignment_id": ids["a2"],
+        },
+    )
+    assert second.status_code == 201, second.text
+
+
+def test_manual_cell_cross_shift_overlapping_bells_conflict() -> None:
+    with SessionLocal() as session:
+        s1 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        s2 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="2 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Назырбаев А.А.")
+        c1 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5А", grade=5, school_level="elementary"
+        )
+        c2 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5Б", grade=5, school_level="elementary"
+        )
+        session.add_all([s1, s2, math, teacher, c1, c2])
+        session.flush()
+        c1.shift_id = s1.id
+        c2.shift_id = s2.id
+        a1 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c1.id,
+            hours_per_week=4,
+        )
+        a2 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c2.id,
+            hours_per_week=4,
+        )
+        session.add_all([a1, a2])
+        session.commit()
+        ids = {
+            "c1": c1.id,
+            "c2": c2.id,
+            "a1": a1.id,
+            "a2": a2.id,
+            "s1": s1.id,
+            "s2": s2.id,
+        }
+
+    assert client.put(
+        f"/api/shifts/{ids['s1']}/lesson-times",
+        json={
+            "common": {"1": {"time_start": "08:00", "time_end": "08:45"}},
+            "class_day": {},
+        },
+    ).status_code == 200
+    assert client.put(
+        f"/api/shifts/{ids['s2']}/lesson-times",
+        json={
+            "common": {"1": {"time_start": "08:20", "time_end": "09:05"}},
+            "class_day": {},
+        },
+    ).status_code == 200
+
+    first = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+            "assignment_id": ids["a1"],
+        },
+    )
+    assert first.status_code == 201, first.text
+
+    conflict = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c2"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+            "assignment_id": ids["a2"],
+        },
+    )
+    assert conflict.status_code == 422, conflict.text
+    errors = conflict.json()["detail"]["errors"]
+    assert any("занят" in e and "5А" in e and "1 смена" in e and "08:00" in e for e in errors)
+
+
+def test_explain_existing_cell_excludes_self() -> None:
+    ids = _seed_two_classes_one_teacher()
+    placed = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+            "assignment_id": ids["a1"],
+        },
+    )
+    assert placed.status_code == 201, placed.text
+    cell_id = placed.json()["id"]
+
+    without = client.post(
+        "/api/schedule/explain",
+        json={
+            "assignment_id": ids["a1"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+        },
+    )
+    assert without.status_code == 200, without.text
+    body = without.json()
+    assert body["allowed"] is False
+    assert any("занят" in b for b in body["blockers"])
+    assert not any("подряд" in b for b in body["blockers"])
+
+    with_id = client.post(
+        "/api/schedule/explain",
+        json={
+            "assignment_id": ids["a1"],
+            "day_of_week": 3,
+            "lesson_number": 1,
+            "cell_id": cell_id,
+        },
+    )
+    assert with_id.status_code == 200, with_id.text
+    assert with_id.json()["allowed"] is True
 
 
 def test_manual_cell_same_bells_different_day_is_free() -> None:

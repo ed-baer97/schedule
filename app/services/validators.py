@@ -4,7 +4,7 @@ Schedule validation service
 from sqlalchemy.orm import Session
 
 from app.domain.assignment import hours_exhausted
-from app.domain.days import DAY_NAMES
+from app.domain.days import DAY_NAMES, time_range_label
 from app.domain.schedule_facts import UnitFact
 from app.domain.shift_grid import lesson_end_exclusive
 from app.domain.schedule_rules import (
@@ -19,6 +19,7 @@ from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass,
 from app.services.assignment_hours import placed_count
 from app.services.classroom_resolver import classroom_fact, load_settings
 from app.domain.classroom_rules import MSG_NO_CLASSROOM, room_denial_message
+from app.services.bell_schedule import get_interval_for_slot
 from app.services.schedule_fact_loader import (
     candidate_slot_fact,
     candidate_unit_fact,
@@ -38,7 +39,7 @@ def _day_name(day: int) -> str:
     return f"день {day}"
 
 
-def _cell_brief(cell: ScheduleCell) -> str:
+def _cell_brief(cell: ScheduleCell, session: Session | None = None) -> str:
     assignment = cell.assignment
     subject_name = "?"
     group = ""
@@ -47,11 +48,21 @@ def _cell_brief(cell: ScheduleCell) -> str:
             subject_name = assignment.subject.display_name
         if assignment.group_number:
             group = f" (гр.{assignment.group_number})"
-    class_name = cell.school_class.name if cell.school_class else "?"
-    return (
-        f"{subject_name}{group} у {class_name} "
-        f"({_day_name(cell.day_of_week)}, {_lesson_word(cell.lesson_number)})"
-    )
+    school_class = cell.school_class
+    class_name = school_class.name if school_class else "?"
+    shift = school_class.shift if school_class and school_class.shift_id else None
+    parts = [_day_name(cell.day_of_week), _lesson_word(cell.lesson_number)]
+    if shift and shift.name:
+        parts.append(shift.name)
+    interval = None
+    if session is not None and shift:
+        interval = get_interval_for_slot(
+            shift.id, cell.lesson_number, cell.day_of_week, session=session
+        )
+    clock = time_range_label(interval[0], interval[1]) if interval else None
+    if clock:
+        parts.append(clock)
+    return f"{subject_name}{group} у {class_name} ({', '.join(parts)})"
 
 
 class ScheduleValidator:
@@ -145,7 +156,7 @@ class ScheduleValidator:
             if busy:
                 teacher_name = assignment.teacher.display_name if assignment.teacher else "?"
                 errors.append(
-                    f'Учитель {teacher_name} уже занят в это время: {_cell_brief(busy)}'
+                    f'Учитель {teacher_name} уже занят в это время: {_cell_brief(busy, self.session)}'
                 )
 
         # Check classroom conflict
@@ -156,7 +167,7 @@ class ScheduleValidator:
             if occupying:
                 classroom = self.session.get(Classroom, classroom_id)
                 room_name = classroom.display_name if classroom else str(classroom_id)
-                briefs = "; ".join(_cell_brief(c) for c in occupying)
+                briefs = "; ".join(_cell_brief(c, self.session) for c in occupying)
                 cap = (classroom.classes_capacity or 1) if classroom else 1
                 if cap > 1:
                     errors.append(
@@ -202,7 +213,7 @@ class ScheduleValidator:
             assignment=assignment,
         )
         if class_busy:
-            errors.append(f'Класс уже занят в это время: {_cell_brief(class_busy)}')
+            errors.append(f'Класс уже занят в это время: {_cell_brief(class_busy, self.session)}')
 
         # Check max lessons per subject per day
         if self.check_subject_per_day_limit(assignment, day, exclude_cell_id):

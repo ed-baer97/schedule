@@ -6,10 +6,11 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session, joinedload
 
-from app.domain.days import DAY_NAMES
+from app.domain.days import DAY_NAMES, time_range_label
 from app.domain.shift_grid import lesson_end_exclusive
 from app.models import SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_count, remaining_for
+from app.services.bell_schedule import get_interval_for_slot
 from app.services.classroom_resolver import pick_classroom_for
 from app.services.errors import NotFoundError
 from app.services.qwen_client import phrase_for_scheduler
@@ -48,9 +49,12 @@ def _day_name(day: int) -> str:
     return f"день {day}"
 
 
-def _slot_label(day: int, lesson: int) -> str:
+def _slot_label(day: int, lesson: int, clock: str | None = None) -> str:
     lesson_txt = "классный час" if lesson == 0 else f"урок {lesson}"
-    return f"{_day_name(day)}, {lesson_txt}"
+    base = f"{_day_name(day)}, {lesson_txt}"
+    if clock:
+        return f"{base} ({clock})"
+    return base
 
 
 def _fallback_text(facts: dict) -> str:
@@ -108,6 +112,8 @@ class ScheduleExplainService:
 
         school_class = assignment.school_class
         school_level = school_class.school_level if school_class else "elementary"
+        shift_id = school_class.shift_id if school_class else None
+        slot_clock = self._clock_label(shift_id, day_of_week, lesson_number)
         if classroom_id is None:
             classroom_id = pick_classroom_for(
                 self.db,
@@ -139,7 +145,7 @@ class ScheduleExplainService:
             "slot": {
                 "day_of_week": day_of_week,
                 "lesson_number": lesson_number,
-                "label": _slot_label(day_of_week, lesson_number),
+                "label": _slot_label(day_of_week, lesson_number, slot_clock),
             },
             "assignment": {
                 "id": assignment.id,
@@ -206,9 +212,27 @@ class ScheduleExplainService:
                         day_of_week=day,
                         lesson_number=lesson,
                         day_name=_day_name(day),
-                        label=_slot_label(day, lesson),
+                        label=_slot_label(
+                            day,
+                            lesson,
+                            self._clock_label(
+                                shift.id if shift else None, day, lesson
+                            ),
+                        ),
                     )
                 )
                 if len(found) >= limit:
                     return found
         return found
+
+    def _clock_label(
+        self, shift_id: int | None, day: int, lesson: int
+    ) -> str | None:
+        if not shift_id:
+            return None
+        interval = get_interval_for_slot(
+            shift_id, lesson, day, session=self.db
+        )
+        if not interval:
+            return None
+        return time_range_label(interval[0], interval[1])

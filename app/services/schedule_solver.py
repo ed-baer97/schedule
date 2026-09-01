@@ -68,8 +68,10 @@ except ImportError:  # pragma: no cover
 def _add_capacity_overlap_constraints(model, items: list[tuple[Any, SlotFact]], capacity: int):
     """
     Constrain BoolVars so that at most ``capacity`` selected slots overlap in time.
-    Uses interval sweep when bells are present; otherwise same day+lesson.
-    Mixed (some missing intervals) follows slot_facts_conflict semantics.
+    Uses interval sweep when bells are present; otherwise same day+lesson
+    inside one shift. Mixed (some missing intervals) follows slot_facts_conflict:
+    different known shifts without bells do not share a lesson-number grid.
+    Unknown shift_id (None) still collides with every shift at that lesson.
     """
     if not items or capacity < 1:
         return
@@ -92,16 +94,26 @@ def _add_capacity_overlap_constraints(model, items: list[tuple[Any, SlotFact]], 
                 if active:
                     model.Add(sum(active) <= capacity)
 
-        by_lesson: dict[int, list] = defaultdict(list)
+        by_lesson_shift: dict[int, dict[int | None, list]] = defaultdict(
+            lambda: defaultdict(list)
+        )
         for v, s in without:
-            by_lesson[s.lesson].append(v)
+            by_lesson_shift[s.lesson][s.shift_id].append(v)
         if without:
             for v, s in with_iv:
-                if any(s2.lesson == s.lesson for _, s2 in without):
-                    by_lesson[s.lesson].append(v)
-        for vars_ in by_lesson.values():
-            if vars_:
-                model.Add(sum(vars_) <= capacity)
+                if s.lesson in by_lesson_shift:
+                    by_lesson_shift[s.lesson][s.shift_id].append(v)
+        for by_shift in by_lesson_shift.values():
+            none_vars = by_shift.get(None, [])
+            known = {sid: vs for sid, vs in by_shift.items() if sid is not None}
+            if not known:
+                if none_vars:
+                    model.Add(sum(none_vars) <= capacity)
+                continue
+            for vs in known.values():
+                active = vs + none_vars
+                if active:
+                    model.Add(sum(active) <= capacity)
 
 
 def _hint_bool_maps(model, solver, *var_maps: dict) -> None:

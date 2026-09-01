@@ -45,7 +45,7 @@ def schedules_conflict(
 ):
     """
     True if two slots cannot occur at the same time.
-    Same day required; then overlapping bells, else same lesson number.
+    Same day required; then overlapping bells, else same lesson in the same shift.
     """
     ia = get_interval_for_slot(shift_id_a, lesson_a, day_a, session=session)
     ib = get_interval_for_slot(shift_id_b, lesson_b, day_b, session=session)
@@ -56,4 +56,6 @@ def schedules_conflict(
         day_b=day_b,
         lesson_b=lesson_b,
         interval_b=ib,
+        shift_id_a=shift_id_a,
+        shift_id_b=shift_id_b,
     )
