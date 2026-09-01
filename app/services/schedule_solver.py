@@ -11,6 +11,7 @@ from typing import Any, Callable
 from app.domain.classroom_rules import MSG_NO_CLASSROOM
 from app.domain.pair_epochs import PairFreezeSpec, freeze_keys_for_good_doubles
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
+from app.domain.shift_grid import lesson_end_exclusive, weekly_slot_count
 from app.domain.schedule_rules import (
     classroom_at_capacity,
     leftover_singles_allowed,
@@ -399,7 +400,6 @@ def _add_assignment_pair_packing(
     w_extra = int(scales.extra_singleton)
 
     lesson_start = shift_obj.start_lesson
-    lesson_end = shift_obj.start_lesson + shift_obj.lessons_count
 
     for a in assignments:
         hours = int(a.hours_per_week or 0)
@@ -412,6 +412,7 @@ def _add_assignment_pair_packing(
         is_one_vars = []
         leftover = leftover_singles_allowed(hours)
         for day in range(1, shift_obj.working_days + 1):
+            lesson_end = lesson_end_exclusive(shift_obj, day)
             lesson_occupied = {}
             day_terms = []
             for lesson in range(lesson_start, lesson_end):
@@ -1085,7 +1086,7 @@ class CpSatScheduleSolver:
                 ),
                 None,
             )
-        n_shift_slots = int(shift_obj.working_days) * int(shift_obj.lessons_count)
+        n_shift_slots = weekly_slot_count(shift_obj)
         hours_by_tid: dict[int, int] = defaultdict(int)
         name_by_tid: dict[int, str] = {}
         for a in assignments:
@@ -1106,7 +1107,7 @@ class CpSatScheduleSolver:
                     "reason": (
                         f"У учителя {name} в этой смене {hours} ч, "
                         f"а слотов в сетке смены только {n_shift_slots} "
-                        f"({shift_obj.working_days} дн. × {shift_obj.lessons_count} ур.). "
+                        f"({shift_obj.working_days} дн., с учётом дня классного часа). "
                         "Составление остановлено: нагрузка не помещается в смену."
                     )
                 }
@@ -1319,12 +1320,12 @@ class CpSatScheduleSolver:
 
         # Hard: class day is a prefix of the shift grid (start_lesson … last used).
         lesson_start = ctx.shift_obj.start_lesson
-        lesson_end = ctx.shift_obj.start_lesson + ctx.shift_obj.lessons_count
         for cid in ctx.class_ids:
             uidxs = [ui for ui, u in ctx.unit_list if u.class_id == cid]
             if not uidxs:
                 continue
             for day in range(1, ctx.shift_obj.working_days + 1):
+                lesson_end = lesson_end_exclusive(ctx.shift_obj, day)
                 occ_by_lesson = {}
                 for lesson in range(lesson_start, lesson_end):
                     terms = []
@@ -1443,6 +1444,7 @@ class CpSatScheduleSolver:
             if not uidxs1 or not uidxs2:
                 continue
             for day in range(1, ctx.shift_obj.working_days + 1):
+                lesson_end = lesson_end_exclusive(ctx.shift_obj, day)
                 for lesson in range(lesson_start, lesson_end):
                     terms1 = []
                     for ui in uidxs1:

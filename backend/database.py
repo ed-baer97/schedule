@@ -27,7 +27,14 @@ _CORE_TABLES = frozenset(
 _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
     "classrooms": frozenset({"classes_capacity", "is_exclusive", "school_level"}),
     "shifts": frozenset(
-        {"working_days", "max_lessons_per_day", "class_hour_day", "class_hour_start", "class_hour_end"}
+        {
+            "working_days",
+            "max_lessons_per_day",
+            "class_hour_day",
+            "class_hour_start",
+            "class_hour_end",
+            "class_hour_lessons_count",
+        }
     ),
     "schedule_settings": frozenset(
         {

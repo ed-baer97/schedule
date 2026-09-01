@@ -51,6 +51,7 @@ def create_shift(
         class_hour_day=body.class_hour_day,
         class_hour_start=body.class_hour_start,
         class_hour_end=body.class_hour_end,
+        class_hour_lessons_count=body.class_hour_lessons_count,
     )
 
 
@@ -73,6 +74,7 @@ def update_shift(
         class_hour_day=data.get("class_hour_day"),
         class_hour_start=data.get("class_hour_start"),
         class_hour_end=data.get("class_hour_end"),
+        class_hour_lessons_count=data.get("class_hour_lessons_count"),
         fields_set=frozenset(data.keys()),
     )
 

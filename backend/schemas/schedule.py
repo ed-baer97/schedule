@@ -16,6 +16,7 @@ class ShiftBrief(BaseModel):
     lessons_count: int
     class_hour_day: int | None = None
     class_hour_time_label: str | None = None
+    class_hour_lessons_count: int | None = None
 
 
 class SchoolClassRow(BaseModel):

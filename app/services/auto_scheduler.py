@@ -3,6 +3,7 @@ Automatic schedule generation service
 """
 from app.domain.preferences import WEIGHT_MAX, clamp_weight
 from app.domain.schedule_rules import groups_can_share_slot
+from app.domain.shift_grid import lesson_end_exclusive
 from app.domain.school_class import (
     SPLIT_GRADE_BANDS,
     SPLIT_WHOLE_SHIFT,
@@ -266,7 +267,7 @@ class AutoScheduler:
         """working_days, start_lesson, end_exclusive, max_lessons_per_day for the class shift."""
         sh = assignment.school_class.shift if assignment.school_class and assignment.school_class.shift_id else None
         if sh:
-            return sh.working_days, sh.start_lesson, sh.start_lesson + sh.lessons_count, sh.max_lessons_per_day
+            return sh.working_days, sh.start_lesson, lesson_end_exclusive(sh), sh.max_lessons_per_day
         return 5, 1, 8, 7
 
     def _prefer_consecutive_pairs(self, school_level):
@@ -293,6 +294,7 @@ class AutoScheduler:
         """
         sh_days, start, end_excl, sh_max = self._shift_bounds(assignment)
         days = [d for d in range(1, working_days + 1) if d <= sh_days]
+        sh = assignment.school_class.shift if assignment.school_class and assignment.school_class.shift_id else None
 
         def day_priority(day):
             existing = self._get_teacher_lessons_for_class_day(assignment.class_id, day)
@@ -300,10 +302,11 @@ class AutoScheduler:
             return 0 if len(lessons) == 1 else 1
 
         for day in sorted(days, key=day_priority):
+            day_end = lesson_end_exclusive(sh, day) if sh else end_excl
             for lesson in self._ordered_lessons_for_teacher_class_day(
                 assignment, day, max_lessons
             ):
-                if lesson > sh_max or lesson < start or lesson >= end_excl:
+                if lesson > sh_max or lesson < start or lesson >= day_end:
                     continue
                 yield day, lesson
 
@@ -315,17 +318,19 @@ class AutoScheduler:
         (a new pair would exceed 2 or split an unfinished double).
         """
         sh_days, start, end_excl, sh_max = self._shift_bounds(assignment)
+        sh = assignment.school_class.shift if assignment.school_class and assignment.school_class.shift_id else None
         for day in range(1, working_days + 1):
             if day > sh_days:
                 continue
+            day_end = lesson_end_exclusive(sh, day) if sh else end_excl
             existing = self._get_teacher_lessons_for_class_day(assignment.class_id, day)
             lessons = existing.get(assignment.teacher_id, set()) if assignment.teacher_id else set()
             if lessons:
                 continue
             aligned = []
             offset = []
-            for lesson in range(start, end_excl - 1):
-                if lesson > sh_max or lesson + 1 > sh_max or lesson + 1 >= end_excl:
+            for lesson in range(start, day_end - 1):
+                if lesson > sh_max or lesson + 1 > sh_max or lesson + 1 >= day_end:
                     continue
                 if (lesson - start) % 2 == 0:
                     aligned.append(lesson)

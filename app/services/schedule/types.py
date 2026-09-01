@@ -25,6 +25,7 @@ class ShiftBriefData:
     lessons_count: int
     class_hour_day: int | None = None
     class_hour_time_label: str | None = None
+    class_hour_lessons_count: int | None = None
 
 
 @dataclass
@@ -105,6 +106,7 @@ def _shift_brief(s: Shift) -> ShiftBriefData:
         lessons_count=s.lessons_count,
         class_hour_day=s.class_hour_day,
         class_hour_time_label=time_range_label(s.class_hour_start, s.class_hour_end),
+        class_hour_lessons_count=s.class_hour_lessons_count,
     )
 
 

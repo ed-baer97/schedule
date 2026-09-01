@@ -29,6 +29,7 @@ class ShiftOut(BaseModel):
     class_hour_day: int | None = None
     class_hour_start: str | None = None
     class_hour_end: str | None = None
+    class_hour_lessons_count: int | None = None
     lesson_times: list[ShiftLessonTimeOut] = []
 
 
@@ -42,6 +43,7 @@ class ShiftCreate(BaseModel):
     class_hour_day: int | None = Field(None, ge=1, le=6)
     class_hour_start: str | None = None
     class_hour_end: str | None = None
+    class_hour_lessons_count: int | None = Field(None, ge=1, le=10)
 
 
 class ShiftUpdate(BaseModel):
@@ -54,6 +56,7 @@ class ShiftUpdate(BaseModel):
     class_hour_day: int | None = Field(None, ge=1, le=6)
     class_hour_start: str | None = None
     class_hour_end: str | None = None
+    class_hour_lessons_count: int | None = Field(None, ge=1, le=10)
 
 
 class BellTimePair(BaseModel):

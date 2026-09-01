@@ -42,6 +42,11 @@ from app.domain.school_class import (
     level_from_grade,
     partition_classes_by_grade_bands,
 )
+from app.domain.shift_grid import (
+    lesson_end_exclusive,
+    lessons_count_on_day,
+    weekly_slot_count,
+)
 from app.domain.school_level import level_label
 
 __all__ = [
@@ -57,6 +62,9 @@ __all__ = [
     "grade_bands_for_level",
     "partition_classes_by_grade_bands",
     "level_label",
+    "lessons_count_on_day",
+    "lesson_end_exclusive",
+    "weekly_slot_count",
     "normalize_person_name",
     "remaining_hours",
     "hours_exhausted",

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.domain.assignment import hours_exhausted
 from app.domain.days import DAY_NAMES
 from app.domain.schedule_facts import UnitFact
+from app.domain.shift_grid import lesson_end_exclusive
 from app.domain.schedule_rules import (
     occupancy_blocks_unit,
     overlapping_classroom_busy,
@@ -121,7 +122,7 @@ class ScheduleValidator:
                 errors.append('Выбранный день вне учебной недели для смены этого класса')
             if lesson > sh.max_lessons_per_day:
                 errors.append('Номер урока больше сетки дня для этой смены')
-            if lesson < sh.start_lesson or lesson >= sh.start_lesson + sh.lessons_count:
+            if lesson < sh.start_lesson or lesson >= lesson_end_exclusive(sh, day):
                 errors.append('Номер урока вне интервала смены')
 
         if exclude_cell_id is None and hours_exhausted(

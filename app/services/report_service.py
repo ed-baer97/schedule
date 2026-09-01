@@ -13,7 +13,7 @@ from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain import DAY_NAMES, time_range_label
+from app.domain import DAY_NAMES, lesson_end_exclusive, time_range_label
 from app.models import ScheduleCell, SchoolClass, Shift, Subject, Teacher, TeachingAssignment
 from app.services.errors import BadRequestError
 from app.services.schedule_mapping import (
@@ -224,7 +224,12 @@ def _write_shift_sheet(
             row += 1
 
         day_times = times_by_day.get(day, {})
-        for lesson in lessons:
+        day_lessons = (
+            list(range(shift.start_lesson, lesson_end_exclusive(shift, day)))
+            if shift
+            else lessons
+        )
+        for lesson in day_lessons:
             index_cell = ws.cell(
                 row, 1, _lesson_index_label(lesson, day_times.get(lesson))
             )

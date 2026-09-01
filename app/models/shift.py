@@ -20,6 +20,7 @@ class Shift(Base):
     class_hour_day = Column(Integer, nullable=True)
     class_hour_start = Column(Time, nullable=True)
     class_hour_end = Column(Time, nullable=True)
+    class_hour_lessons_count = Column(Integer, nullable=True)
 
     school = relationship("School")
     classes = relationship("SchoolClass", back_populates="shift", lazy="dynamic")

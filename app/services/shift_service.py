@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.domain import fmt_time
+from app.domain import fmt_time, lesson_end_exclusive
 from app.models import Shift, ShiftLessonTime
 from app.services.tenancy import require_owned
 
@@ -27,6 +27,14 @@ def _clamp_shift_bounds(
     max_count = max(1, max_cap - start_lesson + 1)
     lessons_count = max(1, min(int(lessons_count), max_count))
     return start_lesson, lessons_count
+
+
+def _clamp_class_hour_lessons(
+    count: int | None, lessons_count: int, class_hour_day: int | None
+) -> int | None:
+    if not class_hour_day or count is None:
+        return None
+    return max(1, min(int(count), int(lessons_count)))
 
 
 def serialize_shift(db: Session, shift: Shift) -> dict[str, Any]:
@@ -50,6 +58,7 @@ def serialize_shift(db: Session, shift: Shift) -> dict[str, Any]:
         "class_hour_day": shift.class_hour_day,
         "class_hour_start": fmt_time(shift.class_hour_start),
         "class_hour_end": fmt_time(shift.class_hour_end),
+        "class_hour_lessons_count": shift.class_hour_lessons_count,
         "lesson_times": [
             {
                 "id": lt.id,
@@ -127,6 +136,7 @@ class ShiftService:
         class_hour_day: int | None = None,
         class_hour_start: str | None = None,
         class_hour_end: str | None = None,
+        class_hour_lessons_count: int | None = None,
     ) -> dict[str, Any]:
         start, count = _clamp_shift_bounds(
             start_lesson, lessons_count, max_lessons_per_day
@@ -148,6 +158,9 @@ class ShiftService:
             if ts and te and ts < te:
                 shift.class_hour_start = ts
                 shift.class_hour_end = te
+            shift.class_hour_lessons_count = _clamp_class_hour_lessons(
+                class_hour_lessons_count, count, class_hour_day
+            )
         self.db.add(shift)
         self.db.commit()
         self.db.refresh(shift)
@@ -166,6 +179,7 @@ class ShiftService:
         class_hour_day: int | None = None,
         class_hour_start: str | None = None,
         class_hour_end: str | None = None,
+        class_hour_lessons_count: int | None = None,
         fields_set: frozenset[str] | None = None,
     ) -> dict[str, Any]:
         shift = require_owned(self.db, Shift, shift_id, self.school_id)
@@ -209,6 +223,18 @@ class ShiftService:
             shift.class_hour_day = None
             shift.class_hour_start = None
             shift.class_hour_end = None
+            shift.class_hour_lessons_count = None
+        if shift.class_hour_day:
+            raw_count = (
+                class_hour_lessons_count
+                if "class_hour_lessons_count" in fields_set
+                else shift.class_hour_lessons_count
+            )
+            shift.class_hour_lessons_count = _clamp_class_hour_lessons(
+                raw_count, shift.lessons_count, shift.class_hour_day
+            )
+        else:
+            shift.class_hour_lessons_count = None
         self.db.commit()
         self.db.refresh(shift)
         return self.get(shift.id)
@@ -266,7 +292,8 @@ class ShiftService:
 
         inserted = 0
         for day in range(1, min(wd, 6) + 1):
-            for n in range(start, start + shift.lessons_count):
+            day_end = lesson_end_exclusive(shift, day)
+            for n in range(start, day_end):
                 pair = (
                     class_day_by_lesson.get(n)
                     if class_day_num and day == class_day_num

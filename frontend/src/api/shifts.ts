@@ -20,6 +20,7 @@ export type Shift = {
   class_hour_day: number | null
   class_hour_start: string | null
   class_hour_end: string | null
+  class_hour_lessons_count: number | null
   lesson_times: LessonTime[]
 }
 
@@ -32,6 +33,7 @@ export type ShiftBrief = Pick<
   | 'max_lessons_per_day'
   | 'start_lesson'
   | 'lessons_count'
+  | 'class_hour_lessons_count'
 >
 
 export type ShiftPayload = {
@@ -44,6 +46,7 @@ export type ShiftPayload = {
   class_hour_day: number | null
   class_hour_start: string | null
   class_hour_end: string | null
+  class_hour_lessons_count: number | null
 }
 
 export type BellRow = { time_start: string; time_end: string }

@@ -29,6 +29,7 @@ const EMPTY_FORM = {
   class_hour_start: DEFAULT_FIRST_START,
   class_hour_duration: String(DEFAULT_LESSON_DURATION),
   class_hour_break: String(DEFAULT_BREAK),
+  class_hour_lessons_count: '6',
   first_lesson_start: DEFAULT_FIRST_START,
   lesson_duration: String(DEFAULT_LESSON_DURATION),
 }
@@ -138,8 +139,11 @@ function computeBells(params: {
   classHourStart: string
   classHourDuration: number
   classHourBreak: number
+  classHourLessonsCount: number
 }): { classHourEnd: string | null; common: Record<string, BellRow>; class_day: Record<string, BellRow> } {
   const nums = lessonNumbers(params.startLesson, params.lessonsCount)
+  const classCount = Math.max(1, Math.min(params.lessonsCount, params.classHourLessonsCount || params.lessonsCount))
+  const classNums = lessonNumbers(params.startLesson, classCount)
   const common = buildLessonTimes(
     nums,
     params.firstLessonStart,
@@ -156,8 +160,8 @@ function computeBells(params: {
       params.classHourBreak,
     )
     class_day = classDayStart
-      ? buildLessonTimes(nums, classDayStart, params.lessonDuration, params.breaksAfter)
-      : emptyLessonTimes(nums)
+      ? buildLessonTimes(classNums, classDayStart, params.lessonDuration, params.breaksAfter)
+      : emptyLessonTimes(classNums)
   }
   return { classHourEnd, common, class_day }
 }
@@ -222,6 +226,20 @@ function inferFromShift(s: Shift): { form: typeof EMPTY_FORM; breaksAfter: Recor
     }
   }
 
+  let classHourLessonsCount = s.lessons_count
+  if (classDay) {
+    if (s.class_hour_lessons_count) {
+      classHourLessonsCount = s.class_hour_lessons_count
+    } else {
+      let lastFilled = 0
+      for (const n of nums) {
+        const v = class_day[String(n)]
+        if (v && (v.time_start || v.time_end)) lastFilled = n
+      }
+      if (lastFilled) classHourLessonsCount = lastFilled - s.start_lesson + 1
+    }
+  }
+
   return {
     form: {
       name: s.name,
@@ -234,6 +252,7 @@ function inferFromShift(s: Shift): { form: typeof EMPTY_FORM; breaksAfter: Recor
       class_hour_start: s.class_hour_start ?? DEFAULT_FIRST_START,
       class_hour_duration: String(classHourDuration),
       class_hour_break: String(classHourBreak),
+      class_hour_lessons_count: String(classHourLessonsCount),
       first_lesson_start: firstStart,
       lesson_duration: String(duration),
     },
@@ -261,6 +280,10 @@ export function ShiftsPage() {
       const classHourDay = form.class_hour_day === '' ? null : Number(form.class_hour_day)
       const classHourDuration = toInt(form.class_hour_duration, 0)
       const classHourBreak = toInt(form.class_hour_break, 0)
+      const classHourLessonsCount = Math.max(
+        1,
+        Math.min(lessonsCount, toInt(form.class_hour_lessons_count, lessonsCount)),
+      )
 
       if (!form.name.trim()) throw new Error('Укажите название смены')
       if (parseHM(form.first_lesson_start) == null) {
@@ -284,6 +307,7 @@ export function ShiftsPage() {
         classHourStart: form.class_hour_start,
         classHourDuration,
         classHourBreak,
+        classHourLessonsCount,
       })
 
       const base = {
@@ -296,6 +320,7 @@ export function ShiftsPage() {
         class_hour_day: classHourDay,
         class_hour_start: classHourDay != null ? form.class_hour_start : null,
         class_hour_end: classHourDay != null ? computed.classHourEnd : null,
+        class_hour_lessons_count: classHourDay != null ? classHourLessonsCount : null,
       }
 
       let shiftId: number
@@ -457,8 +482,13 @@ function ShiftEditor({
   const lessonDuration = toInt(form.lesson_duration, 0)
   const classHourDuration = toInt(form.class_hour_duration, 0)
   const classHourBreak = toInt(form.class_hour_break, 0)
+  const classHourLessonsCount = Math.max(
+    1,
+    Math.min(lessonsCount, toInt(form.class_hour_lessons_count, lessonsCount)),
+  )
 
   const nums = useMemo(() => lessonNumbers(startLesson, lessonsCount), [startLesson, lessonsCount])
+  const classDayLastLesson = startLesson + classHourLessonsCount - 1
 
   const computed = useMemo(
     () =>
@@ -472,6 +502,7 @@ function ShiftEditor({
         classHourStart: form.class_hour_start,
         classHourDuration,
         classHourBreak,
+        classHourLessonsCount,
       }),
     [
       startLesson,
@@ -484,6 +515,7 @@ function ShiftEditor({
       classHourDay,
       classHourDuration,
       classHourBreak,
+      classHourLessonsCount,
     ],
   )
 
@@ -491,6 +523,8 @@ function ShiftEditor({
     const next = { ...form, ...patch }
     const start = Math.max(1, toInt(next.start_lesson, 1))
     const count = Math.max(1, toInt(next.lessons_count, 1))
+    const classCount = Math.max(1, Math.min(count, toInt(next.class_hour_lessons_count, count)))
+    next.class_hour_lessons_count = String(classCount)
     setForm(next)
     setBreaksAfter((prev) => padBreaks(start, count, prev))
   }
@@ -596,7 +630,15 @@ function ShiftEditor({
                 <select
                   className="form-select"
                   value={form.class_hour_day}
-                  onChange={(e) => setForm((f) => ({ ...f, class_hour_day: e.target.value }))}
+                  onChange={(e) => {
+                    const day = e.target.value
+                    setForm((f) => ({
+                      ...f,
+                      class_hour_day: day,
+                      class_hour_lessons_count:
+                        f.class_hour_lessons_count || String(lessonsCount),
+                    }))
+                  }}
                 >
                   <option value="">— не задан —</option>
                   {Array.from({ length: workingDays }, (_, i) => i + 1).map((d) => (
@@ -606,6 +648,22 @@ function ShiftEditor({
                   ))}
                 </select>
               </div>
+              {hasClassDay && (
+                <div className="col-md-3">
+                  <label className="form-label">Уроков в этот день</label>
+                  <input
+                    className="form-control"
+                    type="number"
+                    min={1}
+                    max={lessonsCount}
+                    value={form.class_hour_lessons_count}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, class_hour_lessons_count: e.target.value }))
+                    }
+                  />
+                  <div className="form-text">Обычные дни: {lessonsCount}</div>
+                </div>
+              )}
               <div className="col-md-3">
                 <label className="form-label">Начало</label>
                 <input
@@ -648,6 +706,7 @@ function ShiftEditor({
                     {classDayLesson1Start
                       ? `, ${startLesson}-й урок с ${classDayLesson1Start}`
                       : ''}
+                    {`, уроков ${classHourLessonsCount}`}
                   </div>
                 </div>
               )}
@@ -732,7 +791,11 @@ function ShiftEditor({
                             </td>
                             <td className="text-nowrap">{fmtRange(c.time_start, c.time_end)}</td>
                             {hasClassDay && (
-                              <td className="text-nowrap">{fmtRange(k.time_start, k.time_end)}</td>
+                              <td className="text-nowrap">
+                                {n > classDayLastLesson
+                                  ? '—'
+                                  : fmtRange(k.time_start, k.time_end)}
+                              </td>
                             )}
                           </tr>
                         )

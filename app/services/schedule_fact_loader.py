@@ -9,6 +9,7 @@ from typing import Iterable, Literal
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
+from app.domain.shift_grid import lesson_end_exclusive
 from app.models import ScheduleCell, SchoolClass, ShiftLessonTime, TeachingAssignment
 from app.services.assignment_hours import remaining_for
 from app.services.bell_schedule import get_interval_for_slot
@@ -121,12 +122,12 @@ def build_slot_facts_for_class(
     if shift:
         wd = shift.working_days
         start = shift.start_lesson
-        end_excl = shift.start_lesson + shift.lessons_count
         shift_id = school_class.shift_id
     else:
-        wd, start, end_excl, shift_id = 5, 1, 8, None
+        wd, start, shift_id = 5, 1, None
     slots: list[SlotFact] = []
     for day in range(1, wd + 1):
+        end_excl = lesson_end_exclusive(shift, day) if shift else 8
         for lesson in range(start, end_excl):
             interval = None
             if with_intervals and session is not None and shift_id:

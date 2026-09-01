@@ -216,6 +216,60 @@ def test_shift_lesson_times_validation_warning() -> None:
     assert any("укажите оба времени" in w for w in data["warnings"])
 
 
+def test_class_hour_day_has_fewer_lessons() -> None:
+    created = client.post(
+        "/api/shifts/",
+        json={
+            "name": "1 смена КЧ",
+            "school_level": "elementary",
+            "start_lesson": 1,
+            "lessons_count": 6,
+            "working_days": 5,
+            "max_lessons_per_day": 7,
+            "class_hour_day": 1,
+            "class_hour_start": "08:00",
+            "class_hour_end": "08:20",
+            "class_hour_lessons_count": 4,
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    assert body["class_hour_day"] == 1
+    assert body["class_hour_lessons_count"] == 4
+    shift_id = body["id"]
+
+    bells = client.put(
+        f"/api/shifts/{shift_id}/lesson-times",
+        json={
+            "common": {
+                "1": {"time_start": "08:00", "time_end": "08:45"},
+                "2": {"time_start": "08:55", "time_end": "09:40"},
+                "3": {"time_start": "09:50", "time_end": "10:35"},
+                "4": {"time_start": "10:45", "time_end": "11:30"},
+                "5": {"time_start": "11:40", "time_end": "12:25"},
+                "6": {"time_start": "12:35", "time_end": "13:20"},
+            },
+            "class_day": {
+                "1": {"time_start": "08:30", "time_end": "09:15"},
+                "2": {"time_start": "09:25", "time_end": "10:10"},
+                "3": {"time_start": "10:20", "time_end": "11:05"},
+                "4": {"time_start": "11:15", "time_end": "12:00"},
+                "5": {"time_start": "12:10", "time_end": "12:55"},
+                "6": {"time_start": "13:05", "time_end": "13:50"},
+            },
+        },
+    )
+    assert bells.status_code == 200, bells.text
+    # 4 ordinary days × 6 lessons + Monday (class-hour) × 4 lessons
+    assert bells.json()["inserted"] == 4 * 6 + 4
+
+    times = client.get(f"/api/shifts/{shift_id}").json()["lesson_times"]
+    monday = [lt for lt in times if lt["day_of_week"] == 1]
+    tuesday = [lt for lt in times if lt["day_of_week"] == 2]
+    assert {lt["lesson_number"] for lt in monday} == {1, 2, 3, 4}
+    assert {lt["lesson_number"] for lt in tuesday} == {1, 2, 3, 4, 5, 6}
+
+
 def test_subject_assignments_split_flow() -> None:
     with SessionLocal() as session:
         subject = Subject(school_id=TEST_SCHOOL_ID, name="Английский")

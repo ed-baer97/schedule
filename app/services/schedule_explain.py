@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.days import DAY_NAMES
+from app.domain.shift_grid import lesson_end_exclusive
 from app.models import SchoolClass, TeachingAssignment
 from app.services.assignment_hours import placed_count, remaining_for
 from app.services.classroom_resolver import pick_classroom_for
@@ -185,10 +186,10 @@ class ScheduleExplainService:
         shift = school_class.shift if school_class and school_class.shift_id else None
         working_days = shift.working_days if shift else 5
         start = shift.start_lesson if shift else 1
-        count = shift.lessons_count if shift else 7
         found: list[SlotOption] = []
         for day in range(1, working_days + 1):
-            for lesson in range(start, start + count):
+            end = lesson_end_exclusive(shift, day) if shift else start + 7
+            for lesson in range(start, end):
                 if (day, lesson) == skip:
                     continue
                 errors = self.validator.validate_cell(

@@ -44,6 +44,7 @@ export type SchoolClassRow = {
 export type ShiftBriefWithClassHour = ShiftBrief & {
   class_hour_day: number | null
   class_hour_time_label: string | null
+  class_hour_lessons_count: number | null
 }
 
 export type GridData = {

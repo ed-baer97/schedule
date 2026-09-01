@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.models import SchoolClass, TeachingAssignment
+from app.domain.shift_grid import lesson_end_exclusive
 from app.services.assignment_hours import placed_counts, remaining_for
 from app.services.validators import ScheduleValidator
 
@@ -62,7 +63,7 @@ def build_unplaced_diagnostics(
         max_lessons = shift.max_lessons_per_day if shift else 7
         lesson_start = shift.start_lesson if shift else 1
         lesson_end_excl = (
-            shift.start_lesson + shift.lessons_count if shift else max_lessons + 1
+            lesson_end_exclusive(shift) if shift else max_lessons + 1
         )
 
         reasons: Counter[str] = Counter()
@@ -70,7 +71,8 @@ def build_unplaced_diagnostics(
         checked_slots = 0
 
         for day in range(1, working_days + 1):
-            for lesson in range(lesson_start, lesson_end_excl):
+            day_end = lesson_end_exclusive(shift, day) if shift else lesson_end_excl
+            for lesson in range(lesson_start, day_end):
                 checked_slots += 1
                 classroom_id = None
                 if classroom_id_for:

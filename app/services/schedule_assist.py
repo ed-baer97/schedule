@@ -17,6 +17,7 @@ from app.domain.assist_intent import (
 )
 from app.domain.days import DAY_NAMES
 from app.domain.preferences import clamp_weight
+from app.domain.shift_grid import lesson_end_exclusive
 from app.models import ScheduleCell, SchoolClass, TeachingAssignment
 from app.services.classroom_resolver import load_settings
 from app.services.errors import ValidationConflict
@@ -286,7 +287,7 @@ class ScheduleAssistService:
         shift = school_class.shift if school_class and school_class.shift_id else None
         working_days = shift.working_days if shift else 5
         start = shift.start_lesson if shift else 1
-        end = start + (shift.lessons_count if shift else 7)
+        end = lesson_end_exclusive(shift) if shift else start + 7
         cap = min(max_lesson, end - 1)
         if cap < start:
             return None
@@ -295,7 +296,8 @@ class ScheduleAssistService:
             d for d in range(1, working_days + 1) if d != cell.day_of_week
         ]
         for day in day_order:
-            for lesson in range(start, cap + 1):
+            day_end = min(cap, (lesson_end_exclusive(shift, day) if shift else end) - 1)
+            for lesson in range(start, day_end + 1):
                 if day == cell.day_of_week and lesson == cell.lesson_number:
                     continue
                 errors = self.validator.validate_cell(

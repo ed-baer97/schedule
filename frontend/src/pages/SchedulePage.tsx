@@ -589,6 +589,16 @@ export function SchedulePage() {
       rows.push({ kind: 'class_hour', day })
     }
     for (const lesson of grid.lessons_range) {
+      const classHourLessons = grid.current_shift?.class_hour_lessons_count
+      const startLesson = grid.current_shift?.start_lesson ?? 1
+      if (
+        grid.current_shift?.class_hour_day === day &&
+        classHourLessons != null &&
+        classHourLessons > 0 &&
+        lesson >= startLesson + classHourLessons
+      ) {
+        continue
+      }
       rows.push({ kind: 'lesson', day, lesson })
     }
   }
