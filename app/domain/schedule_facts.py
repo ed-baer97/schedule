@@ -16,6 +16,7 @@ class UnitFact:
     subject_id: int | None
     group_number: int | None
     school_level: str
+    requires_subgroup: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,3 +45,4 @@ class BusySlotFact:
     class_id: int | None = None
     classroom_id: int | None = None
     source_cell_id: int | None = None
+    requires_subgroup: bool = False

@@ -44,11 +44,13 @@ export function SubjectsPage() {
     color: string
     difficulty: SubjectDifficulty
     requires_fixed_classroom: boolean
+    requires_subgroup: boolean
   }>({
     name: '',
     color: '#147f78',
     difficulty: 'medium',
     requires_fixed_classroom: false,
+    requires_subgroup: false,
   })
 
   const subjectsQ = useQuery({
@@ -78,6 +80,7 @@ export function SubjectsPage() {
         color: form.color,
         difficulty: form.difficulty,
         requires_fixed_classroom: form.requires_fixed_classroom,
+        requires_subgroup: form.requires_subgroup,
       }
       if (!payload.name) throw new Error('Укажите название')
       if (editingId === 'new') {
@@ -115,6 +118,7 @@ export function SubjectsPage() {
       color: '#147f78',
       difficulty: 'medium',
       requires_fixed_classroom: false,
+      requires_subgroup: false,
     })
     setEditingId('new')
   }
@@ -125,6 +129,7 @@ export function SubjectsPage() {
       color: s.display_color,
       difficulty: s.difficulty || 'medium',
       requires_fixed_classroom: s.requires_fixed_classroom,
+      requires_subgroup: Boolean(s.requires_subgroup),
     })
     setEditingId(s.id)
   }
@@ -171,6 +176,7 @@ export function SubjectsPage() {
               <th>Название</th>
               <th>Сложность</th>
               <th>Фикс. кабинет</th>
+              <th>Только подгруппа</th>
               <th>Кабинеты</th>
               <th />
             </tr>
@@ -201,6 +207,7 @@ export function SubjectsPage() {
                   </span>
                 </td>
                 <td>{s.requires_fixed_classroom ? 'да' : '—'}</td>
+                <td>{s.requires_subgroup ? 'да' : '—'}</td>
                 <td>
                   {s.classrooms?.length
                     ? s.classrooms.map((c) => c.display_name).join(', ')
@@ -324,6 +331,22 @@ export function SubjectsPage() {
                     Нужен фиксированный кабинет
                   </label>
                 </div>
+                <div className="form-check mb-2">
+                  <input
+                    className="form-check-input"
+                    type="checkbox"
+                    checked={form.requires_subgroup}
+                    id="reqSubgroup"
+                    onChange={(e) => setForm((f) => ({ ...f, requires_subgroup: e.target.checked }))}
+                  />
+                  <label className="form-check-label" htmlFor="reqSubgroup">
+                    Только подгруппа
+                  </label>
+                </div>
+                <p className="small text-muted mb-2">
+                  «Только подгруппа» — урок не занимает весь класс: даже с одним учителем его можно ставить
+                  параллельно с другой такой подгруппой.
+                </p>
                 <p className="small text-muted mb-0">
                   Кабинеты предмета задаются на странице{' '}
                   <Link to="/classrooms">Кабинеты</Link>.

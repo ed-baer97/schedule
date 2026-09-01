@@ -371,6 +371,9 @@ export function ClassroomsPage() {
                               {s.requires_fixed_classroom ? (
                                 <span className="text-muted"> · фикс.</span>
                               ) : null}
+                              {s.requires_subgroup ? (
+                                <span className="text-muted"> · подгр.</span>
+                              ) : null}
                             </label>
                           </div>
                         )

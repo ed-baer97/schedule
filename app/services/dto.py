@@ -150,6 +150,7 @@ class SubjectData:
     color: str | None
     display_color: str
     requires_fixed_classroom: bool
+    requires_subgroup: bool = False
     difficulty: str = "medium"
     classrooms: list[ClassroomBriefData] | None = None
 
@@ -305,6 +306,7 @@ def subject_data(s) -> SubjectData:
         color=s.color,
         display_color=s.display_color,
         requires_fixed_classroom=bool(s.requires_fixed_classroom),
+        requires_subgroup=bool(getattr(s, "requires_subgroup", False)),
         difficulty=getattr(s, "difficulty", "medium") or "medium",
         classrooms=[classroom_brief(r) for r in rooms],
     )

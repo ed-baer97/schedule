@@ -9,23 +9,27 @@ export function groupsCanShareSlot(
   groupB: number | null,
   subjectIdA?: number | null,
   subjectIdB?: number | null,
+  opts?: { requiresSubgroupA?: boolean; requiresSubgroupB?: boolean },
 ): boolean {
   if (groupA == null || groupB == null) return false
-  if (groupA === groupB) return false
-  if (subjectIdA != null && subjectIdB != null && subjectIdA !== subjectIdB) return false
-  return true
+  const sameSubject =
+    subjectIdA != null && subjectIdB != null && subjectIdA === subjectIdB
+  if (sameSubject) return groupA !== groupB
+  return Boolean(opts?.requiresSubgroupA && opts?.requiresSubgroupB)
 }
 
 type OccupiedCell = {
   assignment_id: number
   group_number: number | null
   subject_id: number
+  requires_subgroup?: boolean
 }
 
 type CandidateAssignment = {
   id: number
   group_number: number | null
   subject_id: number
+  requires_subgroup?: boolean
 }
 
 /** Empty slot: any remaining assignment. Occupied: only a complementary subgroup. */
@@ -42,6 +46,10 @@ export function assignmentCanJoinSlot(
         cell.group_number,
         assignment.subject_id,
         cell.subject_id,
+        {
+          requiresSubgroupA: Boolean(assignment.requires_subgroup),
+          requiresSubgroupB: Boolean(cell.requires_subgroup),
+        },
       ),
   )
 }

@@ -84,21 +84,27 @@ def groups_can_share_slot(
     group_b: int | None,
     subject_id_a: int | None = None,
     subject_id_b: int | None = None,
+    *,
+    requires_subgroup_a: bool = False,
+    requires_subgroup_b: bool = False,
 ) -> bool:
     """
     True if two assignments may occupy the same (class, day, lesson) slot.
 
     Whole-class lessons (group None) conflict with everything.
-    Same group number conflicts. Different groups of the same subject may share.
-    Different subjects with different groups conflict (cannot share the class).
+    Same subject: different group numbers may share; the same group may not.
+    Different subjects share only when both are marked «только подгруппа».
     """
     if group_a is None or group_b is None:
         return False
-    if group_a == group_b:
-        return False
-    if subject_id_a is not None and subject_id_b is not None and subject_id_a != subject_id_b:
-        return False
-    return True
+    same_subject = (
+        subject_id_a is not None
+        and subject_id_b is not None
+        and subject_id_a == subject_id_b
+    )
+    if same_subject:
+        return group_a != group_b
+    return bool(requires_subgroup_a and requires_subgroup_b)
 
 
 def units_cannot_share_class_slot(a: UnitFact, b: UnitFact) -> bool:
@@ -111,7 +117,12 @@ def units_cannot_share_class_slot(a: UnitFact, b: UnitFact) -> bool:
     if a.assignment_id == b.assignment_id:
         return True
     return not groups_can_share_slot(
-        a.group_number, b.group_number, a.subject_id, b.subject_id
+        a.group_number,
+        b.group_number,
+        a.subject_id,
+        b.subject_id,
+        requires_subgroup_a=a.requires_subgroup,
+        requires_subgroup_b=b.requires_subgroup,
     )
 
 
@@ -137,6 +148,7 @@ def occupancy_blocks_unit(
         subject_id=occupied.subject_id,
         group_number=occupied.group_number,
         school_level=unit.school_level,
+        requires_subgroup=occupied.requires_subgroup,
     )
     return units_cannot_share_class_slot(unit, other)
 

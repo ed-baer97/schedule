@@ -216,6 +216,9 @@ class ScheduleQueriesMixin:
                     requires_fixed_classroom=bool(
                         subj.requires_fixed_classroom if subj else False
                     ),
+                    requires_subgroup=bool(
+                        getattr(subj, "requires_subgroup", False) if subj else False
+                    ),
                 )
             )
         classrooms = list(

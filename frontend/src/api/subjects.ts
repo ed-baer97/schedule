@@ -10,6 +10,7 @@ export type Subject = {
   display_color: string
   difficulty: SubjectDifficulty
   requires_fixed_classroom: boolean
+  requires_subgroup: boolean
   classrooms: { id: number; display_name: string }[]
 }
 
@@ -18,6 +19,7 @@ export type SubjectPayload = {
   color: string
   difficulty?: SubjectDifficulty
   requires_fixed_classroom: boolean
+  requires_subgroup?: boolean
 }
 
 export type SubjectAssignmentClassRow = {
@@ -34,6 +36,7 @@ export type SubjectAssignmentsView = {
     id: number
     name: string
     display_color: string
+    requires_subgroup?: boolean
   }
   school_level: string
   classes: SubjectAssignmentClassRow[]

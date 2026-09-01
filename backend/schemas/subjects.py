@@ -18,6 +18,7 @@ class SubjectOut(BaseModel):
     display_color: str
     difficulty: str = "medium"
     requires_fixed_classroom: bool
+    requires_subgroup: bool
     classrooms: list[ClassroomBrief] = []
 
 
@@ -26,6 +27,7 @@ class SubjectCreate(BaseModel):
     color: str = Subject.DEFAULT_COLOR
     difficulty: str = Field("medium", pattern="^(easy|medium|hard)$")
     requires_fixed_classroom: bool = False
+    requires_subgroup: bool = False
 
     @field_validator("color")
     @classmethod
@@ -40,6 +42,7 @@ class SubjectUpdate(BaseModel):
     color: str | None = None
     difficulty: str | None = Field(None, pattern="^(easy|medium|hard)$")
     requires_fixed_classroom: bool | None = None
+    requires_subgroup: bool | None = None
 
     @field_validator("color")
     @classmethod

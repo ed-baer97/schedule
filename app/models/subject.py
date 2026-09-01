@@ -43,6 +43,7 @@ class Subject(Base):
     color = Column(String(7), default=DEFAULT_COLOR)
     difficulty = Column(String(20), default=DIFFICULTY_MEDIUM, nullable=False)
     requires_fixed_classroom = Column(Boolean, default=False)
+    requires_subgroup = Column(Boolean, default=False)
 
     school = relationship("School")
     assignments = relationship("TeachingAssignment", back_populates="subject", lazy="dynamic")
