@@ -103,8 +103,19 @@ def _paint(cell, *, fill, font, alignment, border=_GRID) -> None:
     cell.border = border
 
 
-def _write_grid_value(ws: Worksheet, row: int, col: int, match: list[ScheduleCell]) -> None:
-    value = "\n".join(format_grid_export_cell(c) for c in match) if match else ""
+def _write_grid_value(
+    ws: Worksheet,
+    row: int,
+    col: int,
+    match: list[ScheduleCell],
+    time_label: str | None = None,
+) -> None:
+    parts: list[str] = []
+    if time_label:
+        parts.append(time_label)
+    if match:
+        parts.extend(format_grid_export_cell(c) for c in match)
+    value = "\n".join(parts)
     excel_cell = ws.cell(row, col, value)
     if match:
         _paint(
@@ -115,6 +126,23 @@ def _write_grid_value(ws: Worksheet, row: int, col: int, match: list[ScheduleCel
         )
     else:
         _paint(excel_cell, fill=_EMPTY_FILL, font=_META_FONT, alignment=_CELL_ALIGN)
+
+
+def ordinary_lesson_time(
+    times_by_day: dict[int, dict[int, str]],
+    lesson: int,
+    working_days: int,
+    class_hour_day: int | None,
+) -> str | None:
+    """Bell label for days without a class hour; falls back to class-hour day."""
+    ordered = list(range(1, working_days + 1))
+    if class_hour_day:
+        ordered = [d for d in ordered if d != class_hour_day] + [class_hour_day]
+    for day in ordered:
+        label = times_by_day.get(day, {}).get(lesson)
+        if label:
+            return label
+    return None
 
 
 def _lesson_index_label(lesson: int, time_label: str | None) -> str:
@@ -440,11 +468,12 @@ class ReportService:
             row_idx += 1
 
         for lesson in lessons:
-            time_label = None
-            for day in range(1, working_days + 1):
-                time_label = times_by_day.get(day, {}).get(lesson)
-                if time_label:
-                    break
+            time_label = ordinary_lesson_time(
+                times_by_day,
+                lesson,
+                working_days,
+                bells["class_hour_day"],
+            )
             index_cell = ws.cell(row_idx, 1, _lesson_index_label(lesson, time_label))
             _paint(
                 index_cell,
@@ -453,11 +482,18 @@ class ReportService:
                 alignment=_NUM_ALIGN,
             )
             max_groups = 1
+            extra_time = False
             for day in range(1, working_days + 1):
                 match = cell_index.get((day, lesson), [])
                 max_groups = max(max_groups, len(match) or 1)
-                _write_grid_value(ws, row_idx, 1 + day, match)
-            ws.row_dimensions[row_idx].height = _lesson_row_height(max_groups)
+                day_time = times_by_day.get(day, {}).get(lesson)
+                day_bell = day_time if day_time and day_time != time_label else None
+                if day_bell:
+                    extra_time = True
+                _write_grid_value(ws, row_idx, 1 + day, match, day_bell)
+            ws.row_dimensions[row_idx].height = _lesson_row_height(
+                max_groups + (1 if extra_time else 0)
+            )
             row_idx += 1
 
         _style_sheet_chrome(ws, last_col)

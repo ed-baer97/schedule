@@ -23,7 +23,11 @@ from app.models import (
     TeachingAssignment,
     classroom_subjects,
 )
-from app.services.report_service import format_grid_export_cell, unique_sheet_name
+from app.services.report_service import (
+    format_grid_export_cell,
+    ordinary_lesson_time,
+    unique_sheet_name,
+)
 from backend.deps import SessionLocal
 from backend.main import app
 from tests.conftest import TEST_SCHOOL_ID
@@ -97,6 +101,15 @@ def test_format_grid_export_cell_includes_group() -> None:
     assert "Математика · гр.2" in text
     assert "каб. 12" in text
     assert " / " in text
+
+
+def test_ordinary_lesson_time_skips_class_hour_day() -> None:
+    times = {
+        1: {1: "08:25–09:10"},
+        2: {1: "08:00–08:45"},
+    }
+    assert ordinary_lesson_time(times, 1, 5, 1) == "08:00–08:45"
+    assert ordinary_lesson_time(times, 1, 5, None) == "08:25–09:10"
 
 
 def test_export_all_cell_contains_subject_classroom_teacher() -> None:
@@ -257,15 +270,25 @@ def test_class_and_teacher_reports_include_class_hour_and_bells() -> None:
         session.add_all([shift, subject, teacher, cls])
         session.flush()
         cls.shift_id = shift.id
-        session.add(
-            ShiftLessonTime(
-                school_id=TEST_SCHOOL_ID,
-                shift_id=shift.id,
-                day_of_week=1,
-                lesson_number=1,
-                time_start=dt_time(8, 25),
-                time_end=dt_time(9, 10),
-            )
+        session.add_all(
+            [
+                ShiftLessonTime(
+                    school_id=TEST_SCHOOL_ID,
+                    shift_id=shift.id,
+                    day_of_week=1,
+                    lesson_number=1,
+                    time_start=dt_time(8, 25),
+                    time_end=dt_time(9, 10),
+                ),
+                ShiftLessonTime(
+                    school_id=TEST_SCHOOL_ID,
+                    shift_id=shift.id,
+                    day_of_week=2,
+                    lesson_number=1,
+                    time_start=dt_time(8, 0),
+                    time_end=dt_time(8, 45),
+                ),
+            ]
         )
         assignment = TeachingAssignment(
             school_id=TEST_SCHOOL_ID,
@@ -292,12 +315,28 @@ def test_class_and_teacher_reports_include_class_hour_and_bells() -> None:
     assert class_body["class_hour_day"] == 1
     assert class_body["class_hour_time_label"] == "08:00–08:20"
     assert class_body["lesson_times_by_day"]["1"]["1"] == "08:25–09:10"
+    assert class_body["lesson_times_by_day"]["2"]["1"] == "08:00–08:45"
 
     teacher_body = client.get(f"/api/reports/teacher/{teacher_id}").json()
     assert teacher_body["class_hour_day"] == 1
     assert teacher_body["class_hour_time_label"] == "08:00–08:20"
     assert teacher_body["lesson_times_by_day"]["1"]["1"] == "08:25–09:10"
+    assert teacher_body["lesson_times_by_day"]["2"]["1"] == "08:00–08:45"
     assert teacher_body["lessons_range"] == [1, 2, 3, 4, 5]
+
+    xlsx = client.get(f"/api/reports/export/class/{class_id}")
+    assert xlsx.status_code == 200, xlsx.text
+    sheet = load_workbook(io.BytesIO(xlsx.content)).active
+    # Row 1 headers, row 2 class hour, row 3 lesson 1
+    lesson_col = str(sheet["A3"].value or "")
+    assert "1" in lesson_col
+    assert "08:00–08:45" in lesson_col
+    assert "08:25–09:10" not in lesson_col
+    monday = str(sheet["B3"].value or "")
+    assert "08:25–09:10" in monday
+    assert "Математика" in monday
+    tuesday = str(sheet["C3"].value or "")
+    assert "08:00–08:45" not in tuesday
 
 
 def test_unique_sheet_name_sanitizes_and_dedupes() -> None:

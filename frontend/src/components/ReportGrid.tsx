@@ -74,11 +74,17 @@ export function firstLessonTime(
   times: Record<number, Record<number, string>> | undefined,
   workingDays: number,
   lesson: number,
+  skipDay?: number | null,
 ): string | undefined {
   if (!times) return undefined
   for (let day = 1; day <= workingDays; day += 1) {
+    if (skipDay != null && day === skipDay) continue
     const t = reportLessonTime(times, day, lesson)
     if (t) return t
+  }
+  if (skipDay != null) {
+    const skipped = reportLessonTime(times, skipDay, lesson)
+    if (skipped) return skipped
   }
   const lessonKey = String(lesson)
   for (const byDay of Object.values(times)) {
@@ -160,7 +166,7 @@ export function buildTimetableRows(opts: {
   }
 
   for (const lesson of lessonsRange) {
-    const time = firstLessonTime(lessonTimesByDay, workingDays, lesson)
+    const time = firstLessonTime(lessonTimesByDay, workingDays, lesson, classHourDay)
     rows.push({
       key: lesson,
       label: (
@@ -171,7 +177,17 @@ export function buildTimetableRows(opts: {
       ),
       dayCells: days.map((_, dayIdx) => {
         const day = dayIdx + 1
-        return renderCells(cellsBy.get(`${day}:${lesson}`) ?? [])
+        const content = renderCells(cellsBy.get(`${day}:${lesson}`) ?? [])
+        const dayTime = reportLessonTime(lessonTimesByDay, day, lesson)
+        if (!dayTime || dayTime === time) return content
+        return (
+          <>
+            <div className="report-day-bell">
+              <ReportBell time={dayTime} />
+            </div>
+            {content}
+          </>
+        )
       }),
     })
   }
