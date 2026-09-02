@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OverlayScrollArea } from '../components/OverlayScrollArea'
 import { ModalPortal } from '../components/ModalPortal'
+import { ScheduleMinimap } from '../components/ScheduleMinimap'
 import { extractApiError } from '../api/client'
 import {
   createScheduleCell,
@@ -140,12 +141,15 @@ function buildTeacherHoverCss(keys: string[]) {
   return keys
     .map((key) => {
       const a = esc(key)
-      const table = `.schedule-grid-table:has(.lesson-card[data-teacher-key="${a}"]:hover)`
+      const card = `.schedule-grid-card:has([data-teacher-key="${a}"]:hover)`
       const match = `.lesson-card[data-teacher-key="${a}"]`
-      return `${table} ${match}{background:color-mix(in srgb, var(--kivi-primary) 22%, var(--kivi-surface))!important;box-shadow:inset 0 0 0 3px var(--kivi-primary);opacity:1;position:relative;z-index:2}
-${table} ${match} .teacher-name{color:var(--kivi-primary-deep);font-weight:700}
-${table} .lesson-card:not(${match}){opacity:.32}
-${table} td:has(${match}){background:color-mix(in srgb, var(--kivi-primary) 10%, transparent)}`
+      const mini = `.schedule-minimap-lesson[data-teacher-key="${a}"]`
+      return `${card} ${match}{background:color-mix(in srgb, var(--kivi-primary) 22%, var(--kivi-surface))!important;box-shadow:inset 0 0 0 3px var(--kivi-primary);opacity:1;position:relative;z-index:2}
+${card} ${match} .teacher-name{color:var(--kivi-primary-deep);font-weight:700}
+${card} .lesson-card:not(${match}){opacity:.32}
+${card} td:has(${match}){background:color-mix(in srgb, var(--kivi-primary) 10%, transparent)}
+${card} ${mini}{opacity:1;filter:none;box-shadow:0 0 0 1px var(--kivi-primary),0 0 6px color-mix(in srgb, var(--kivi-primary) 65%, transparent);transform:scale(1.25);z-index:2}
+${card} .schedule-minimap-lesson:not(${mini}){opacity:.28;filter:saturate(.35)}`
     })
     .join('\n')
 }
@@ -157,9 +161,15 @@ function applyTeacherHover(root: HTMLElement | null, key: string | null) {
   if (key) root.setAttribute('data-hover-teacher', key)
   else root.removeAttribute('data-hover-teacher')
   root.classList.toggle('is-teacher-hover', Boolean(key))
-  root.querySelectorAll<HTMLElement>('.lesson-card[data-teacher-key]').forEach((el) => {
+  root.querySelectorAll<HTMLElement>('[data-teacher-key]').forEach((el) => {
     el.classList.toggle('teacher-highlight', Boolean(key) && el.dataset.teacherKey === key)
   })
+}
+
+function hoverTeacherFromEvent(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null
+  const el = target.closest('[data-teacher-key]') as HTMLElement | null
+  return el?.dataset.teacherKey || null
 }
 
 function replaceHash(id: string) {
@@ -767,7 +777,22 @@ export function SchedulePage() {
           </div>
         </div>
       ) : (
-        <div className="card schedule-grid-card">
+        <div
+          className="card schedule-grid-card"
+          onMouseOver={(e) => {
+            applyTeacherHover(e.currentTarget, hoverTeacherFromEvent(e.target))
+          }}
+          onMouseOut={(e) => {
+            const card = e.currentTarget
+            const next = hoverTeacherFromEvent(e.relatedTarget)
+            const rel = e.relatedTarget
+            if (next && rel instanceof Node && card.contains(rel)) {
+              applyTeacherHover(card, next)
+              return
+            }
+            applyTeacherHover(card, null)
+          }}
+        >
           {teacherHoverCss ? <style>{teacherHoverCss}</style> : null}
           <OverlayScrollArea
             key={`${level}-${shiftId ?? 'auto'}`}
@@ -777,25 +802,7 @@ export function SchedulePage() {
               tryRestoreAnchor()
             }}
           >
-            <table
-              className={`table table-bordered mb-0 schedule-grid-table is-${density}`}
-              onMouseOver={(e) => {
-                const card = (e.target as HTMLElement).closest('.lesson-card') as HTMLElement | null
-                const key = card?.dataset.teacherKey || ''
-                applyTeacherHover(e.currentTarget, key || null)
-              }}
-              onMouseOut={(e) => {
-                const table = e.currentTarget
-                const rel = e.relatedTarget
-                const next =
-                  rel instanceof Element ? (rel.closest('.lesson-card') as HTMLElement | null) : null
-                if (next && table.contains(next)) {
-                  applyTeacherHover(table, next.dataset.teacherKey || null)
-                  return
-                }
-                applyTeacherHover(table, null)
-              }}
-            >
+            <table className={`table table-bordered mb-0 schedule-grid-table is-${density}`}>
               <thead className="table-light">
                 <tr>
                   <th className="schedule-slot-index">Урок</th>
@@ -885,7 +892,7 @@ export function SchedulePage() {
                                     title={`${lessonCardTitle(cell)} · нажмите, чтобы сменить кабинет`}
                                     onDragStart={(e) => {
                                       applyTeacherHover(
-                                        e.currentTarget.closest('.schedule-grid-table'),
+                                        e.currentTarget.closest('.schedule-grid-card'),
                                         null,
                                       )
                                       onDragStartCell(e, cell)
@@ -989,6 +996,14 @@ export function SchedulePage() {
               </tbody>
             </table>
           </OverlayScrollArea>
+          <ScheduleMinimap
+            layoutKey={`${level}-${shiftId ?? 'auto'}`}
+            classes={grid.classes}
+            rows={rows}
+            cellsBySlot={cellsBySlot}
+            dayNames={grid.day_names}
+            onNavigateSlot={(id) => scrollScheduleAnchor(id, 'nearest')}
+          />
         </div>
       )}
 

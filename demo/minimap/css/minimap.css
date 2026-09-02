@@ -1,0 +1,161 @@
+.schedule-minimap {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  z-index: 16;
+  width: 228px;
+  height: 172px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--kivi-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kivi-surface) 88%, transparent);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--kivi-ink) 18%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.schedule-minimap[hidden] {
+  display: none;
+}
+
+.schedule-minimap-fab {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+  z-index: 16;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--kivi-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kivi-surface) 92%, transparent);
+  color: var(--kivi-ink);
+  cursor: pointer;
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--kivi-ink) 16%, transparent);
+}
+
+.schedule-minimap-fab[hidden] {
+  display: none;
+}
+
+.schedule-minimap-hide {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--kivi-line);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--kivi-surface) 92%, transparent);
+  color: var(--kivi-ink);
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.schedule-minimap-fab:hover,
+.schedule-minimap-hide:hover {
+  opacity: 1;
+  color: var(--kivi-primary-deep);
+  border-color: var(--kivi-primary);
+}
+
+.schedule-minimap-map {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.schedule-minimap-map:active {
+  cursor: grabbing;
+}
+
+.schedule-minimap-row {
+  display: flex;
+  flex: 1 0 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+.schedule-minimap-row.is-head {
+  flex: 0.7 0 0;
+  background: color-mix(in srgb, var(--kivi-bg) 70%, var(--kivi-surface));
+}
+
+.schedule-minimap-row.is-day {
+  flex: 0.45 0 0;
+  background: color-mix(in srgb, var(--kivi-ink) 14%, var(--kivi-surface));
+}
+
+.schedule-minimap-row.is-class-hour {
+  background: color-mix(in srgb, var(--kivi-accent) 12%, transparent);
+}
+
+.schedule-minimap-index,
+.schedule-minimap-colhead,
+.schedule-minimap-cell {
+  flex: 1 0 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.schedule-minimap-index {
+  flex: 0.55 0 0;
+  background: color-mix(in srgb, var(--kivi-bg) 55%, transparent);
+}
+
+.schedule-minimap-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0.5px;
+  box-shadow: inset 0 0 0 0.5px color-mix(in srgb, var(--kivi-line) 70%, transparent);
+}
+
+.schedule-minimap-lesson {
+  flex: 1 1 0;
+  min-height: 0;
+  border-radius: 1px;
+  background: var(--lesson-color, var(--kivi-primary));
+  transform-origin: center;
+  transition: opacity 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease, transform 0.12s ease;
+}
+
+.schedule-minimap-view {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 1.5px solid var(--kivi-primary);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--kivi-primary) 14%, transparent);
+  pointer-events: none;
+}
+
+.schedule-grid-card.is-teacher-hover .schedule-minimap-lesson {
+  opacity: 0.28;
+  filter: saturate(0.35);
+}
+
+.schedule-grid-card.is-teacher-hover .schedule-minimap-lesson.teacher-highlight {
+  opacity: 1;
+  filter: none;
+  box-shadow:
+    0 0 0 1px var(--kivi-primary),
+    0 0 6px color-mix(in srgb, var(--kivi-primary) 65%, transparent);
+  transform: scale(1.25);
+  z-index: 2;
+  position: relative;
+}

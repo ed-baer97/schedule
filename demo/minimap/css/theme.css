@@ -1,0 +1,82 @@
+:root {
+  --kivi-bg: #eef3ea;
+  --kivi-surface: #ffffff;
+  --kivi-ink: #14201a;
+  --kivi-muted: #3f5248;
+  --kivi-line: #d0dbd4;
+  --kivi-primary: #147f78;
+  --kivi-primary-deep: #0e5c57;
+  --kivi-accent: #c4842e;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: 0.9375rem;
+  color: var(--kivi-ink);
+  background: var(--kivi-bg);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0.75rem 1rem 1rem;
+  gap: 0.65rem;
+}
+
+.chrome {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+
+.kicker {
+  margin: 0 0 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--kivi-primary);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 650;
+}
+
+.hint {
+  margin: 0;
+  max-width: 28rem;
+  color: var(--kivi-muted);
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --kivi-bg: #0b100e;
+    --kivi-surface: #121a16;
+    --kivi-ink: #eef3ea;
+    --kivi-muted: #8b9a90;
+    --kivi-line: #24302a;
+    --kivi-primary: #2ec4b6;
+    --kivi-primary-deep: #147f78;
+    --kivi-accent: #e0a45a;
+  }
+}

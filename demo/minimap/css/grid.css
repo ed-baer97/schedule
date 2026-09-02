@@ -1,0 +1,157 @@
+.schedule-grid-card {
+  position: relative;
+  display: flex;
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--kivi-surface);
+  border: 1px solid var(--kivi-line);
+  border-radius: 12px;
+}
+
+.overlay-scroll {
+  --overlay-scroll-bar: 12px;
+  position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.overlay-scroll-viewport {
+  position: absolute;
+  inset: 0;
+  right: var(--overlay-scroll-bar);
+  bottom: var(--overlay-scroll-bar);
+  overflow: auto;
+}
+
+.schedule-grid-table {
+  --slot-index-width: 4.85rem;
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 0.8rem;
+}
+
+.schedule-grid-table th,
+.schedule-grid-table td {
+  border: 1px solid var(--kivi-line);
+  vertical-align: top;
+}
+
+.schedule-grid-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--kivi-bg) 70%, var(--kivi-surface));
+  color: var(--kivi-muted);
+  font-weight: 650;
+  text-align: center;
+  padding: 0.35rem 0.45rem;
+}
+
+.schedule-slot-index {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: var(--slot-index-width);
+  min-width: var(--slot-index-width);
+  background: var(--kivi-surface);
+  text-align: center;
+  padding: 0.2rem 0.3rem;
+}
+
+.schedule-grid-table thead .schedule-slot-index {
+  z-index: 3;
+}
+
+.schedule-slot-num {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.schedule-bell {
+  margin-top: 0.1rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--kivi-ink);
+}
+
+.schedule-day-row {
+  text-align: center;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  padding: 0.1rem 0.35rem;
+  background: color-mix(in srgb, var(--kivi-bg) 80%, var(--kivi-surface));
+}
+
+.schedule-slot-cell {
+  min-width: 6.7rem;
+  padding: 2px;
+}
+
+.schedule-slot-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.2rem;
+  color: color-mix(in srgb, var(--kivi-muted) 45%, transparent);
+  font-weight: 600;
+}
+
+.lesson-card {
+  padding: 3px 6px;
+  margin-bottom: 2px;
+  border-radius: 4px;
+  background: var(--kivi-surface);
+  border: 1px solid var(--kivi-line);
+  border-left: 3px solid var(--lesson-color, var(--kivi-primary));
+  transition: box-shadow 0.12s ease, opacity 0.12s ease, background 0.12s ease;
+}
+
+.lesson-subject {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.lesson-card-meta {
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+  color: var(--kivi-muted);
+  font-size: 0.72rem;
+}
+
+.lesson-group {
+  margin-left: 0.25rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--kivi-primary-deep);
+}
+
+.schedule-grid-card.is-teacher-hover .lesson-card {
+  opacity: 0.32;
+}
+
+.schedule-grid-card.is-teacher-hover .lesson-card.teacher-highlight {
+  opacity: 1;
+  background: color-mix(in srgb, var(--kivi-primary) 18%, var(--kivi-surface));
+  box-shadow: inset 0 0 0 2px var(--kivi-primary);
+  position: relative;
+  z-index: 2;
+}
+
+.schedule-grid-card.is-teacher-hover td:has(.teacher-highlight) {
+  background: color-mix(in srgb, var(--kivi-primary) 10%, transparent);
+}
+
+.schedule-grid-card.is-teacher-hover .lesson-card.teacher-highlight .teacher-name {
+  color: var(--kivi-primary-deep);
+  font-weight: 700;
+}
