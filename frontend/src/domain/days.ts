@@ -8,6 +8,8 @@ export const DAY_NAMES_LIST = [
   'Суббота',
 ] as const
 
+export const DAY_SHORT_NAMES = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'] as const
+
 export const DAY_NAMES: Record<number, string> = Object.fromEntries(
   DAY_NAMES_LIST.map((name, i) => [i + 1, name]),
 ) as Record<number, string>

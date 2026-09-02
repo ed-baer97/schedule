@@ -18,6 +18,7 @@ import {
   type ClassroomMode,
 } from '../api/schedule'
 import { extractApiError } from '../api/client'
+import { DAY_NAMES_LIST, DAY_SHORT_NAMES } from '../domain/days'
 import type { SchoolLevel } from '../domain/schoolLevel'
 
 function defaultSettings(level: SchoolLevel): ScheduleSettings {
@@ -54,6 +55,7 @@ export function AutoSchedulerPage() {
   const [error, setError] = useState<string | null>(null)
   const [stuckJobId, setStuckJobId] = useState<number | null>(null)
   const [rulesMsg, setRulesMsg] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
+  const [clearDays, setClearDays] = useState<number[]>([])
   const logRef = useRef<HTMLDivElement | null>(null)
   const pollAbortRef = useRef<AbortController | null>(null)
   const attachedJobIdRef = useRef<number | null>(null)
@@ -297,13 +299,34 @@ export function AutoSchedulerPage() {
     )
   }
 
-  async function doClear(filter: { school_level?: string; class_id?: number; teacher_id?: number }) {
-    if (!confirm('Очистить расписание? Удалит уроки из выбранной области.')) return
+  function toggleClearDay(day: number) {
+    setClearDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort((a, b) => a - b),
+    )
+  }
+
+  async function doClear(
+    filter: {
+      school_level?: string
+      class_id?: number
+      teacher_id?: number
+    },
+    options?: { allDays?: boolean },
+  ) {
+    const days = options?.allDays || clearDays.length === 0 ? undefined : clearDays
+    const dayLabel =
+      days != null ? days.map((d) => DAY_NAMES_LIST[d - 1]).join(', ') : 'все дни'
+    if (!confirm(`Очистить расписание (${dayLabel})? Удалит уроки из выбранной области.`)) return
     resetState()
     setRunning(true)
     try {
-      const res = await clearSchedule(filter)
-      appendLog(`Удалено уроков: ${res.count}`)
+      const res = await clearSchedule({ ...filter, days_of_week: days })
+      appendLog(
+        days != null
+          ? `Удалено уроков за ${dayLabel}: ${res.count}`
+          : `Удалено уроков: ${res.count}`,
+      )
+      await qc.invalidateQueries({ queryKey: ['schedule'] })
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
     } finally {
@@ -540,7 +563,33 @@ export function AutoSchedulerPage() {
                   </details>
                 </div>
               </div>
-              <div className="mt-3 d-flex gap-2">
+              <div className="mt-3">
+                <div className="small text-muted mb-1">Дни для очистки</div>
+                <div className="d-flex flex-wrap gap-1" role="group" aria-label="Дни для очистки">
+                  {DAY_SHORT_NAMES.map((label, i) => {
+                    const day = i + 1
+                    const on = clearDays.includes(day)
+                    return (
+                      <button
+                        key={day}
+                        type="button"
+                        className={`btn btn-sm ${on ? 'btn-danger' : 'btn-outline-secondary'}`}
+                        disabled={running}
+                        aria-pressed={on}
+                        onClick={() => toggleClearDay(day)}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="form-text mb-2">
+                  {clearDays.length === 0
+                    ? 'Не выбрано — очистка удалит уроки за всю неделю.'
+                    : `Будут удалены уроки: ${clearDays.map((d) => DAY_NAMES_LIST[d - 1]).join(', ')}.`}
+                </div>
+              </div>
+              <div className="d-flex gap-2 flex-wrap">
                 <button
                   type="button"
                   className="btn btn-success"
@@ -563,7 +612,7 @@ export function AutoSchedulerPage() {
                   disabled={running}
                   onClick={() => doClear({ school_level: level })}
                 >
-                  Очистить уровень
+                  {clearDays.length === 0 ? 'Очистить уровень' : 'Очистить выбранные дни'}
                 </button>
               </div>
             </div>
@@ -599,7 +648,7 @@ export function AutoSchedulerPage() {
                   className="btn btn-outline-danger"
                   disabled={running || teacherId === ''}
                   onClick={() =>
-                    doClear({ school_level: level, teacher_id: Number(teacherId) })
+                    doClear({ school_level: level, teacher_id: Number(teacherId) }, { allDays: true })
                   }
                 >
                   Очистить уроки учителя

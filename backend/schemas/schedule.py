@@ -1,5 +1,5 @@
 """Schedule grid API schemas."""
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.schemas.common import TeacherBrief
 
@@ -170,6 +170,22 @@ class ClearScheduleBody(BaseModel):
     school_level: str | None = Field(None, pattern="^(elementary|secondary)$")
     class_id: int | None = None
     teacher_id: int | None = None
+    days_of_week: list[int] | None = Field(None, min_length=1)
+
+    @field_validator("days_of_week")
+    @classmethod
+    def _days_of_week(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        seen: set[int] = set()
+        days: list[int] = []
+        for day in value:
+            if day < 1 or day > 6:
+                raise ValueError("days_of_week must be 1..6 (Mon..Sat)")
+            if day not in seen:
+                seen.add(day)
+                days.append(day)
+        return days
 
 
 class ClearScheduleResult(BaseModel):

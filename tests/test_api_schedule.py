@@ -406,6 +406,81 @@ def test_schedule_cell_crud_and_report() -> None:
     assert client.get("/api/schedule/grid?school_level=elementary").json()["cells"] == []
 
 
+def test_clear_schedule_by_days_of_week() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Чтение")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Иванова И.И.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1В", grade=1, school_level="elementary"
+        )
+        session.add_all([shift, subject, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        assignment = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=subject.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=4,
+        )
+        session.add(assignment)
+        session.commit()
+        class_id, assignment_id = cls.id, assignment.id
+
+    monday = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+        },
+    )
+    tuesday = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 2,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+        },
+    )
+    assert monday.status_code == 201, monday.text
+    assert tuesday.status_code == 201, tuesday.text
+
+    cleared = client.post(
+        "/api/schedule/clear",
+        json={"school_level": "elementary", "days_of_week": [1]},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["count"] == 1
+
+    remaining = client.get("/api/schedule/grid?school_level=elementary").json()["cells"]
+    assert len(remaining) == 1
+    assert remaining[0]["day_of_week"] == 2
+
+    invalid = client.post(
+        "/api/schedule/clear",
+        json={"school_level": "elementary", "days_of_week": [7]},
+    )
+    assert invalid.status_code == 422
+
+    empty = client.post(
+        "/api/schedule/clear",
+        json={"school_level": "elementary", "days_of_week": []},
+    )
+    assert empty.status_code == 422
+
+
 def test_explain_slot_without_qwen_key() -> None:
     with SessionLocal() as session:
         shift = Shift(

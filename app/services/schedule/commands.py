@@ -291,6 +291,7 @@ class ScheduleCommandsMixin:
         teacher_id: int | None = None,
         school_level: str | None = None,
         class_id: int | None = None,
+        days_of_week: list[int] | None = None,
         commit: bool = False,
     ) -> int:
         """Batch-delete ScheduleCell rows scoped to this school."""
@@ -303,6 +304,10 @@ class ScheduleCommandsMixin:
             if not class_ids:
                 return 0
             stmt = stmt.where(ScheduleCell.class_id.in_(class_ids))
+        if days_of_week is not None:
+            if not days_of_week:
+                return 0
+            stmt = stmt.where(ScheduleCell.day_of_week.in_(days_of_week))
         if class_id is not None:
             stmt = stmt.where(ScheduleCell.class_id == class_id)
         elif school_level is not None:

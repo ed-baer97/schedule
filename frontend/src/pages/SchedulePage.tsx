@@ -6,6 +6,7 @@ import { ModalPortal } from '../components/ModalPortal'
 import { ScheduleMinimap } from '../components/ScheduleMinimap'
 import { extractApiError } from '../api/client'
 import {
+  clearSchedule,
   createScheduleCell,
   deleteScheduleCell,
   explainSlot,
@@ -538,6 +539,22 @@ export function SchedulePage() {
     onError: (e) => setToast({ kind: 'danger', text: extractApiError(e) }),
   })
 
+  const clearDayM = useMutation({
+    mutationFn: (day: number) =>
+      clearSchedule({ school_level: level, days_of_week: [day] }),
+    onSuccess: async (res, day) => {
+      const name = gridQ.data?.day_names[day - 1] ?? ''
+      setToast({
+        kind: 'success',
+        text: name
+          ? `Удалено уроков за ${name.toLowerCase()}: ${res.count}`
+          : `Удалено уроков: ${res.count}`,
+      })
+      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+    },
+    onError: (e) => setToast({ kind: 'danger', text: extractApiError(e) }),
+  })
+
   const changeRoomM = useMutation({
     mutationFn: async (p: {
       cell: CellOut
@@ -822,7 +839,33 @@ export function SchedulePage() {
                           colSpan={grid.classes.length + 1}
                           className="schedule-day-row"
                         >
-                          {grid.day_names[row.day - 1]}
+                          <div className="schedule-day-row-inner">
+                            <span>{grid.day_names[row.day - 1]}</span>
+                            <button
+                              type="button"
+                              className="btn btn-outline-danger schedule-day-clear"
+                              disabled={clearDayM.isPending}
+                              title={`Удалить все уроки ${
+                                level === 'elementary' ? 'начальной' : 'основной'
+                              } школы в этот день`}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                const name = grid.day_names[row.day - 1]
+                                const levelLabel =
+                                  level === 'elementary' ? 'начальной' : 'основной'
+                                if (
+                                  !confirm(
+                                    `Удалить все уроки ${levelLabel} школы в ${name.toLowerCase()}?`,
+                                  )
+                                ) {
+                                  return
+                                }
+                                clearDayM.mutate(row.day)
+                              }}
+                            >
+                              Очистить день
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )

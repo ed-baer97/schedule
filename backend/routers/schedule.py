@@ -243,6 +243,7 @@ def clear_schedule(
         school_level=body.school_level,
         class_id=body.class_id,
         teacher_id=body.teacher_id,
+        days_of_week=body.days_of_week,
     )
     return ClearScheduleResult(count=count)
 

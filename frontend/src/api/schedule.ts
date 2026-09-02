@@ -137,6 +137,7 @@ export type ClearScheduleFilter = {
   school_level?: string
   class_id?: number
   teacher_id?: number
+  days_of_week?: number[]
 }
 
 export function fetchGrid(schoolLevel: SchoolLevel, shiftId?: number | null) {
