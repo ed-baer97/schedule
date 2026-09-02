@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 
 import { uploadSubjectHours as importSubjectHours } from '../api/import'
+import { ScheduleExcelImport } from '../components/ScheduleExcelImport'
 
 type Flash = { kind: 'success' | 'danger'; text: string }
 
@@ -144,6 +145,13 @@ export function ImportPage() {
       </div>
 
       <div className="card mt-3">
+        <div className="card-header">Вернуть сетку из Excel</div>
+        <div className="card-body">
+          <ScheduleExcelImport />
+        </div>
+      </div>
+
+      <div className="card mt-3">
         <div className="card-header fw-semibold">Как это сохраняется</div>
         <div className="card-body small text-muted">
           <ol className="mb-0">
@@ -162,6 +170,10 @@ export function ImportPage() {
             </li>
             <li>
               Кабинеты пока заводятся вручную или после появления второго шаблона
+            </li>
+            <li>
+              Сетка из Excel-отчёта не создаёт справочники — только уроки по уже
+              существующим назначениям
             </li>
           </ol>
         </div>

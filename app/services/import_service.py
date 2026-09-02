@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.config import Config
 from app.services.errors import BadRequestError, NotFoundError
 from app.services.excel_import import ExcelImporter
+from app.services.schedule_excel import ImportScheduleResultData, import_schedule_from_excel
 
 _ALLOWED_EXTENSIONS = {"xlsx", "xls"}
 _TEMPLATES_DIR = Path(__file__).resolve().parents[1] / "excel_templates"
@@ -192,6 +193,20 @@ class ImportService:
                 + (f", классов с подгруппами: {subgroups}" if subgroups else "")
             ),
         )
+
+    def import_schedule(
+        self, path: str, *, replace: bool = False
+    ) -> ImportScheduleResultData:
+        try:
+            return import_schedule_from_excel(
+                self.db, self.school_id, path, replace=replace
+            )
+        except ValueError as exc:
+            raise BadRequestError(str(exc)) from exc
+        except BadRequestError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise BadRequestError(f"Ошибка импорта расписания: {exc}") from exc
 
     @staticmethod
     def resolve_template(template_type: str) -> TemplateFileData:

@@ -148,7 +148,7 @@ schedule/
 | `/api/workload`, `/assignments` | нагрузка и назначения |
 | `/api/schedule` | сетка, ячейки, настройки; `POST …/auto` и `POST …/repair` → `202` + `job_id`; `POST …/explain` — факты валидатора + текст Qwen; `POST …/assist` — фраза → веса и проверенные сдвиги |
 | `/api/reports` | просмотр и Excel |
-| `/api/import` | Excel: `POST /subject-hours` (несколько файлов), старые шаблоны пока на месте |
+| `/api/import` | Excel: `POST /subject-hours` (нагрузка), `POST /schedule` (сетка из отчёта) |
 
 OpenAPI: http://127.0.0.1:8000/docs
 
@@ -186,14 +186,15 @@ Vite в dev проксирует `/api` на `http://127.0.0.1:8000`. В Docker 
 | `dashboard_service.py` | сводка школы |
 | `admin_service.py` | школы, админы школ, platform dashboard |
 | `job_service.py` | статус Job + `enqueue_auto` + `cancel`; `time_limit_sec` с формы, потолок `SOLVER_TIME_LIMIT_SEC` |
-| `import_service.py` | валидация файлов + оркестрация ExcelImporter |
+| `import_service.py` | валидация файлов + оркестрация ExcelImporter / импорта сетки |
+| `excel_import.py` | парсинг Excel нагрузки; запись только через сервисы |
+| `schedule_excel.py` | импорт сетки из Excel-отчёта (полное / класс / учитель) |
 | `report_service.py` | отчёты JSON и Excel |
 | `teacher_service.py` … `subject_service.py` | CRUD справочников + `ensure` для импорта (DTO наружу); `teacher_service.list_load`; `classroom_service` — `_sync_subjects` / `_sync_teachers`; `subject_service` — `selectinload(Subject.classrooms)` |
 | `schedule_mapping.py` | joinedload и DTO-проекции `ScheduleCell` |
 | `tenancy.py` | `require_owned` по `school_id` |
 | `schedule_fact_loader.py` | плоские `UnitFact` / `SlotFact` / teacher/classroom busy для валидатора и солверов |
 | `validators.py` | конфликты ячеек (грузят факты; предикаты из domain) |
-| `excel_import.py` | парсинг Excel; запись только через сервисы |
 | `schedule_explain.py` | панель «почему»: факты валидатора + остаток часов; Qwen только формулирует текст |
 | `schedule_assist.py` | фраза завуча → ползунки и локальные сдвиги; Qwen уточняет JSON-намерение; запись только через валидатор + `ScheduleService.move_cell` |
 | `qwen_client.py` | DashScope OpenAI-compatible; phrasing / JSON intent, без записи ячеек |

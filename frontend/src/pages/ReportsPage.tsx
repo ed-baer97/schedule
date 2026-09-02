@@ -9,6 +9,7 @@ import {
   exportTeacherUrl,
 } from '../api/reports'
 import { PageHeader } from '../components/PageHeader'
+import { ScheduleExcelImport } from '../components/ScheduleExcelImport'
 
 export function ReportsPage() {
   const [classId, setClassId] = useState<number | ''>('')
@@ -62,6 +63,11 @@ export function ReportsPage() {
               >
                 Основная школа (Excel)
               </a>
+              <hr className="my-2" />
+              <p className="small text-muted mb-2">
+                Если сетку очистили — загрузите тот же Excel, уроки встанут обратно.
+              </p>
+              <ScheduleExcelImport compact />
             </div>
           </div>
         </div>

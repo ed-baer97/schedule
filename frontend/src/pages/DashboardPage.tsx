@@ -4,7 +4,7 @@ import { PageHeader } from '../components/PageHeader'
 import { fetchDashboardStats } from '../api/dashboard'
 
 const QUICK_LINKS = [
-  { to: '/import', icon: 'bi-file-earmark-excel', label: 'Импорт Excel', desc: 'Нагрузка по предметам и кабинеты' },
+  { to: '/import', icon: 'bi-file-earmark-excel', label: 'Импорт Excel', desc: 'Нагрузка по предметам и сетка из отчёта' },
   { to: '/workload', icon: 'bi-table', label: 'Нагрузка', desc: 'Часы по классам' },
   { to: '/subjects', icon: 'bi-journal-text', label: 'Предметы', desc: 'Справочник и назначения' },
   { to: '/schedule', icon: 'bi-calendar3', label: 'Расписание', desc: 'Сетка и авто-составление' },

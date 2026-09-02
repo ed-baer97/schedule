@@ -47,6 +47,15 @@ class ImportSubjectHoursResult(BaseModel):
     message: str
 
 
+class ImportScheduleResult(BaseModel):
+    placed: int
+    skipped_existing: int
+    unmatched: int
+    cleared: int
+    warnings: list[str] = Field(default_factory=list)
+    message: str
+
+
 @router.post(
     "/teachers",
     response_model=ImportTeachersResult,
@@ -102,6 +111,29 @@ def import_curriculum(
     return ImportCurriculumResult(
         subjects_count=result.subjects_count,
         assignments_count=result.assignments_count,
+        message=result.message,
+    )
+
+
+@router.post("/schedule", response_model=ImportScheduleResult)
+def import_schedule(
+    file: UploadFile = File(...),
+    replace: bool = Form(False),
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> ImportScheduleResult:
+    svc = ImportService(db, school.id)
+    path = svc.save_upload(filename=file.filename, content=file.file.read())
+    try:
+        result = svc.import_schedule(path, replace=replace)
+    finally:
+        svc.cleanup(path)
+    return ImportScheduleResult(
+        placed=result.placed,
+        skipped_existing=result.skipped_existing,
+        unmatched=result.unmatched,
+        cleared=result.cleared,
+        warnings=result.warnings,
         message=result.message,
     )
 
