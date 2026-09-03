@@ -40,6 +40,7 @@ from backend.schemas.schedule import (
     SettingsUpdate,
     ShiftBrief,
     TeacherBrief,
+    TeacherDayOut,
 )
 
 router = APIRouter()
@@ -104,6 +105,24 @@ def assignments_for_class(
             ClassroomChoiceOut.model_validate(asdict(r)) for r in data.classrooms
         ],
     )
+
+
+@router.get("/teacher-day", response_model=TeacherDayOut)
+def teacher_day(
+    teacher_id: int = Query(...),
+    day_of_week: int = Query(..., ge=1, le=6),
+    class_id: int | None = Query(None),
+    lesson_number: int | None = Query(None, ge=0, le=20),
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> TeacherDayOut:
+    data = ScheduleService(db, school.id).teacher_day(
+        teacher_id,
+        day=day_of_week,
+        class_id=class_id,
+        lesson=lesson_number,
+    )
+    return TeacherDayOut.model_validate(asdict(data))
 
 
 @router.post("/cells", response_model=ScheduleCellOut, status_code=201)

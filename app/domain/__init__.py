@@ -19,6 +19,8 @@ from app.domain.days import (
     SHORT_DAY_NAMES,
     break_between_labels,
     fmt_time,
+    minutes_phrase,
+    split_time_range,
     time_range_label,
 )
 from app.domain.names import normalize_person_name
@@ -28,6 +30,7 @@ from app.domain.schedule_rules import (
     classroom_at_capacity,
     extra_singleton_days,
     groups_can_share_slot,
+    interior_gap_lessons,
     leftover_singles_allowed,
     occupancy_blocks_unit,
     overlapping_classroom_busy,
@@ -60,6 +63,8 @@ __all__ = [
     "DAY_NAMES",
     "SHORT_DAY_NAMES",
     "fmt_time",
+    "minutes_phrase",
+    "split_time_range",
     "time_range_label",
     "break_between_labels",
     "grade_from_name",
@@ -84,6 +89,7 @@ __all__ = [
     "second_hour_is_split",
     "subject_day_limit_reached",
     "teacher_class_day_limit_reached",
+    "interior_gap_lessons",
     "groups_can_share_slot",
     "units_cannot_share_class_slot",
     "occupancy_blocks_unit",

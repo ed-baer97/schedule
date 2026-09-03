@@ -71,3 +71,14 @@ def break_between_labels(
     if minutes <= 0:
         return None
     return minutes, f"{prev_parts[1]}–{next_parts[0]}"
+
+
+def minutes_phrase(minutes: int) -> str:
+    """Compact duration for UI: ``45 мин``, ``2 ч``, ``3 ч 50 мин``."""
+    total = max(0, int(minutes))
+    hours, mins = divmod(total, 60)
+    if hours and mins:
+        return f"{hours} ч {mins} мин"
+    if hours:
+        return f"{hours} ч"
+    return f"{mins} мин"

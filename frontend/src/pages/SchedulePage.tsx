@@ -4,6 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OverlayScrollArea } from '../components/OverlayScrollArea'
 import { ModalPortal } from '../components/ModalPortal'
 import { ScheduleMinimap } from '../components/ScheduleMinimap'
+import { TeacherDayGrid } from '../components/TeacherDayGrid'
 import { extractApiError } from '../api/client'
 import {
   clearSchedule,
@@ -12,6 +13,7 @@ import {
   explainSlot,
   fetchAssignmentsForClass,
   fetchGrid,
+  fetchTeacherDay,
   swapScheduleClassrooms,
   updateScheduleCell,
   type ClassroomChoice,
@@ -1354,6 +1356,19 @@ function AddLessonModal(props: {
     [filteredAssignments, assignmentId],
   )
 
+  const teacherId = selectedAssignment?.teacher_id ?? null
+  const teacherDayQ = useQuery({
+    queryKey: ['schedule', 'teacher-day', teacherId, slot.class_id, slot.day, slot.lesson],
+    queryFn: () =>
+      fetchTeacherDay({
+        teacherId: teacherId as number,
+        day: slot.day,
+        classId: slot.class_id,
+        lesson: slot.lesson,
+      }),
+    enabled: teacherId != null,
+  })
+
   const allowedClassrooms = useMemo(() => {
     const rooms = q.data?.classrooms ?? []
     const free = rooms.filter((c) =>
@@ -1484,6 +1499,24 @@ function AddLessonModal(props: {
                     ))}
                   </select>
                 </div>
+                {subjectName && assignmentId === '' && (
+                  <div className="text-muted small mb-3">
+                    Выберите учителя, чтобы увидеть его день в других сменах.
+                  </div>
+                )}
+                {(teacherDayQ.isFetching || teacherDayQ.data || teacherDayQ.isError) && (
+                  <div className="mb-3">
+                    <TeacherDayGrid
+                      data={teacherDayQ.data}
+                      loading={teacherDayQ.isLoading}
+                      error={
+                        teacherDayQ.isError
+                          ? extractApiError(teacherDayQ.error)
+                          : null
+                      }
+                    />
+                  </div>
+                )}
                 <div className="mb-3">
                   <label className="form-label fw-bold">Кабинет</label>
                   <ClassroomPicker

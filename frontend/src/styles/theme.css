@@ -1446,6 +1446,120 @@ html[data-theme='dark'] .report-lesson-index {
   color: color-mix(in srgb, var(--kivi-ink) 78%, var(--kivi-muted)) !important;
 }
 
+.teacher-day-grid {
+  border: 1px solid var(--kivi-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kivi-bg) 55%, var(--kivi-surface));
+  padding: 8px 10px 10px;
+  color: var(--kivi-ink);
+}
+
+.teacher-day-grid-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.teacher-day-grid-note {
+  font-size: 0.75rem;
+  color: color-mix(in srgb, var(--kivi-ink) 72%, var(--kivi-muted));
+  margin-bottom: 8px;
+  line-height: 1.35;
+}
+
+.modal-dialog:has(.teacher-day-grid-shifts) {
+  max-width: min(640px, calc(100vw - 24px));
+}
+
+.teacher-day-grid-shifts {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.teacher-day-shift {
+  flex: 1 1 0;
+  min-width: 148px;
+}
+
+.teacher-day-shift.is-other {
+  opacity: 0.96;
+}
+
+.teacher-day-shift.is-other .teacher-day-shift-head {
+  color: var(--kivi-primary-deep);
+}
+
+.teacher-day-shift-head {
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teacher-day-row {
+  display: grid;
+  grid-template-columns: 1.6rem minmax(0, 3.6rem) minmax(0, 1fr);
+  gap: 4px;
+  align-items: center;
+  min-height: 22px;
+  padding: 1px 4px;
+  border-radius: 5px;
+  font-size: 0.7rem;
+  line-height: 1.2;
+}
+
+.teacher-day-row.is-gap:not(.is-occupied) {
+  background: color-mix(in srgb, var(--kivi-coral) 12%, transparent);
+}
+
+.teacher-day-row.is-candidate {
+  box-shadow: inset 0 0 0 1.5px var(--kivi-primary);
+  background: color-mix(in srgb, var(--kivi-primary) 12%, transparent);
+}
+
+.teacher-day-row.is-overlap {
+  background: color-mix(in srgb, var(--kivi-coral) 22%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--kivi-coral);
+}
+
+.teacher-day-num {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.teacher-day-time {
+  color: color-mix(in srgb, var(--kivi-ink) 62%, var(--kivi-muted));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.teacher-day-body {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  color: color-mix(in srgb, var(--kivi-ink) 70%, var(--kivi-muted));
+}
+
+.teacher-day-chip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--lesson-color, var(--kivi-primary)) 28%, var(--kivi-surface));
+  color: var(--kivi-ink);
+  font-weight: 650;
+}
+
 html[data-theme='dark'] .bg-light {
   background-color: color-mix(in srgb, var(--kivi-bg) 35%, var(--kivi-surface)) !important;
   color: var(--kivi-ink);

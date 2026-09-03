@@ -95,6 +95,44 @@ class SettingsPairData:
     secondary: ScheduleSettingsData | None
 
 
+@dataclass
+class TeacherDayOccupantData:
+    class_id: int
+    class_name: str
+    subject_name: str
+    subject_color: str
+    classroom_name: str | None = None
+    group_number: int | None = None
+
+
+@dataclass
+class TeacherDayLessonData:
+    lesson: int
+    time_label: str | None
+    is_candidate: bool
+    is_gap: bool
+    overlaps_current: bool
+    occupants: list[TeacherDayOccupantData]
+
+
+@dataclass
+class TeacherDayShiftData:
+    shift_id: int | None
+    shift_name: str
+    is_current: bool
+    lessons: list[TeacherDayLessonData]
+
+
+@dataclass
+class TeacherDayData:
+    teacher_id: int
+    teacher_name: str
+    day_of_week: int
+    day_name: str
+    other_shift_gap: str | None
+    shifts: list[TeacherDayShiftData]
+
+
 def _shift_brief(s: Shift) -> ShiftBriefData:
     return ShiftBriefData(
         id=s.id,

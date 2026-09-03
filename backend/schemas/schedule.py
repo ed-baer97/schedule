@@ -114,6 +114,40 @@ class AssignmentsForClassOut(BaseModel):
     classrooms: list[ClassroomChoiceOut]
 
 
+class TeacherDayOccupantOut(BaseModel):
+    class_id: int
+    class_name: str
+    subject_name: str
+    subject_color: str
+    classroom_name: str | None = None
+    group_number: int | None = None
+
+
+class TeacherDayLessonOut(BaseModel):
+    lesson: int
+    time_label: str | None = None
+    is_candidate: bool = False
+    is_gap: bool = False
+    overlaps_current: bool = False
+    occupants: list[TeacherDayOccupantOut] = []
+
+
+class TeacherDayShiftOut(BaseModel):
+    shift_id: int | None = None
+    shift_name: str
+    is_current: bool = False
+    lessons: list[TeacherDayLessonOut]
+
+
+class TeacherDayOut(BaseModel):
+    teacher_id: int
+    teacher_name: str
+    day_of_week: int
+    day_name: str
+    other_shift_gap: str | None = None
+    shifts: list[TeacherDayShiftOut]
+
+
 class ScheduleCellCreate(BaseModel):
     class_id: int
     day_of_week: int = Field(..., ge=1, le=6)

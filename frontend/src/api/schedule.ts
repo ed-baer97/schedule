@@ -184,6 +184,54 @@ export function fetchAssignmentsForClass(
   return apiJson<AssignmentsData>(`/api/schedule/assignments-for-class/${classId}${q}`)
 }
 
+export type TeacherDayOccupant = {
+  class_id: number
+  class_name: string
+  subject_name: string
+  subject_color: string
+  classroom_name: string | null
+  group_number: number | null
+}
+
+export type TeacherDayLesson = {
+  lesson: number
+  time_label: string | null
+  is_candidate: boolean
+  is_gap: boolean
+  overlaps_current: boolean
+  occupants: TeacherDayOccupant[]
+}
+
+export type TeacherDayShift = {
+  shift_id: number | null
+  shift_name: string
+  is_current: boolean
+  lessons: TeacherDayLesson[]
+}
+
+export type TeacherDayData = {
+  teacher_id: number
+  teacher_name: string
+  day_of_week: number
+  day_name: string
+  other_shift_gap: string | null
+  shifts: TeacherDayShift[]
+}
+
+export function fetchTeacherDay(params: {
+  teacherId: number
+  day: number
+  classId?: number
+  lesson?: number
+}) {
+  const q = new URLSearchParams()
+  q.set('teacher_id', String(params.teacherId))
+  q.set('day_of_week', String(params.day))
+  if (params.classId != null) q.set('class_id', String(params.classId))
+  if (params.lesson != null) q.set('lesson_number', String(params.lesson))
+  return apiJson<TeacherDayData>(`/api/schedule/teacher-day?${q.toString()}`)
+}
+
 export function fetchAutoPageData() {
   return apiJson<AutoPageData>('/api/schedule/auto/page-data')
 }

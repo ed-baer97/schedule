@@ -1,7 +1,7 @@
 """Pure schedule conflict predicates (no Session / ORM)."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Iterable
 
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
 
@@ -60,6 +60,18 @@ def slot_facts_conflict(a: SlotFact | BusySlotFact, b: SlotFact | BusySlotFact) 
         shift_id_a=a.shift_id,
         shift_id_b=b.shift_id,
     )
+
+
+def interior_gap_lessons(occupied: Iterable[int]) -> frozenset[int]:
+    """Lesson numbers strictly between the first and last occupied slot.
+
+    Empty slots before the first or after the last lesson are not windows.
+    """
+    nums = sorted({int(n) for n in occupied})
+    if len(nums) < 2:
+        return frozenset()
+    filled = set(nums)
+    return frozenset(i for i in range(nums[0] + 1, nums[-1]) if i not in filled)
 
 
 def leftover_singles_allowed(hours: int) -> int:

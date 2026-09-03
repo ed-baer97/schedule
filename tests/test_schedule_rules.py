@@ -338,6 +338,26 @@ def test_leftover_singles_and_extra_singleton_days():
     assert extra_singleton_days(3, 5) == 2
 
 
+def test_interior_gap_lessons():
+    from app.domain.schedule_rules import interior_gap_lessons
+
+    assert interior_gap_lessons([]) == frozenset()
+    assert interior_gap_lessons([3]) == frozenset()
+    assert interior_gap_lessons([1, 3]) == frozenset({2})
+    assert interior_gap_lessons([1, 2, 4, 6]) == frozenset({3, 5})
+    assert interior_gap_lessons([0, 3]) == frozenset({1, 2})
+    assert interior_gap_lessons([5, 1, 5]) == frozenset({2, 3, 4})
+
+
+def test_minutes_phrase():
+    from app.domain.days import minutes_phrase
+
+    assert minutes_phrase(0) == "0 мин"
+    assert minutes_phrase(45) == "45 мин"
+    assert minutes_phrase(60) == "1 ч"
+    assert minutes_phrase(230) == "3 ч 50 мин"
+
+
 def test_second_hour_is_split():
     from app.domain.schedule_rules import second_hour_is_split
 

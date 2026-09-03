@@ -832,6 +832,237 @@ def test_manual_cell_cross_shift_overlapping_bells_conflict() -> None:
     assert any("занят" in e and "5А" in e and "1 смена" in e and "08:00" in e for e in errors)
 
 
+def test_teacher_day_unknown_teacher_404() -> None:
+    r = client.get("/api/schedule/teacher-day?teacher_id=999&day_of_week=2")
+    assert r.status_code == 404
+
+
+def test_teacher_day_shows_other_shift_and_intra_shift_gap() -> None:
+    with SessionLocal() as session:
+        s1 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=4,
+            working_days=5,
+            max_lessons_per_day=4,
+        )
+        s2 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="2 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=4,
+            working_days=5,
+            max_lessons_per_day=4,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Назырбаев А.А.")
+        c1 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5А", grade=5, school_level="elementary"
+        )
+        c2 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5Б", grade=5, school_level="elementary"
+        )
+        c3 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="5В", grade=5, school_level="elementary"
+        )
+        session.add_all([s1, s2, math, teacher, c1, c2, c3])
+        session.flush()
+        c1.shift_id = s1.id
+        c2.shift_id = s2.id
+        c3.shift_id = s1.id
+        a1 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c1.id,
+            hours_per_week=4,
+        )
+        a2 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c2.id,
+            hours_per_week=4,
+        )
+        a3 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=c3.id,
+            hours_per_week=4,
+        )
+        session.add_all([a1, a2, a3])
+        session.commit()
+        ids = {
+            "c1": c1.id,
+            "c2": c2.id,
+            "c3": c3.id,
+            "a1": a1.id,
+            "a2": a2.id,
+            "a3": a3.id,
+            "s1": s1.id,
+            "s2": s2.id,
+            "teacher": teacher.id,
+        }
+
+    bells = {
+        "1": {"time_start": "08:00", "time_end": "08:45"},
+        "2": {"time_start": "08:55", "time_end": "09:40"},
+        "3": {"time_start": "09:50", "time_end": "10:35"},
+        "4": {"time_start": "10:45", "time_end": "11:30"},
+    }
+    assert client.put(
+        f"/api/shifts/{ids['s1']}/lesson-times",
+        json={"common": bells, "class_day": {}},
+    ).status_code == 200
+    assert client.put(
+        f"/api/shifts/{ids['s2']}/lesson-times",
+        json={
+            "common": {
+                "1": {"time_start": "14:00", "time_end": "14:45"},
+                "2": {"time_start": "14:55", "time_end": "15:40"},
+                "3": {"time_start": "15:50", "time_end": "16:35"},
+                "4": {"time_start": "16:45", "time_end": "17:30"},
+            },
+            "class_day": {},
+        },
+    ).status_code == 200
+
+    for class_id, assignment_id, lesson in (
+        (ids["c1"], ids["a1"], 1),
+        (ids["c3"], ids["a3"], 3),
+    ):
+        placed = client.post(
+            "/api/schedule/cells",
+            json={
+                "class_id": class_id,
+                "day_of_week": 2,
+                "lesson_number": lesson,
+                "assignment_id": assignment_id,
+            },
+        )
+        assert placed.status_code == 201, placed.text
+
+    r = client.get(
+        "/api/schedule/teacher-day",
+        params={
+            "teacher_id": ids["teacher"],
+            "day_of_week": 2,
+            "class_id": ids["c2"],
+            "lesson_number": 1,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["teacher_name"] == "Назырбаев А.А."
+    assert body["day_name"] == "Вторник"
+    assert body["other_shift_gap"]
+    assert "5В" in body["other_shift_gap"]
+    assert "1 смена" in body["other_shift_gap"]
+    assert "14:00" in body["other_shift_gap"]
+    names = [s["shift_name"] for s in body["shifts"]]
+    assert names == ["1 смена", "2 смена"]
+    first = body["shifts"][0]
+    second = body["shifts"][1]
+    assert first["is_current"] is False
+    assert second["is_current"] is True
+    by_lesson = {row["lesson"]: row for row in first["lessons"]}
+    assert by_lesson[1]["occupants"][0]["class_name"] == "5А"
+    assert by_lesson[2]["is_gap"] is True
+    assert by_lesson[2]["occupants"] == []
+    assert by_lesson[3]["occupants"][0]["class_name"] == "5В"
+    cand = next(row for row in second["lessons"] if row["lesson"] == 1)
+    assert cand["is_candidate"] is True
+    assert cand["time_label"] == "14:00–14:45"
+    assert cand["overlaps_current"] is False
+
+
+def test_teacher_day_free_in_other_shifts() -> None:
+    ids = _seed_two_classes_one_teacher()
+    placed = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 2,
+            "lesson_number": 2,
+            "assignment_id": ids["a1"],
+        },
+    )
+    assert placed.status_code == 201, placed.text
+    teacher_id = placed.json()["teacher_id"]
+    r = client.get(
+        "/api/schedule/teacher-day",
+        params={
+            "teacher_id": teacher_id,
+            "day_of_week": 2,
+            "class_id": ids["c1"],
+            "lesson_number": 3,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["other_shift_gap"] == "В других сменах в этот день свободен"
+    assert len(body["shifts"]) == 1
+    assert body["shifts"][0]["is_current"] is True
+    cand = next(row for row in body["shifts"][0]["lessons"] if row["lesson"] == 3)
+    assert cand["is_candidate"] is True
+
+
+def test_teacher_day_lists_empty_other_shift() -> None:
+    ids = _seed_two_classes_one_teacher()
+    with SessionLocal() as session:
+        other = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="2 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=4,
+            working_days=5,
+            max_lessons_per_day=4,
+        )
+        session.add(other)
+        session.commit()
+        other_id = other.id
+    assert client.put(
+        f"/api/shifts/{other_id}/lesson-times",
+        json={
+            "common": {"1": {"time_start": "13:30", "time_end": "14:15"}},
+            "class_day": {},
+        },
+    ).status_code == 200
+    teacher_id = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": ids["c1"],
+            "day_of_week": 2,
+            "lesson_number": 2,
+            "assignment_id": ids["a1"],
+        },
+    ).json()["teacher_id"]
+    r = client.get(
+        "/api/schedule/teacher-day",
+        params={
+            "teacher_id": teacher_id,
+            "day_of_week": 2,
+            "class_id": ids["c1"],
+            "lesson_number": 3,
+        },
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    names = [s["shift_name"] for s in body["shifts"]]
+    assert names == ["1 смена", "2 смена"]
+    first, second = body["shifts"]
+    assert first["is_current"] is True
+    assert second["is_current"] is False
+    assert all(row["occupants"] == [] for row in second["lessons"])
+    assert any(row["time_label"] == "13:30–14:15" for row in second["lessons"])
+    assert body["other_shift_gap"] == "В других сменах в этот день свободен"
+
+
 def test_explain_existing_cell_excludes_self() -> None:
     ids = _seed_two_classes_one_teacher()
     placed = client.post(
