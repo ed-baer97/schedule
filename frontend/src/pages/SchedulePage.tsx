@@ -5,6 +5,7 @@ import { OverlayScrollArea } from '../components/OverlayScrollArea'
 import { ModalPortal } from '../components/ModalPortal'
 import { ScheduleMinimap } from '../components/ScheduleMinimap'
 import { TeacherDayGrid } from '../components/TeacherDayGrid'
+import { TeacherRemainingTip } from '../components/TeacherRemainingTip'
 import { extractApiError } from '../api/client'
 import {
   clearSchedule,
@@ -18,6 +19,7 @@ import {
   updateScheduleCell,
   type ClassroomChoice,
   type ScheduleCell as CellOut,
+  type TeacherRemaining,
 } from '../api/schedule'
 import type { SchoolLevel } from '../domain/schoolLevel'
 import { assignmentCanJoinSlot, slotAcceptsAnotherLesson } from '../domain/scheduleRules'
@@ -475,6 +477,15 @@ export function SchedulePage() {
     return buildTeacherHoverCss(keys)
   }, [gridQ.data])
 
+  const remainingByKey = useMemo(() => {
+    const m = new Map<string, TeacherRemaining>()
+    for (const row of gridQ.data?.teacher_remaining ?? []) {
+      const key = teacherHoverKey(row)
+      if (key) m.set(key, row)
+    }
+    return m
+  }, [gridQ.data])
+
   const occupiedForModal = useMemo(() => {
     if (!slot || !gridQ.data) return [] as CellOut[]
     return gridQ.data.cells.filter(
@@ -813,6 +824,7 @@ export function SchedulePage() {
           }}
         >
           {teacherHoverCss ? <style>{teacherHoverCss}</style> : null}
+          <TeacherRemainingTip remainingByKey={remainingByKey} />
           <OverlayScrollArea
             key={`${level}-${shiftId ?? 'auto'}`}
             persistKey={`schedule-grid:${level}:${shiftId ?? 'auto'}`}

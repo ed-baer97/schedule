@@ -50,7 +50,96 @@ def test_schedule_grid_empty() -> None:
     assert body["school_level"] == "elementary"
     assert body["classes"] == []
     assert body["cells"] == []
+    assert body["teacher_remaining"] == []
     assert body["day_names"][0] == "Понедельник"
+
+
+def test_grid_teacher_remaining_by_class() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        rus = Subject(school_id=TEST_SCHOOL_ID, name="Русский")
+        sidirov = Teacher(school_id=TEST_SCHOOL_ID, full_name="Сидоров С.С.")
+        petrov = Teacher(school_id=TEST_SCHOOL_ID, full_name="Петров П.П.")
+        cls_a = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1А", grade=1, school_level="elementary"
+        )
+        cls_b = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1Б", grade=1, school_level="elementary"
+        )
+        session.add_all([shift, math, rus, sidirov, petrov, cls_a, cls_b])
+        session.flush()
+        cls_a.shift_id = shift.id
+        cls_b.shift_id = shift.id
+        a_math_a = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=sidirov.id,
+            class_id=cls_a.id,
+            hours_per_week=4,
+        )
+        a_math_b = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=sidirov.id,
+            class_id=cls_b.id,
+            hours_per_week=2,
+        )
+        a_rus = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=rus.id,
+            teacher_id=petrov.id,
+            class_id=cls_a.id,
+            hours_per_week=1,
+        )
+        session.add_all([a_math_a, a_math_b, a_rus])
+        session.commit()
+        class_a_id, class_b_id = cls_a.id, cls_b.id
+        sidirov_id, petrov_id = sidirov.id, petrov.id
+        math_a_id, rus_id = a_math_a.id, a_rus.id
+
+    assert client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_a_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": math_a_id,
+        },
+    ).status_code == 201
+    assert client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_a_id,
+            "day_of_week": 1,
+            "lesson_number": 2,
+            "assignment_id": rus_id,
+        },
+    ).status_code == 201
+
+    grid = client.get("/api/schedule/grid?school_level=elementary")
+    assert grid.status_code == 200, grid.text
+    remaining = {row["teacher_id"]: row for row in grid.json()["teacher_remaining"]}
+
+    sidirov_row = remaining[sidirov_id]
+    assert sidirov_row["remaining_hours"] == 5
+    by_class = {item["class_id"]: item for item in sidirov_row["classes"]}
+    assert by_class[class_a_id]["remaining_hours"] == 3
+    assert by_class[class_a_id]["class_name"] == "1А"
+    assert by_class[class_b_id]["remaining_hours"] == 2
+    assert by_class[class_b_id]["class_name"] == "1Б"
+
+    petrov_row = remaining[petrov_id]
+    assert petrov_row["remaining_hours"] == 0
+    assert petrov_row["classes"] == []
 
 
 def test_schedule_settings_roundtrip() -> None:

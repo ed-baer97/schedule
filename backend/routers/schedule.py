@@ -41,6 +41,7 @@ from backend.schemas.schedule import (
     ShiftBrief,
     TeacherBrief,
     TeacherDayOut,
+    TeacherRemainingOut,
 )
 
 router = APIRouter()
@@ -80,6 +81,10 @@ def get_grid(
             if data.settings
             else None
         ),
+        teacher_remaining=[
+            TeacherRemainingOut.model_validate(asdict(row))
+            for row in data.teacher_remaining
+        ],
     )
 
 

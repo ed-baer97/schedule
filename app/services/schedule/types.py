@@ -54,6 +54,29 @@ class Placement:
 
 
 @dataclass
+class TeacherRemainingSubjectData:
+    subject_name: str
+    remaining_hours: int
+    group_number: int | None = None
+
+
+@dataclass
+class TeacherRemainingClassData:
+    class_id: int
+    class_name: str
+    remaining_hours: int
+    subjects: list[TeacherRemainingSubjectData]
+
+
+@dataclass
+class TeacherRemainingData:
+    teacher_id: int
+    teacher_name: str
+    remaining_hours: int
+    classes: list[TeacherRemainingClassData]
+
+
+@dataclass
 class GridData:
     school_level: str
     current_shift_id: int | None
@@ -69,6 +92,7 @@ class GridData:
     cells: list[dict]
     classroom_warnings: list[ClassroomWarningData]
     settings: ScheduleSettingsData | None
+    teacher_remaining: list[TeacherRemainingData]
 
 
 @dataclass

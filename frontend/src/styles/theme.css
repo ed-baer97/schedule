@@ -1385,6 +1385,63 @@ html[data-theme='dark'] .report-lesson-index {
   position: relative;
 }
 
+.teacher-remaining-tip {
+  position: absolute;
+  left: 12px;
+  bottom: 22px;
+  z-index: 18;
+  display: none;
+  pointer-events: none;
+  max-width: min(22rem, calc(100% - 17rem));
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kivi-surface) 92%, transparent);
+  border: 1px solid var(--kivi-line);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--kivi-ink) 18%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: var(--kivi-ink);
+}
+
+.teacher-remaining-tip.is-visible {
+  display: block;
+}
+
+.teacher-remaining-tip.is-pending {
+  border-color: color-mix(in srgb, var(--kivi-amber, #c4842e) 55%, var(--kivi-line));
+}
+
+.teacher-remaining-tip-name {
+  font-weight: 700;
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
+.teacher-remaining-tip-total {
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  color: var(--kivi-primary-deep, var(--kivi-primary));
+}
+
+.teacher-remaining-tip.is-pending .teacher-remaining-tip-total {
+  color: var(--kivi-amber, #c4842e);
+}
+
+.teacher-remaining-tip-classes {
+  margin: 0.35rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--kivi-ink) 78%, transparent);
+  max-height: 40vh;
+  overflow: hidden;
+}
+
 /* ——— Dashboard quick links ——— */
 .quick-link-card {
   transition: transform 0.15s, box-shadow 0.15s, border-color 0.15s;
@@ -1839,6 +1896,11 @@ html[data-theme='dark'] .quick-link-card:hover {
 
 html[data-theme='dark'] .schedule-grid-card.card {
   background: var(--kivi-surface);
+}
+
+html[data-theme='dark'] .teacher-remaining-tip {
+  background: color-mix(in srgb, var(--kivi-surface) 88%, #0d1614);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
 }
 
 /* Subject palette is forest/dust hexes meant for light paper. On dark

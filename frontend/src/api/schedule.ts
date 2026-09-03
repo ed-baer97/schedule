@@ -17,6 +17,26 @@ export type ScheduleSettings = {
 
 export type ClassroomWarning = { type: string; message: string }
 
+export type TeacherRemainingSubject = {
+  subject_name: string
+  remaining_hours: number
+  group_number: number | null
+}
+
+export type TeacherRemainingClass = {
+  class_id: number
+  class_name: string
+  remaining_hours: number
+  subjects: TeacherRemainingSubject[]
+}
+
+export type TeacherRemaining = {
+  teacher_id: number
+  teacher_name: string
+  remaining_hours: number
+  classes: TeacherRemainingClass[]
+}
+
 export type ScheduleCell = {
   id: number
   class_id: number
@@ -63,6 +83,7 @@ export type GridData = {
   cells: ScheduleCell[]
   classroom_warnings: ClassroomWarning[]
   settings: ScheduleSettings | null
+  teacher_remaining?: TeacherRemaining[]
 }
 
 export type ClassroomChoice = {

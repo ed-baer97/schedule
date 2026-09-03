@@ -65,6 +65,26 @@ class ClassroomWarningOut(BaseModel):
     message: str
 
 
+class TeacherRemainingSubjectOut(BaseModel):
+    subject_name: str
+    remaining_hours: int
+    group_number: int | None = None
+
+
+class TeacherRemainingClassOut(BaseModel):
+    class_id: int
+    class_name: str
+    remaining_hours: int
+    subjects: list[TeacherRemainingSubjectOut] = []
+
+
+class TeacherRemainingOut(BaseModel):
+    teacher_id: int
+    teacher_name: str
+    remaining_hours: int
+    classes: list[TeacherRemainingClassOut] = []
+
+
 class ScheduleGridOut(BaseModel):
     school_level: str
     current_shift_id: int | None = None
@@ -80,6 +100,7 @@ class ScheduleGridOut(BaseModel):
     cells: list[ScheduleCellOut]
     classroom_warnings: list[ClassroomWarningOut]
     settings: ScheduleSettingsOut | None = None
+    teacher_remaining: list[TeacherRemainingOut] = []
 
 
 class AssignmentChoiceOut(BaseModel):

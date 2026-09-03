@@ -57,6 +57,9 @@ from app.services.schedule.types import (
     TeacherDayLessonData,
     TeacherDayOccupantData,
     TeacherDayShiftData,
+    TeacherRemainingClassData,
+    TeacherRemainingData,
+    TeacherRemainingSubjectData,
     _shift_brief,
     _warnings,
 )
@@ -189,7 +192,96 @@ class ScheduleQueriesMixin:
             cells=[cell_to_schedule_dict(c) for c in cells],
             classroom_warnings=_warnings(raw_warnings),
             settings=settings_data(settings) if settings else None,
+            teacher_remaining=self._teacher_remaining(school_level),
         )
+
+    def _teacher_remaining(self, school_level: str) -> list[TeacherRemainingData]:
+        """Unplaced hours per teacher at this school level, grouped by class."""
+        assignments = list(
+            self.db.execute(
+                select(TeachingAssignment)
+                .options(
+                    joinedload(TeachingAssignment.subject),
+                    joinedload(TeachingAssignment.teacher),
+                    joinedload(TeachingAssignment.school_class),
+                )
+                .join(SchoolClass, TeachingAssignment.class_id == SchoolClass.id)
+                .where(
+                    TeachingAssignment.school_id == self.school_id,
+                    SchoolClass.school_level == school_level,
+                    TeachingAssignment.teacher_id.isnot(None),
+                )
+            )
+            .scalars()
+            .unique()
+            .all()
+        )
+        counts = placed_counts(self.db, [a.id for a in assignments])
+        teachers: dict[int, dict] = {}
+        for assignment in assignments:
+            teacher = assignment.teacher
+            if teacher is None:
+                continue
+            school_class = assignment.school_class
+            remaining = remaining_for(assignment, placed=counts.get(assignment.id, 0))
+            bucket = teachers.setdefault(
+                teacher.id,
+                {
+                    "teacher_id": teacher.id,
+                    "teacher_name": teacher.display_name,
+                    "remaining_hours": 0,
+                    "classes": {},
+                },
+            )
+            bucket["remaining_hours"] += remaining
+            if remaining <= 0 or school_class is None:
+                continue
+            class_bucket = bucket["classes"].setdefault(
+                school_class.id,
+                {
+                    "class_id": school_class.id,
+                    "class_name": school_class.name,
+                    "grade": school_class.grade,
+                    "remaining_hours": 0,
+                    "subjects": [],
+                },
+            )
+            class_bucket["remaining_hours"] += remaining
+            subj = assignment.subject
+            class_bucket["subjects"].append(
+                TeacherRemainingSubjectData(
+                    subject_name=subj.display_name if subj else "?",
+                    remaining_hours=remaining,
+                    group_number=assignment.group_number,
+                )
+            )
+        rows: list[TeacherRemainingData] = []
+        for bucket in teachers.values():
+            classes = [
+                TeacherRemainingClassData(
+                    class_id=item["class_id"],
+                    class_name=item["class_name"],
+                    remaining_hours=item["remaining_hours"],
+                    subjects=sorted(
+                        item["subjects"],
+                        key=lambda s: (s.subject_name, s.group_number or 0),
+                    ),
+                )
+                for item in sorted(
+                    bucket["classes"].values(),
+                    key=lambda c: (c["grade"], c["class_name"], c["class_id"]),
+                )
+            ]
+            rows.append(
+                TeacherRemainingData(
+                    teacher_id=bucket["teacher_id"],
+                    teacher_name=bucket["teacher_name"],
+                    remaining_hours=bucket["remaining_hours"],
+                    classes=classes,
+                )
+            )
+        rows.sort(key=lambda r: (r.teacher_name, r.teacher_id))
+        return rows
 
     def assignments_for_class(
         self,
