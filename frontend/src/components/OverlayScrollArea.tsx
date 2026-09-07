@@ -70,7 +70,6 @@ export function OverlayScrollArea({
   const ignoreZeroUntil = useRef(0)
   const measureRaf = useRef(0)
   const [m, setM] = useState<Metrics>({ sl: 0, st: 0, sw: 0, sh: 0, cw: 0, ch: 0 })
-  onReadyRef.current = onViewportReady
 
   const applySaved = useCallback(() => {
     const el = viewRef.current
@@ -134,8 +133,9 @@ export function OverlayScrollArea({
   }, [measureNow])
 
   useLayoutEffect(() => {
+    onReadyRef.current = onViewportReady
     applySaved()
-  }, [applySaved, persistKey])
+  }, [applySaved, persistKey, onViewportReady])
 
   useEffect(() => {
     const el = viewRef.current

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { OverlayScrollArea } from '../components/OverlayScrollArea'
 import { ModalPortal } from '../components/ModalPortal'
@@ -18,6 +18,7 @@ import {
   swapScheduleClassrooms,
   updateScheduleCell,
   type ClassroomChoice,
+  type GridData,
   type ScheduleCell as CellOut,
   type TeacherRemaining,
 } from '../api/schedule'
@@ -28,9 +29,14 @@ import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
 type ScheduleDensity = 'compact' | 'comfortable'
+type GridRow =
+  | { kind: 'day'; day: number }
+  | { kind: 'class_hour'; day: number }
+  | { kind: 'lesson'; day: number; lesson: number }
 
 const SHOW_OCCUPIED_VALUE = '__show_occupied__'
 const SWAP_VALUE_PREFIX = 'swap:'
+const EMPTY_CELLS: CellOut[] = []
 
 const DENSITY_KEY = 'schedule:density'
 
@@ -171,6 +177,294 @@ function hoverTeacherFromEvent(target: EventTarget | null) {
   const el = target.closest('[data-teacher-key]') as HTMLElement | null
   return el?.dataset.teacherKey || null
 }
+
+function gridQueryKey(level: SchoolLevel, shiftId: number | null) {
+  return ['schedule', 'grid', level, shiftId] as const
+}
+
+function upsertCell(cells: CellOut[], cell: CellOut) {
+  const i = cells.findIndex((c) => c.id === cell.id)
+  if (i === -1) return [...cells, cell]
+  if (cells[i] === cell) return cells
+  const next = cells.slice()
+  next[i] = cell
+  return next
+}
+
+function removeCellById(cells: CellOut[], cellId: number) {
+  return cells.some((c) => c.id === cellId) ? cells.filter((c) => c.id !== cellId) : cells
+}
+
+function patchRemainingSubjects(
+  subjects: TeacherRemaining['classes'][number]['subjects'],
+  cell: CellOut,
+  delta: number,
+) {
+  const idx = subjects.findIndex(
+    (s) => s.subject_name === cell.subject_name && s.group_number === cell.group_number,
+  )
+  if (idx === -1) {
+    if (delta <= 0) return subjects
+    return [
+      ...subjects,
+      {
+        subject_name: cell.subject_name,
+        remaining_hours: delta,
+        group_number: cell.group_number,
+      },
+    ]
+  }
+  const hours = subjects[idx].remaining_hours + delta
+  if (hours <= 0) return subjects.filter((_, i) => i !== idx)
+  const next = subjects.slice()
+  next[idx] = { ...subjects[idx], remaining_hours: hours }
+  return next
+}
+
+function patchTeacherRemaining(
+  rows: TeacherRemaining[] | undefined,
+  cell: CellOut,
+  delta: number,
+  className: string,
+): TeacherRemaining[] | undefined {
+  if (!rows || cell.teacher_id == null || delta === 0) return rows
+  let found = false
+  const next = rows.map((row) => {
+    if (row.teacher_id !== cell.teacher_id) return row
+    found = true
+    const remaining_hours = Math.max(0, row.remaining_hours + delta)
+    const classIdx = row.classes.findIndex((c) => c.class_id === cell.class_id)
+    let classes = row.classes
+    if (classIdx === -1) {
+      if (delta > 0) {
+        classes = [
+          ...row.classes,
+          {
+            class_id: cell.class_id,
+            class_name: className,
+            remaining_hours: delta,
+            subjects: patchRemainingSubjects([], cell, delta),
+          },
+        ]
+      }
+    } else {
+      const cur = row.classes[classIdx]
+      const classHours = cur.remaining_hours + delta
+      if (classHours <= 0) {
+        classes = row.classes.filter((_, i) => i !== classIdx)
+      } else {
+        classes = row.classes.slice()
+        classes[classIdx] = {
+          ...cur,
+          remaining_hours: classHours,
+          subjects: patchRemainingSubjects(cur.subjects, cell, delta),
+        }
+      }
+    }
+    return { ...row, remaining_hours, classes }
+  })
+  if (found) return next
+  if (delta <= 0) return rows
+  return [
+    ...rows,
+    {
+      teacher_id: cell.teacher_id,
+      teacher_name: cell.teacher_name ?? '',
+      remaining_hours: Math.max(0, delta),
+      classes: [
+        {
+          class_id: cell.class_id,
+          class_name: className,
+          remaining_hours: delta,
+          subjects: patchRemainingSubjects([], cell, delta),
+        },
+      ],
+    },
+  ]
+}
+
+function cellsVisualEq(a: CellOut[], b: CellOut[]) {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]
+    const y = b[i]
+    if (x === y) continue
+    if (
+      x.id !== y.id ||
+      x.subject_name !== y.subject_name ||
+      x.subject_color !== y.subject_color ||
+      x.teacher_id !== y.teacher_id ||
+      x.teacher_name !== y.teacher_name ||
+      x.classroom_name !== y.classroom_name ||
+      x.group_number !== y.group_number
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+type SlotCellProps = {
+  classId: number
+  className: string
+  day: number
+  lesson: number
+  cells: CellOut[]
+  density: ScheduleDensity
+  draggedCellId: { current: number | null }
+  onOpenAdd: (classId: number, className: string, day: number, lesson: number) => void
+  onOpenEdit: (cell: CellOut) => void
+  onOpenWhy: (cell: CellOut) => void
+  onDelete: (cell: CellOut) => void
+  onDrop: (
+    e: ReactDragEvent,
+    target: { class_id: number; day: number; lesson: number },
+  ) => void
+}
+
+const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
+  const {
+    classId,
+    className,
+    day,
+    lesson,
+    cells,
+    density,
+    draggedCellId,
+    onOpenAdd,
+    onOpenEdit,
+    onOpenWhy,
+    onDelete,
+    onDrop,
+  } = props
+  const canAdd = slotAcceptsAnotherLesson(cells)
+  return (
+    <td
+      id={slotAnchor(classId, day, lesson)}
+      className="schedule-slot-cell align-top"
+      style={{ cursor: canAdd ? 'pointer' : 'default' }}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => onDrop(e, { class_id: classId, day, lesson })}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest('button, .lesson-card')) return
+        if (!canAdd) return
+        onOpenAdd(classId, className, day, lesson)
+      }}
+    >
+      {cells.length === 0 ? (
+        <div className="schedule-slot-empty" aria-hidden>
+          +
+        </div>
+      ) : (
+        <>
+          {cells.map((cell, i) => (
+            <div
+              key={cell.id}
+              draggable
+              data-teacher-key={teacherHoverKey(cell) || undefined}
+              title={`${lessonCardTitle(cell)} · нажмите, чтобы сменить кабинет`}
+              onDragStart={(e) => {
+                applyTeacherHover(e.currentTarget.closest('.schedule-grid-card'), null)
+                draggedCellId.current = cell.id
+                e.dataTransfer.setData('text/cell-id', String(cell.id))
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              className="lesson-card position-relative"
+              style={{
+                ['--lesson-color' as string]: cell.subject_color,
+              }}
+              onClick={(ev) => {
+                ev.stopPropagation()
+                if (draggedCellId.current === cell.id) {
+                  draggedCellId.current = null
+                  return
+                }
+                onOpenEdit(cell)
+              }}
+            >
+              {i > 0 && density === 'comfortable' && <hr className="my-1" />}
+              <div className="lesson-subject">
+                {cell.subject_name}
+                {cell.group_number != null && (
+                  <span className="badge schedule-group-badge">гр.{cell.group_number}</span>
+                )}
+              </div>
+              <div className="lesson-card-meta">
+                <span className="teacher-name">
+                  {density === 'compact'
+                    ? shortTeacherName(cell.teacher_name)
+                    : (cell.teacher_name ?? '?')}
+                </span>
+                {cell.classroom_name ? (
+                  <>
+                    <span className="lesson-meta-sep" aria-hidden>
+                      ·
+                    </span>
+                    <span className="lesson-room">
+                      {density === 'compact' ? cell.classroom_name : `каб. ${cell.classroom_name}`}
+                    </span>
+                  </>
+                ) : null}
+              </div>
+              <div className="lesson-card-actions">
+                <button
+                  type="button"
+                  className="lesson-card-action"
+                  title="Почему этот слот"
+                  onPointerDown={suppressCardDrag}
+                  onClick={(ev) => {
+                    ev.stopPropagation()
+                    onOpenWhy(cell)
+                  }}
+                >
+                  ?
+                </button>
+                <button
+                  type="button"
+                  className="lesson-card-action is-danger"
+                  title="Удалить"
+                  onPointerDown={suppressCardDrag}
+                  onClick={(ev) => {
+                    ev.stopPropagation()
+                    onDelete(cell)
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          ))}
+          {canAdd && (
+            <button
+              type="button"
+              className="slot-add-subgroup"
+              title="Добавить вторую подгруппу"
+              onClick={(ev) => {
+                ev.stopPropagation()
+                onOpenAdd(classId, className, day, lesson)
+              }}
+            >
+              +
+            </button>
+          )}
+        </>
+      )}
+    </td>
+  )
+}, (prev, next) => (
+  prev.classId === next.classId &&
+  prev.className === next.className &&
+  prev.day === next.day &&
+  prev.lesson === next.lesson &&
+  prev.density === next.density &&
+  prev.onOpenAdd === next.onOpenAdd &&
+  prev.onOpenEdit === next.onOpenEdit &&
+  prev.onOpenWhy === next.onOpenWhy &&
+  prev.onDelete === next.onDelete &&
+  prev.onDrop === next.onDrop &&
+  cellsVisualEq(prev.cells, next.cells)
+))
 
 function replaceHash(id: string) {
   const hash = id ? `#${id}` : ''
@@ -466,11 +760,17 @@ export function SchedulePage() {
     queryFn: () => fetchGrid(level, shiftId),
   })
 
-  const teacherHoverCss = useMemo(() => {
-    const cells = gridQ.data?.cells ?? []
-    const keys = [...new Set(cells.map(teacherHoverKey).filter(Boolean))]
-    return buildTeacherHoverCss(keys)
-  }, [gridQ.data])
+  const teacherHoverKeySig = useMemo(
+    () =>
+      [...new Set((gridQ.data?.cells ?? []).map(teacherHoverKey).filter(Boolean))]
+        .sort()
+        .join('\n'),
+    [gridQ.data?.cells],
+  )
+  const teacherHoverCss = useMemo(
+    () => (teacherHoverKeySig ? buildTeacherHoverCss(teacherHoverKeySig.split('\n')) : ''),
+    [teacherHoverKeySig],
+  )
 
   const remainingByKey = useMemo(() => {
     const m = new Map<string, TeacherRemaining>()
@@ -479,7 +779,7 @@ export function SchedulePage() {
       if (key) m.set(key, row)
     }
     return m
-  }, [gridQ.data])
+  }, [gridQ.data?.teacher_remaining])
 
   const occupiedForModal = useMemo(() => {
     if (!slot || !gridQ.data) return [] as CellOut[]
@@ -495,7 +795,16 @@ export function SchedulePage() {
     const m: Record<number, string> = {}
     for (const c of gridQ.data?.classes ?? []) m[c.id] = c.name
     return m
-  }, [gridQ.data])
+  }, [gridQ.data?.classes])
+
+  function patchGrid(updater: (grid: GridData) => GridData) {
+    qc.setQueryData<GridData>(gridQueryKey(level, shiftId), (old) => (old ? updater(old) : old))
+  }
+
+  function afterCellWrite() {
+    void qc.invalidateQueries({ queryKey: ['schedule', 'assignments-for-class'] })
+    void qc.invalidateQueries({ queryKey: ['schedule', 'teacher-day'] })
+  }
 
   const addM = useMutation({
     mutationFn: async (p: {
@@ -505,11 +814,21 @@ export function SchedulePage() {
       assignment_id: number
       classroom_id: number | null
     }) => createScheduleCell(p),
-    onSuccess: async (_cell, p) => {
+    onSuccess: (cell, p) => {
       setSlot(null)
       setToast({ kind: 'success', text: 'Урок добавлен' })
       replaceHash(slotAnchor(p.class_id, p.day_of_week, p.lesson_number))
-      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+      patchGrid((grid) => ({
+        ...grid,
+        cells: upsertCell(grid.cells, cell),
+        teacher_remaining: patchTeacherRemaining(
+          grid.teacher_remaining,
+          cell,
+          -1,
+          grid.classes.find((c) => c.id === cell.class_id)?.name ?? '',
+        ),
+      }))
+      afterCellWrite()
       stayAt(p.class_id, p.day_of_week, p.lesson_number)
     },
   })
@@ -526,10 +845,11 @@ export function SchedulePage() {
         lesson_number: p.lesson_number,
         class_id: p.class_id,
       }),
-    onSuccess: async (_cell, p) => {
+    onSuccess: (cell, p) => {
       setToast({ kind: 'success', text: 'Урок перемещён' })
       replaceHash(slotAnchor(p.class_id, p.day_of_week, p.lesson_number))
-      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+      patchGrid((grid) => ({ ...grid, cells: upsertCell(grid.cells, cell) }))
+      afterCellWrite()
       stayAt(p.class_id, p.day_of_week, p.lesson_number)
     },
     onError: (e) => setToast({ kind: 'danger', text: extractApiError(e) }),
@@ -538,10 +858,25 @@ export function SchedulePage() {
   const delM = useMutation({
     mutationFn: (p: { cell_id: number; class_id: number; day: number; lesson: number }) =>
       deleteScheduleCell(p.cell_id),
-    onSuccess: async (_ok, p) => {
+    onSuccess: (_ok, p) => {
       setToast({ kind: 'success', text: 'Урок удалён' })
       replaceHash(slotAnchor(p.class_id, p.day, p.lesson))
-      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+      patchGrid((grid) => {
+        const removed = grid.cells.find((c) => c.id === p.cell_id)
+        const cells = removeCellById(grid.cells, p.cell_id)
+        if (!removed) return { ...grid, cells }
+        return {
+          ...grid,
+          cells,
+          teacher_remaining: patchTeacherRemaining(
+            grid.teacher_remaining,
+            removed,
+            1,
+            grid.classes.find((c) => c.id === removed.class_id)?.name ?? '',
+          ),
+        }
+      })
+      afterCellWrite()
       stayAt(p.class_id, p.day, p.lesson)
     },
     onError: (e) => setToast({ kind: 'danger', text: extractApiError(e) }),
@@ -575,11 +910,12 @@ export function SchedulePage() {
         classroom_id: p.classroom_id,
         set_classroom: true,
       }),
-    onSuccess: async (_cell, p) => {
+    onSuccess: (cell, p) => {
       setEditCell(null)
       setToast({ kind: 'success', text: 'Кабинет изменён' })
       replaceHash(slotAnchor(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number))
-      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+      patchGrid((grid) => ({ ...grid, cells: upsertCell(grid.cells, cell) }))
+      afterCellWrite()
       stayAt(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number)
     },
   })
@@ -587,14 +923,102 @@ export function SchedulePage() {
   const swapRoomM = useMutation({
     mutationFn: async (p: { cell: CellOut; other: CellOut }) =>
       swapScheduleClassrooms(p.cell.id, p.other.id),
-    onSuccess: async (_ok, p) => {
+    onSuccess: (res, p) => {
       setEditCell(null)
       setToast({ kind: 'success', text: 'Учителя поменялись кабинетами' })
       replaceHash(slotAnchor(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number))
-      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+      patchGrid((grid) => {
+        let cells = upsertCell(grid.cells, res.cell)
+        cells = upsertCell(cells, res.other)
+        return { ...grid, cells }
+      })
+      afterCellWrite()
       stayAt(p.cell.class_id, p.cell.day_of_week, p.cell.lesson_number)
     },
   })
+
+  const openAdd = useCallback(
+    (classId: number, className: string, day: number, lesson: number) => {
+      setSlot({ class_id: classId, day, lesson, class_name: className })
+    },
+    [setSlot],
+  )
+  const openEdit = useCallback((cell: CellOut) => setEditCell(cell), [setEditCell])
+  const openWhy = useCallback((cell: CellOut) => setWhyCell(cell), [setWhyCell])
+  const deleteCell = useCallback((cell: CellOut) => {
+    if (!confirm('Удалить урок?')) return
+    delM.mutate({
+      cell_id: cell.id,
+      class_id: cell.class_id,
+      day: cell.day_of_week,
+      lesson: cell.lesson_number,
+    })
+  }, [delM.mutate])
+  const onDropSlot = useCallback(
+    (e: ReactDragEvent, target: { class_id: number; day: number; lesson: number }) => {
+      e.preventDefault()
+      const raw = e.dataTransfer.getData('text/cell-id')
+      if (!raw) return
+      const cell_id = Number(raw)
+      if (!cell_id) return
+      moveM.mutate({
+        cell_id,
+        class_id: target.class_id,
+        day_of_week: target.day,
+        lesson_number: target.lesson,
+      })
+    },
+    [moveM.mutate],
+  )
+  const navigateMinimapSlot = useCallback((id: string) => {
+    scrollScheduleAnchor(id, 'nearest')
+  }, [])
+
+  const cellsBySlot = useMemo(() => {
+    const m = new Map<string, CellOut[]>()
+    for (const c of gridQ.data?.cells ?? []) {
+      const key = `${c.class_id}:${c.day_of_week}:${c.lesson_number}`
+      const arr = m.get(key)
+      if (arr) arr.push(c)
+      else m.set(key, [c])
+    }
+    return m
+  }, [gridQ.data?.cells])
+
+  const rows = useMemo(() => {
+    const grid = gridQ.data
+    const out: GridRow[] = []
+    if (!grid) return out
+    for (let day = 1; day <= grid.working_days; day++) {
+      out.push({ kind: 'day', day })
+      if (
+        grid.current_shift &&
+        grid.current_shift.class_hour_day === day &&
+        grid.class_hour_time_label
+      ) {
+        out.push({ kind: 'class_hour', day })
+      }
+      for (const lesson of grid.lessons_range) {
+        const classHourLessons = grid.current_shift?.class_hour_lessons_count
+        const startLesson = grid.current_shift?.start_lesson ?? 1
+        if (
+          grid.current_shift?.class_hour_day === day &&
+          classHourLessons != null &&
+          classHourLessons > 0 &&
+          lesson >= startLesson + classHourLessons
+        ) {
+          continue
+        }
+        out.push({ kind: 'lesson', day, lesson })
+      }
+    }
+    return out
+  }, [
+    gridQ.data?.working_days,
+    gridQ.data?.lessons_range,
+    gridQ.data?.current_shift,
+    gridQ.data?.class_hour_time_label,
+  ])
 
   useEffect(() => {
     restoreDone.current = false
@@ -618,72 +1042,12 @@ export function SchedulePage() {
     return () => {
       cancelled = true
     }
-  }, [gridQ.data, level, shiftId])
+  }, [gridQ.data?.classes, level, shiftId])
 
   if (gridQ.isPending && !gridQ.data) return <p>Загрузка…</p>
   if (gridQ.isError) return <p className="text-danger">{extractApiError(gridQ.error)}</p>
 
   const grid = gridQ.data!
-
-  const cellsBySlot = new Map<string, CellOut[]>()
-  for (const c of grid.cells) {
-    const key = `${c.class_id}:${c.day_of_week}:${c.lesson_number}`
-    const arr = cellsBySlot.get(key) ?? []
-    arr.push(c)
-    cellsBySlot.set(key, arr)
-  }
-
-  function onDragStartCell(e: React.DragEvent, cell: CellOut) {
-    draggedCellId.current = cell.id
-    e.dataTransfer.setData('text/cell-id', String(cell.id))
-    e.dataTransfer.effectAllowed = 'move'
-  }
-
-  function onDropSlot(
-    e: React.DragEvent,
-    target: { class_id: number; day: number; lesson: number },
-  ) {
-    e.preventDefault()
-    const raw = e.dataTransfer.getData('text/cell-id')
-    if (!raw) return
-    const cell_id = Number(raw)
-    if (!cell_id) return
-    moveM.mutate({
-      cell_id,
-      class_id: target.class_id,
-      day_of_week: target.day,
-      lesson_number: target.lesson,
-    })
-  }
-
-  const rows: Array<
-    | { kind: 'day'; day: number }
-    | { kind: 'class_hour'; day: number }
-    | { kind: 'lesson'; day: number; lesson: number }
-  > = []
-  for (let day = 1; day <= grid.working_days; day++) {
-    rows.push({ kind: 'day', day })
-    if (
-      grid.current_shift &&
-      grid.current_shift.class_hour_day === day &&
-      grid.class_hour_time_label
-    ) {
-      rows.push({ kind: 'class_hour', day })
-    }
-    for (const lesson of grid.lessons_range) {
-      const classHourLessons = grid.current_shift?.class_hour_lessons_count
-      const startLesson = grid.current_shift?.start_lesson ?? 1
-      if (
-        grid.current_shift?.class_hour_day === day &&
-        classHourLessons != null &&
-        classHourLessons > 0 &&
-        lesson >= startLesson + classHourLessons
-      ) {
-        continue
-      }
-      rows.push({ kind: 'lesson', day, lesson })
-    }
-  }
 
   return (
     <div className={`schedule-grid-page is-${density}${expanded ? ' is-expanded' : ''}`}>
@@ -899,149 +1263,23 @@ export function SchedulePage() {
                         </div>
                         {time ? <BellLabel time={time} /> : null}
                       </td>
-                      {grid.classes.map((c) => {
-                        const key = `${c.id}:${row.day}:${lesson}`
-                        const cells = cellsBySlot.get(key) ?? []
-                        const canAdd = slotAcceptsAnotherLesson(cells)
-                        const openAdd = () =>
-                          setSlot({
-                            class_id: c.id,
-                            day: row.day,
-                            lesson,
-                            class_name: c.name,
-                          })
-                        return (
-                          <td
-                            key={c.id}
-                            id={slotAnchor(c.id, row.day, lesson)}
-                            className="schedule-slot-cell align-top"
-                            style={{ cursor: canAdd ? 'pointer' : 'default' }}
-                            onDragOver={(e) => e.preventDefault()}
-                            onDrop={(e) =>
-                              onDropSlot(e, {
-                                class_id: c.id,
-                                day: row.day,
-                                lesson,
-                              })
-                            }
-                            onClick={(e) => {
-                              if ((e.target as HTMLElement).closest('button, .lesson-card')) return
-                              if (!canAdd) return
-                              openAdd()
-                            }}
-                          >
-                            {cells.length === 0 ? (
-                              <div className="schedule-slot-empty" aria-hidden>
-                                +
-                              </div>
-                            ) : (
-                              <>
-                                {cells.map((cell, i) => (
-                                  <div
-                                    key={cell.id}
-                                    draggable
-                                    data-teacher-key={teacherHoverKey(cell) || undefined}
-                                    title={`${lessonCardTitle(cell)} · нажмите, чтобы сменить кабинет`}
-                                    onDragStart={(e) => {
-                                      applyTeacherHover(
-                                        e.currentTarget.closest('.schedule-grid-card'),
-                                        null,
-                                      )
-                                      onDragStartCell(e, cell)
-                                    }}
-                                    className="lesson-card position-relative"
-                                    style={{
-                                      ['--lesson-color' as string]: cell.subject_color,
-                                    }}
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      if (draggedCellId.current === cell.id) {
-                                        draggedCellId.current = null
-                                        return
-                                      }
-                                      setEditCell(cell)
-                                    }}
-                                  >
-                                    {i > 0 && density === 'comfortable' && <hr className="my-1" />}
-                                    <div className="lesson-subject">
-                                      {cell.subject_name}
-                                      {cell.group_number != null && (
-                                        <span className="badge schedule-group-badge">
-                                          гр.{cell.group_number}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="lesson-card-meta">
-                                      <span className="teacher-name">
-                                        {density === 'compact'
-                                          ? shortTeacherName(cell.teacher_name)
-                                          : (cell.teacher_name ?? '?')}
-                                      </span>
-                                      {cell.classroom_name ? (
-                                        <>
-                                          <span className="lesson-meta-sep" aria-hidden>
-                                            ·
-                                          </span>
-                                          <span className="lesson-room">
-                                            {density === 'compact'
-                                              ? cell.classroom_name
-                                              : `каб. ${cell.classroom_name}`}
-                                          </span>
-                                        </>
-                                      ) : null}
-                                    </div>
-                                    <div className="lesson-card-actions">
-                                      <button
-                                        type="button"
-                                        className="lesson-card-action"
-                                        title="Почему этот слот"
-                                        onPointerDown={suppressCardDrag}
-                                        onClick={(ev) => {
-                                          ev.stopPropagation()
-                                          setWhyCell(cell)
-                                        }}
-                                      >
-                                        ?
-                                      </button>
-                                      <button
-                                        type="button"
-                                        className="lesson-card-action is-danger"
-                                        title="Удалить"
-                                        onPointerDown={suppressCardDrag}
-                                        onClick={(ev) => {
-                                          ev.stopPropagation()
-                                          if (confirm('Удалить урок?'))
-                                            delM.mutate({
-                                              cell_id: cell.id,
-                                              class_id: cell.class_id,
-                                              day: cell.day_of_week,
-                                              lesson: cell.lesson_number,
-                                            })
-                                        }}
-                                      >
-                                        ×
-                                      </button>
-                                    </div>
-                                  </div>
-                                ))}
-                                {canAdd && (
-                                  <button
-                                    type="button"
-                                    className="slot-add-subgroup"
-                                    title="Добавить вторую подгруппу"
-                                    onClick={(ev) => {
-                                      ev.stopPropagation()
-                                      openAdd()
-                                    }}
-                                  >
-                                    +
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </td>
-                        )
-                      })}
+                      {grid.classes.map((c) => (
+                        <ScheduleSlotCell
+                          key={c.id}
+                          classId={c.id}
+                          className={c.name}
+                          day={row.day}
+                          lesson={lesson}
+                          cells={cellsBySlot.get(`${c.id}:${row.day}:${lesson}`) ?? EMPTY_CELLS}
+                          density={density}
+                          draggedCellId={draggedCellId}
+                          onOpenAdd={openAdd}
+                          onOpenEdit={openEdit}
+                          onOpenWhy={openWhy}
+                          onDelete={deleteCell}
+                          onDrop={onDropSlot}
+                        />
+                      ))}
                     </tr>
                   )
                 })}
@@ -1054,7 +1292,7 @@ export function SchedulePage() {
             rows={rows}
             cellsBySlot={cellsBySlot}
             dayNames={grid.day_names}
-            onNavigateSlot={(id) => scrollScheduleAnchor(id, 'nearest')}
+            onNavigateSlot={navigateMinimapSlot}
           />
         </div>
       )}

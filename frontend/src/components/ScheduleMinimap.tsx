@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useLayoutEffect,
   useRef,
@@ -113,7 +114,24 @@ function lessonTitle(cell: CellOut) {
   return bits.join(' · ')
 }
 
-export function ScheduleMinimap(props: {
+function viewEq(a: View, b: View) {
+  return (
+    a.sl === b.sl &&
+    a.st === b.st &&
+    a.sw === b.sw &&
+    a.sh === b.sh &&
+    a.cw === b.cw &&
+    a.ch === b.ch
+  )
+}
+
+function numsEq(a: number[], b: number[]) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+export const ScheduleMinimap = memo(function ScheduleMinimap(props: {
   classes: SchoolClassRow[]
   rows: MinimapRow[]
   cellsBySlot: Map<string, CellOut[]>
@@ -128,35 +146,62 @@ export function ScheduleMinimap(props: {
   const [open, setOpen] = useState(loadOpen)
   const [view, setView] = useState<View>(emptyView)
   const [weights, setWeights] = useState<Weights | null>(null)
+  const viewRaf = useRef(0)
+  const weightRaf = useRef(0)
 
-  const measure = useCallback(() => {
-    const viewport = findViewport(rootRef.current)
-    const table = findTable(rootRef.current)
-    if (viewport) setView(readView(viewport))
-    if (!table?.rows.length) return
-    const head = table.rows[0]
-    const cols = [...head.cells].map((c) => Math.max(1, c.getBoundingClientRect().width))
-    const rowHs = [...table.rows].map((r) => Math.max(1, r.getBoundingClientRect().height))
-    if (cols.length && rowHs.length) setWeights({ cols, rows: rowHs })
+  const measureView = useCallback(() => {
+    if (viewRaf.current) return
+    viewRaf.current = requestAnimationFrame(() => {
+      viewRaf.current = 0
+      const viewport = findViewport(rootRef.current)
+      if (!viewport) return
+      const next = readView(viewport)
+      setView((prev) => (viewEq(prev, next) ? prev : next))
+    })
   }, [])
+
+  const measureWeights = useCallback(() => {
+    if (weightRaf.current) return
+    weightRaf.current = requestAnimationFrame(() => {
+      weightRaf.current = 0
+      const table = findTable(rootRef.current)
+      if (!table?.rows.length) return
+      const head = table.rows[0]
+      const cols = [...head.cells].map((c) => Math.max(1, Math.round(c.getBoundingClientRect().width)))
+      const rowHs = [...table.rows].map((r) => Math.max(1, Math.round(r.getBoundingClientRect().height)))
+      if (!cols.length || !rowHs.length) return
+      setWeights((prev) =>
+        prev && numsEq(prev.cols, cols) && numsEq(prev.rows, rowHs) ? prev : { cols, rows: rowHs },
+      )
+    })
+  }, [])
+
+  const measureAll = useCallback(() => {
+    measureView()
+    measureWeights()
+  }, [measureView, measureWeights])
 
   useLayoutEffect(() => {
     if (!open) return
     const viewport = findViewport(rootRef.current)
     const table = findTable(rootRef.current)
     if (!viewport) return
-    measure()
-    const ro = new ResizeObserver(measure)
+    measureAll()
+    const ro = new ResizeObserver(measureAll)
     ro.observe(viewport)
     if (table) ro.observe(table)
-    viewport.addEventListener('scroll', measure, { passive: true })
-    window.addEventListener('resize', measure)
+    viewport.addEventListener('scroll', measureView, { passive: true })
+    window.addEventListener('resize', measureAll)
     return () => {
+      if (viewRaf.current) cancelAnimationFrame(viewRaf.current)
+      if (weightRaf.current) cancelAnimationFrame(weightRaf.current)
+      viewRaf.current = 0
+      weightRaf.current = 0
       ro.disconnect()
-      viewport.removeEventListener('scroll', measure)
-      window.removeEventListener('resize', measure)
+      viewport.removeEventListener('scroll', measureView)
+      window.removeEventListener('resize', measureAll)
     }
-  }, [open, measure, layoutKey])
+  }, [open, measureAll, measureView, layoutKey])
 
   function toggle() {
     const next = !open
@@ -372,4 +417,4 @@ export function ScheduleMinimap(props: {
       </div>
     </aside>
   )
-}
+})
