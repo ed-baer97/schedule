@@ -68,6 +68,7 @@ export function OverlayScrollArea({
   const onReadyRef = useRef(onViewportReady)
   const lastSize = useRef({ w: 0, h: 0, sh: 0, sw: 0 })
   const ignoreZeroUntil = useRef(0)
+  const measureRaf = useRef(0)
   const [m, setM] = useState<Metrics>({ sl: 0, st: 0, sw: 0, sh: 0, cw: 0, ch: 0 })
   onReadyRef.current = onViewportReady
 
@@ -86,7 +87,7 @@ export function OverlayScrollArea({
     return el.scrollLeft > 0 || el.scrollTop > 0 || (sl <= 0 && st <= 0)
   }, [])
 
-  const measure = useCallback(() => {
+  const measureNow = useCallback(() => {
     const el = viewRef.current
     if (!el) return
     const next = {
@@ -97,7 +98,16 @@ export function OverlayScrollArea({
       cw: el.clientWidth,
       ch: el.clientHeight,
     }
-    setM(next)
+    setM((prev) =>
+      prev.sl === next.sl &&
+      prev.st === next.st &&
+      prev.sw === next.sw &&
+      prev.sh === next.sh &&
+      prev.cw === next.cw &&
+      prev.ch === next.ch
+        ? prev
+        : next,
+    )
     if (next.st > 0 || next.sl > 0) {
       saved.current = { sl: next.sl, st: next.st }
       writePersisted(persistKey, saved.current)
@@ -115,9 +125,17 @@ export function OverlayScrollArea({
     }
   }, [applySaved, persistKey])
 
+  const measure = useCallback(() => {
+    if (measureRaf.current) return
+    measureRaf.current = requestAnimationFrame(() => {
+      measureRaf.current = 0
+      measureNow()
+    })
+  }, [measureNow])
+
   useLayoutEffect(() => {
     applySaved()
-  })
+  }, [applySaved, persistKey])
 
   useEffect(() => {
     const el = viewRef.current
@@ -125,7 +143,7 @@ export function OverlayScrollArea({
     const boot = readPersisted(persistKey)
     if (boot && (boot.sl > 0 || boot.st > 0)) saved.current = boot
     applySaved()
-    measure()
+    measureNow()
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     const inner = el.firstElementChild
@@ -141,12 +159,14 @@ export function OverlayScrollArea({
     window.addEventListener('pagehide', flush)
     return () => {
       flush()
+      if (measureRaf.current) cancelAnimationFrame(measureRaf.current)
+      measureRaf.current = 0
       ro.disconnect()
       el.removeEventListener('scroll', measure)
       window.removeEventListener('resize', measure)
       window.removeEventListener('pagehide', flush)
     }
-  }, [applySaved, measure, persistKey])
+  }, [applySaved, measure, measureNow, persistKey])
 
   function handleScroll(e: UIEvent<HTMLDivElement>) {
     const el = viewRef.current

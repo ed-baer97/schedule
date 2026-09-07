@@ -1347,42 +1347,9 @@ html[data-theme='dark'] .report-lesson-index {
   opacity: 0.32;
 }
 
-.schedule-grid-card.is-teacher-hover .lesson-card.teacher-highlight,
-.schedule-grid-table.is-teacher-hover .lesson-card.teacher-highlight,
-.lesson-card.teacher-highlight {
-  opacity: 1;
-  background: color-mix(in srgb, var(--kivi-primary) 18%, var(--kivi-surface)) !important;
-  box-shadow: inset 0 0 0 2px var(--kivi-primary);
-  z-index: 2;
-  position: relative;
-}
-
-.schedule-grid-card.is-teacher-hover td:has(.teacher-highlight),
-.schedule-grid-table.is-teacher-hover td:has(.teacher-highlight) {
-  background-color: color-mix(in srgb, var(--kivi-primary) 10%, transparent);
-}
-
-.schedule-grid-card.is-teacher-hover .lesson-card.teacher-highlight .teacher-name,
-.schedule-grid-table.is-teacher-hover .lesson-card.teacher-highlight .teacher-name {
-  color: var(--kivi-primary-deep);
-  font-weight: 700;
-}
-
 .schedule-grid-card.is-teacher-hover .schedule-minimap-lesson {
   opacity: 0.28;
   filter: saturate(0.35);
-}
-
-.schedule-grid-card.is-teacher-hover .schedule-minimap-lesson.teacher-highlight,
-.schedule-minimap-lesson.teacher-highlight {
-  opacity: 1;
-  filter: none;
-  box-shadow:
-    0 0 0 1px var(--kivi-primary),
-    0 0 6px color-mix(in srgb, var(--kivi-primary) 65%, transparent);
-  transform: scale(1.25);
-  z-index: 2;
-  position: relative;
 }
 
 .teacher-remaining-tip {
@@ -1932,12 +1899,6 @@ html[data-theme='dark'] .schedule-group-badge {
   background: color-mix(in srgb, var(--kivi-amber) 44%, #2e2820);
   color: #fff6e8;
   border: 1px solid color-mix(in srgb, var(--kivi-amber) 58%, #4a4030);
-}
-
-html[data-theme='dark'] .schedule-grid-table.is-teacher-hover
-  .lesson-card.teacher-highlight
-  .teacher-name {
-  color: var(--kivi-primary);
 }
 
 html[data-theme='dark'] .table {

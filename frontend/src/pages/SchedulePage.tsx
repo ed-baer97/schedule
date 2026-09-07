@@ -146,15 +146,13 @@ function buildTeacherHoverCss(keys: string[]) {
   return keys
     .map((key) => {
       const a = esc(key)
-      const card = `.schedule-grid-card:has([data-teacher-key="${a}"]:hover)`
+      const root = `.schedule-grid-card[data-hover-teacher="${a}"]`
       const match = `.lesson-card[data-teacher-key="${a}"]`
       const mini = `.schedule-minimap-lesson[data-teacher-key="${a}"]`
-      return `${card} ${match}{background:color-mix(in srgb, var(--kivi-primary) 22%, var(--kivi-surface))!important;box-shadow:inset 0 0 0 3px var(--kivi-primary);opacity:1;position:relative;z-index:2}
-${card} ${match} .teacher-name{color:var(--kivi-primary-deep);font-weight:700}
-${card} .lesson-card:not(${match}){opacity:.32}
-${card} td:has(${match}){background:color-mix(in srgb, var(--kivi-primary) 10%, transparent)}
-${card} ${mini}{opacity:1;filter:none;box-shadow:0 0 0 1px var(--kivi-primary),0 0 6px color-mix(in srgb, var(--kivi-primary) 65%, transparent);transform:scale(1.25);z-index:2}
-${card} .schedule-minimap-lesson:not(${mini}){opacity:.28;filter:saturate(.35)}`
+      return `${root} ${match}{background:color-mix(in srgb, var(--kivi-primary) 22%, var(--kivi-surface))!important;box-shadow:inset 0 0 0 3px var(--kivi-primary);opacity:1;position:relative;z-index:2}
+${root} ${match} .teacher-name{color:var(--kivi-primary-deep);font-weight:700}
+html[data-theme='dark'] ${root} ${match} .teacher-name{color:var(--kivi-primary)}
+${root} ${mini}{opacity:1;filter:none;box-shadow:0 0 0 1px var(--kivi-primary),0 0 6px color-mix(in srgb, var(--kivi-primary) 65%, transparent);transform:scale(1.25);z-index:2;position:relative}`
     })
     .join('\n')
 }
@@ -166,9 +164,6 @@ function applyTeacherHover(root: HTMLElement | null, key: string | null) {
   if (key) root.setAttribute('data-hover-teacher', key)
   else root.removeAttribute('data-hover-teacher')
   root.classList.toggle('is-teacher-hover', Boolean(key))
-  root.querySelectorAll<HTMLElement>('[data-teacher-key]').forEach((el) => {
-    el.classList.toggle('teacher-highlight', Boolean(key) && el.dataset.teacherKey === key)
-  })
 }
 
 function hoverTeacherFromEvent(target: EventTarget | null) {
