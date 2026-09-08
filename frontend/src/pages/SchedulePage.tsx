@@ -901,14 +901,21 @@ export function SchedulePage() {
   })
 
   const clearDayM = useMutation({
-    mutationFn: (day: number) =>
-      clearSchedule({ school_level: level, days_of_week: [day] }),
-    onSuccess: async (res, day) => {
-      const name = gridQ.data?.day_names[day - 1] ?? ''
+    mutationFn: (p: { day: number; shiftId: number | null }) =>
+      clearSchedule({
+        school_level: level,
+        days_of_week: [p.day],
+        ...(p.shiftId != null ? { shift_id: p.shiftId } : {}),
+      }),
+    onSuccess: async (res, p) => {
+      const name = gridQ.data?.day_names[p.day - 1] ?? ''
+      const shiftName = gridQ.data?.current_shift?.name
       setToast({
         kind: 'success',
         text: name
-          ? `Удалено уроков за ${name.toLowerCase()}: ${res.count}`
+          ? shiftName
+            ? `Удалено уроков ${shiftName} за ${name.toLowerCase()}: ${res.count}`
+            : `Удалено уроков за ${name.toLowerCase()}: ${res.count}`
           : `Удалено уроков: ${res.count}`,
       })
       await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
@@ -1240,22 +1247,29 @@ export function SchedulePage() {
                               type="button"
                               className="btn btn-outline-danger schedule-day-clear"
                               disabled={clearDayM.isPending}
-                              title={`Удалить все уроки ${
-                                level === 'elementary' ? 'начальной' : 'основной'
-                              } школы в этот день`}
+                              title={
+                                grid.current_shift
+                                  ? `Удалить уроки ${grid.current_shift.name} в этот день`
+                                  : `Удалить все уроки ${
+                                      level === 'elementary' ? 'начальной' : 'основной'
+                                    } школы в этот день`
+                              }
                               onClick={(e) => {
                                 e.stopPropagation()
                                 const name = grid.day_names[row.day - 1]
-                                const levelLabel =
-                                  level === 'elementary' ? 'начальной' : 'основной'
-                                if (
-                                  !confirm(
-                                    `Удалить все уроки ${levelLabel} школы в ${name.toLowerCase()}?`,
-                                  )
-                                ) {
+                                const shift = grid.current_shift
+                                const confirmText = shift
+                                  ? `Удалить уроки смены «${shift.name}» в ${name.toLowerCase()}? Другие смены не изменятся.`
+                                  : `Удалить все уроки ${
+                                      level === 'elementary' ? 'начальной' : 'основной'
+                                    } школы в ${name.toLowerCase()}?`
+                                if (!confirm(confirmText)) {
                                   return
                                 }
-                                clearDayM.mutate(row.day)
+                                clearDayM.mutate({
+                                  day: row.day,
+                                  shiftId: grid.current_shift_id,
+                                })
                               }}
                             >
                               Очистить день

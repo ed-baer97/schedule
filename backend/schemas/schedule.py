@@ -229,6 +229,7 @@ class ClearScheduleBody(BaseModel):
     class_id: int | None = None
     teacher_id: int | None = None
     days_of_week: list[int] | None = Field(None, min_length=1)
+    shift_id: int | None = None
 
     @field_validator("days_of_week")
     @classmethod

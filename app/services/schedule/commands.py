@@ -292,6 +292,7 @@ class ScheduleCommandsMixin:
         school_level: str | None = None,
         class_id: int | None = None,
         days_of_week: list[int] | None = None,
+        shift_id: int | None = None,
         max_lesson: int | None = None,
         commit: bool = False,
     ) -> int:
@@ -313,11 +314,14 @@ class ScheduleCommandsMixin:
             stmt = stmt.where(ScheduleCell.lesson_number <= int(max_lesson))
         if class_id is not None:
             stmt = stmt.where(ScheduleCell.class_id == class_id)
-        elif school_level is not None:
+        elif school_level is not None or shift_id is not None:
             stmt = stmt.join(SchoolClass).where(
-                SchoolClass.school_level == school_level,
                 SchoolClass.school_id == self.school_id,
             )
+            if school_level is not None:
+                stmt = stmt.where(SchoolClass.school_level == school_level)
+            if shift_id is not None:
+                stmt = stmt.where(SchoolClass.shift_id == shift_id)
         if teacher_id is not None:
             stmt = stmt.join(
                 TeachingAssignment,

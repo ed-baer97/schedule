@@ -572,6 +572,107 @@ def test_clear_schedule_by_days_of_week() -> None:
     assert empty.status_code == 422
 
 
+def test_clear_schedule_by_shift_and_day() -> None:
+    with SessionLocal() as session:
+        s1 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        s2 = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="2 смена",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+        )
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Чтение")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Иванова И.И.")
+        c1 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1А", grade=1, school_level="elementary"
+        )
+        c2 = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1Б", grade=1, school_level="elementary"
+        )
+        session.add_all([s1, s2, subject, teacher, c1, c2])
+        session.flush()
+        c1.shift_id = s1.id
+        c2.shift_id = s2.id
+        a1 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=subject.id,
+            teacher_id=teacher.id,
+            class_id=c1.id,
+            hours_per_week=4,
+        )
+        a2 = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=subject.id,
+            teacher_id=teacher.id,
+            class_id=c2.id,
+            hours_per_week=4,
+        )
+        session.add_all([a1, a2])
+        session.commit()
+        ids = {
+            "s1": s1.id,
+            "s2": s2.id,
+            "c1": c1.id,
+            "c2": c2.id,
+            "a1": a1.id,
+            "a2": a2.id,
+        }
+
+    for payload in (
+        {
+            "class_id": ids["c1"],
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": ids["a1"],
+        },
+        {
+            "class_id": ids["c1"],
+            "day_of_week": 2,
+            "lesson_number": 1,
+            "assignment_id": ids["a1"],
+        },
+        {
+            "class_id": ids["c2"],
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": ids["a2"],
+        },
+    ):
+        created = client.post("/api/schedule/cells", json=payload)
+        assert created.status_code == 201, created.text
+
+    cleared = client.post(
+        "/api/schedule/clear",
+        json={
+            "school_level": "elementary",
+            "days_of_week": [1],
+            "shift_id": ids["s1"],
+        },
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["count"] == 1
+
+    shift1 = client.get(
+        f"/api/schedule/grid?school_level=elementary&shift_id={ids['s1']}"
+    ).json()["cells"]
+    shift2 = client.get(
+        f"/api/schedule/grid?school_level=elementary&shift_id={ids['s2']}"
+    ).json()["cells"]
+    assert [(c["day_of_week"], c["class_id"]) for c in shift1] == [(2, ids["c1"])]
+    assert [(c["day_of_week"], c["class_id"]) for c in shift2] == [(1, ids["c2"])]
+
+
 def test_explain_slot_without_qwen_key() -> None:
     with SessionLocal() as session:
         shift = Shift(
