@@ -287,15 +287,38 @@ def test_assign_rooms_pairs_share_classroom():
     result = _assign_rooms_to_chosen(
         chosen, candidates_by_assignment=cands, rooms=rooms, busy={}
     )
-    assert result is not None
-    assert result[0] == result[1] == 1
+    assert result.by_ui is not None
+    assert result.by_ui[0] == result.by_ui[1] == 1
 
     busy = {1: [_slot_busy_fact(s2, 1)]}
     result = _assign_rooms_to_chosen(
         chosen, candidates_by_assignment=cands, rooms=rooms, busy=busy
     )
-    assert result is not None
-    assert result[0] == result[1] == 2
+    assert result.by_ui is not None
+    assert result.by_ui[0] == result.by_ui[1] == 2
+
+
+def test_assign_rooms_reports_failed_slot():
+    from types import SimpleNamespace
+
+    from app.domain.schedule_facts import SlotFact
+    from app.services.schedule_solver import _assign_rooms_to_chosen, _slot_busy_fact
+
+    slot = SlotFact(slot_id="d1l1", class_id=1, day=2, lesson=4, shift_id=1)
+    assignment = SimpleNamespace(id=10)
+    rooms = [SimpleNamespace(id=1, classes_capacity=1)]
+    chosen = [(0, assignment, slot)]
+    busy = {1: [_slot_busy_fact(slot, 1)]}
+    result = _assign_rooms_to_chosen(
+        chosen,
+        candidates_by_assignment={10: [(1, 40)]},
+        rooms=rooms,
+        busy=busy,
+    )
+    assert result.by_ui is None
+    assert result.fail_assignment is assignment
+    assert result.fail_slots[0].lesson == 4
+    assert result.candidate_count == 1
 
 
 

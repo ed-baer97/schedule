@@ -9,6 +9,7 @@ from app.domain.preferences import WEIGHT_MAX, WEIGHT_MIN, clamp_weight
 _PREF_KEYS = (
     "pref_teacher_gaps",
     "pref_hard_subjects_early",
+    "pref_same_group_adjacent",
     "pref_adjacent_pairs",
     "pref_classroom_stability",
 )
@@ -67,6 +68,7 @@ def _intensity(folded: str) -> int:
             "не позже",
             "максимум",
             "без окон",
+            "не подряд",
         )
     ):
         return WEIGHT_MAX
@@ -125,8 +127,17 @@ def parse_assist_intent(message: str) -> AssistIntent:
 
     if any(
         w in folded
-        for w in ("сложн", "раньше", "ранние урок", "не после", "не позже")
+        for w in (
+            "одной группы",
+            "одного цикла",
+            "не подряд",
+            "не рядом математик",
+            "предметы одной",
+        )
     ):
+        updates["pref_same_group_adjacent"] = intensity
+
+    if any(w in folded for w in ("сложн", "раньше", "ранние урок")):
         updates["pref_hard_subjects_early"] = intensity
 
     if any(w in folded for w in ("стабильн", "кабинет", "баланс дней")):
@@ -158,7 +169,9 @@ def parse_assist_intent(message: str) -> AssistIntent:
     if clamped.get("pref_adjacent_pairs") is not None:
         bits.append(f"сдвоенные → {clamped['pref_adjacent_pairs']}")
     if clamped.get("pref_hard_subjects_early") is not None:
-        bits.append(f"сложные раньше → {clamped['pref_hard_subjects_early']}")
+        bits.append(f"ранние уроки → {clamped['pref_hard_subjects_early']}")
+    if clamped.get("pref_same_group_adjacent") is not None:
+        bits.append(f"циклы не подряд → {clamped['pref_same_group_adjacent']}")
     if clamped.get("pref_classroom_stability") is not None:
         bits.append(f"кабинеты/баланс → {clamped['pref_classroom_stability']}")
     if late_subject and max_lesson:

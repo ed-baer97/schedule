@@ -11,6 +11,7 @@ export type ScheduleSettings = {
   elementary_group_subjects_leave: boolean
   pref_teacher_gaps: number
   pref_hard_subjects_early: number
+  pref_same_group_adjacent: number
   pref_adjacent_pairs: number
   pref_classroom_stability: number
 }
@@ -313,6 +314,8 @@ export type AutoAllPayload = {
   diagnose: boolean
   split?: 'shift' | 'grade_bands'
   hours_first?: 'more' | 'fewer'
+  day_of_week: number
+  max_lesson?: number | null
 }
 
 export type AutoByTeacherPayload = {

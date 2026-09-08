@@ -29,7 +29,7 @@ _MAX_MOVES = 8
 
 _INTENT_SYSTEM = (
     "Ты помощник завуча. По фразе верни JSON без markdown со полями: "
-    "pref_teacher_gaps, pref_hard_subjects_early, pref_adjacent_pairs, "
+        "pref_teacher_gaps, pref_hard_subjects_early, pref_same_group_adjacent, pref_adjacent_pairs, "
     "pref_classroom_stability (число 0–10 или null), "
     "late_subject (корень названия предмета или null), "
     "max_lesson (1–8 или null — уроки строго позже этого номера сдвинуть раньше), "
@@ -76,6 +76,7 @@ def _intent_from_llm_dict(data: dict) -> AssistIntent:
     for key in (
         "pref_teacher_gaps",
         "pref_hard_subjects_early",
+        "pref_same_group_adjacent",
         "pref_adjacent_pairs",
         "pref_classroom_stability",
     ):
@@ -192,6 +193,7 @@ class ScheduleAssistService:
             elementary_group_subjects_leave=leave,
             pref_teacher_gaps=updates.get("pref_teacher_gaps"),
             pref_hard_subjects_early=updates.get("pref_hard_subjects_early"),
+            pref_same_group_adjacent=updates.get("pref_same_group_adjacent"),
             pref_adjacent_pairs=updates.get("pref_adjacent_pairs"),
             pref_classroom_stability=updates.get("pref_classroom_stability"),
         )

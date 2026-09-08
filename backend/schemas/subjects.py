@@ -16,7 +16,7 @@ class SubjectOut(BaseModel):
     name: str
     color: str | None = None
     display_color: str
-    difficulty: str = "medium"
+    subject_group: str = "humanities"
     requires_fixed_classroom: bool
     classrooms: list[ClassroomBrief] = []
 
@@ -24,7 +24,7 @@ class SubjectOut(BaseModel):
 class SubjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     color: str = Subject.DEFAULT_COLOR
-    difficulty: str = Field("medium", pattern="^(easy|medium|hard)$")
+    subject_group: str | None = Field(None, pattern="^(natural_math|humanities|languages|practical)$")
     requires_fixed_classroom: bool = False
 
     @field_validator("color")
@@ -38,7 +38,7 @@ class SubjectCreate(BaseModel):
 class SubjectUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=100)
     color: str | None = None
-    difficulty: str | None = Field(None, pattern="^(easy|medium|hard)$")
+    subject_group: str | None = Field(None, pattern="^(natural_math|humanities|languages|practical)$")
     requires_fixed_classroom: bool | None = None
 
     @field_validator("color")

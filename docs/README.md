@@ -5,12 +5,12 @@
 | Документ | Содержание |
 |----------|------------|
 | [Архитектура и структура](architecture.md) | Слои, дерево, модели, API, UI, правила слота/кабинета, зеркала Python↔TS |
-| [Продукт](product.md) | Цель, сущности, правила (кабинеты, сложность предмета), стек |
+| [Продукт](product.md) | Цель, сущности, правила (кабинеты, подгруппы, группы предметов), стек |
 | [Этапы выкладки](stages.md) | Чеклист стенда: хост, Docker, auth, админка, очередь |
 | [Локальная разработка (Windows)](local-windows.md) | Два процесса: FastAPI и Vite |
 | [Стенд / Docker](deploy.md) | Compose, `.env`, Postgres, nginx, бэкапы, RAM |
 
-Alembic head: `14subject_difficulty`. Flask в runtime нет.
+Alembic head: `18subject_group`. Flask в runtime нет.
 
 ## Слои приложения
 

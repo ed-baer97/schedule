@@ -20,6 +20,7 @@ import {
 import { extractApiError } from '../api/client'
 import { DAY_NAMES_LIST, DAY_SHORT_NAMES } from '../domain/days'
 import type { SchoolLevel } from '../domain/schoolLevel'
+import type { ShiftBrief } from '../api/shifts'
 
 function defaultSettings(level: SchoolLevel): ScheduleSettings {
   return {
@@ -29,9 +30,19 @@ function defaultSettings(level: SchoolLevel): ScheduleSettings {
     elementary_group_subjects_leave: true,
     pref_teacher_gaps: 5,
     pref_hard_subjects_early: 5,
+    pref_same_group_adjacent: 5,
     pref_adjacent_pairs: 5,
     pref_classroom_stability: 5,
   }
+}
+
+function lastLessonOnDay(shift: ShiftBrief | undefined, day: number): number {
+  const start = shift?.start_lesson ?? 1
+  let count = shift?.lessons_count ?? 6
+  if (shift?.class_hour_day === day && shift.class_hour_lessons_count) {
+    count = Math.min(count, shift.class_hour_lessons_count)
+  }
+  return start + count - 1
 }
 
 export function AutoSchedulerPage() {
@@ -42,6 +53,8 @@ export function AutoSchedulerPage() {
   const [seed, setSeed] = useState<number>(1)
   const [hoursFirst, setHoursFirst] = useState<'more' | 'fewer'>('more')
   const [split, setSplit] = useState<'shift' | 'grade_bands'>('shift')
+  const [fillDay, setFillDay] = useState<number>(1)
+  const [fillMaxLesson, setFillMaxLesson] = useState<number>(7)
   const [diagnose, setDiagnose] = useState<boolean>(false)
   const [teacherId, setTeacherId] = useState<number | ''>('')
   const [running, setRunning] = useState<boolean>(false)
@@ -88,6 +101,34 @@ export function AutoSchedulerPage() {
       return list[0].id
     })
   }, [level, q.data])
+
+  useEffect(() => {
+    const list =
+      q.data == null
+        ? []
+        : level === 'elementary'
+          ? q.data.shifts_elementary
+          : q.data.shifts_secondary
+    const shift = list.find((s) => s.id === shiftId)
+    const wd = shift?.working_days ?? 5
+    setFillDay((prev) => (prev >= 1 && prev <= wd ? prev : 1))
+  }, [level, q.data, shiftId])
+
+  useEffect(() => {
+    const list =
+      q.data == null
+        ? []
+        : level === 'elementary'
+          ? q.data.shifts_elementary
+          : q.data.shifts_secondary
+    const shift = list.find((s) => s.id === shiftId)
+    const start = shift?.start_lesson ?? 1
+    const last = lastLessonOnDay(shift, fillDay)
+    setFillMaxLesson((prev) => {
+      if (prev >= start && prev <= last) return prev
+      return last
+    })
+  }, [level, q.data, shiftId, fillDay])
 
   useEffect(() => {
     if (!rulesMsg) return
@@ -158,7 +199,7 @@ export function AutoSchedulerPage() {
     if (job.status === 'cancelled') {
       const count = (job.result?.count as number | undefined) ?? 0
       if (job.kind === 'auto_all') {
-        appendLog('Остановлено. Сетка смены не менялась — CP-SAT записывает результат только в конце.')
+        appendLog('Остановлено. Сетка выбранного дня не менялась — CP-SAT записывает результат только в конце.')
       } else {
         appendLog(`Остановлено. Уже поставленные уроки сохранены (${count}).`)
       }
@@ -167,7 +208,12 @@ export function AutoSchedulerPage() {
     const e = job.result || {}
     const count = e.count ?? '—'
     const wall = e.wall_time_sec as number | undefined
-    appendLog(`Готово. В сетку записано уроков: ${count}.`)
+    const day = e.day_of_week as number | undefined
+    if (typeof day === 'number' && day >= 1 && day <= DAY_NAMES_LIST.length) {
+      appendLog(`Готово. ${DAY_NAMES_LIST[day - 1]}: в сетку записано уроков: ${count}.`)
+    } else {
+      appendLog(`Готово. В сетку записано уроков: ${count}.`)
+    }
     const chunks = e.chunks as number | undefined
     if (chunks != null && chunks > 1) {
       appendLog(`Смена порезана на ${chunks} куска по параллелям.`)
@@ -281,6 +327,8 @@ export function AutoSchedulerPage() {
         diagnose,
         split,
         hours_first: hoursFirst,
+        day_of_week: fillDay,
+        max_lesson: fillMaxLesson,
       }),
     )
   }
@@ -391,6 +439,14 @@ export function AutoSchedulerPage() {
     (level === 'elementary' ? data.elementary_settings : data.secondary_settings)
     ?? defaultSettings(level)
   const percent = progress.total > 0 ? Math.min(100, Math.round((progress.current / progress.total) * 100)) : 0
+  const workingDays = shifts.find((s) => s.id === shiftId)?.working_days ?? 5
+  const selectedShift = shifts.find((s) => s.id === shiftId)
+  const startLesson = selectedShift?.start_lesson ?? 1
+  const lastLesson = lastLessonOnDay(selectedShift, fillDay)
+  const lessonCapNumbers = Array.from(
+    { length: Math.max(0, lastLesson - startLesson + 1) },
+    (_, i) => startLesson + i,
+  )
 
   return (
     <div>
@@ -439,7 +495,7 @@ export function AutoSchedulerPage() {
       <div className="row g-3 mt-0">
         <div className="col-md-6">
           <div className="card shadow-sm h-100">
-            <div className="card-header fw-semibold">Заполнить всё (CP-SAT, одна смена)</div>
+            <div className="card-header fw-semibold">Заполнить день (CP-SAT)</div>
             <div className="card-body">
               <div className="row g-2">
                 <div className="col-md-6">
@@ -470,8 +526,59 @@ export function AutoSchedulerPage() {
                     }}
                   />
                   <div className="form-text">
-                    Сколько секунд решатель ищет расписание. Если допустимое нашлось раньше —
+                    Лимит поиска на выбранный день. Если сетка дня нашлась раньше —
                     оставшееся время идёт на улучшение.
+                  </div>
+                </div>
+                <div className="col-12">
+                  <label className="form-label small">День</label>
+                  <div className="d-flex flex-wrap gap-1" role="group" aria-label="День для заполнения">
+                    {DAY_SHORT_NAMES.map((label, i) => {
+                      const day = i + 1
+                      const enabled = day <= workingDays
+                      const on = fillDay === day
+                      return (
+                        <button
+                          key={day}
+                          type="button"
+                          className={`btn btn-sm ${on ? 'btn-success' : 'btn-outline-secondary'}`}
+                          disabled={running || !enabled}
+                          aria-pressed={on}
+                          onClick={() => setFillDay(day)}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="form-text">
+                    Заполняет только {DAY_NAMES_LIST[fillDay - 1]}. Остальные дни не трогает.
+                    Запустите следующий день после проверки сетки.
+                  </div>
+                </div>
+                <div className="col-12">
+                  <label className="form-label small">Не позже урока</label>
+                  <div className="d-flex flex-wrap gap-1" role="group" aria-label="Максимальный номер урока">
+                    {lessonCapNumbers.map((n) => {
+                      const on = fillMaxLesson === n
+                      return (
+                        <button
+                          key={n}
+                          type="button"
+                          className={`btn btn-sm ${on ? 'btn-success' : 'btn-outline-secondary'}`}
+                          disabled={running}
+                          aria-pressed={on}
+                          onClick={() => setFillMaxLesson(n)}
+                        >
+                          {n}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="form-text">
+                    {fillMaxLesson < lastLesson
+                      ? `Ставит только уроки ${startLesson}–${fillMaxLesson}. Урок ${fillMaxLesson + 1} и позже не трогает — их можно дозаполнить отдельно.`
+                      : 'Без ограничения: заполняет всю сетку выбранного дня.'}
                   </div>
                 </div>
                 <div className="col-12">
@@ -486,7 +593,7 @@ export function AutoSchedulerPage() {
                       onChange={() => setSplit('shift')}
                     />
                     <label className="form-check-label" htmlFor="splitWhole">
-                      Вся смена
+                      Все классы смены
                     </label>
                   </div>
                   <div className="form-check">
@@ -743,7 +850,7 @@ function RulesCard(props: {
   const [mode, setMode] = useState<ClassroomMode>(initial.classroom_mode)
   const [groupLeave, setGroupLeave] = useState(initial.elementary_group_subjects_leave)
   const [prefGaps, setPrefGaps] = useState(initial.pref_teacher_gaps ?? 5)
-  const [prefEarly, setPrefEarly] = useState(initial.pref_hard_subjects_early ?? 5)
+  const [prefGroup, setPrefGroup] = useState(initial.pref_same_group_adjacent ?? 5)
   const [prefPairs, setPrefPairs] = useState(initial.pref_adjacent_pairs ?? 5)
   const [prefRooms, setPrefRooms] = useState(initial.pref_classroom_stability ?? 5)
 
@@ -751,14 +858,14 @@ function RulesCard(props: {
     setMode(initial.classroom_mode)
     setGroupLeave(initial.elementary_group_subjects_leave)
     setPrefGaps(initial.pref_teacher_gaps ?? 5)
-    setPrefEarly(initial.pref_hard_subjects_early ?? 5)
+    setPrefGroup(initial.pref_same_group_adjacent ?? 5)
     setPrefPairs(initial.pref_adjacent_pairs ?? 5)
     setPrefRooms(initial.pref_classroom_stability ?? 5)
   }, [
     initial.classroom_mode,
     initial.elementary_group_subjects_leave,
     initial.pref_teacher_gaps,
-    initial.pref_hard_subjects_early,
+    initial.pref_same_group_adjacent,
     initial.pref_adjacent_pairs,
     initial.pref_classroom_stability,
   ])
@@ -809,10 +916,10 @@ function RulesCard(props: {
                 onChange={setPrefGaps}
               />
               <PrefSlider
-                id="pref-early"
-                label="Сложные предметы раньше"
-                value={prefEarly}
-                onChange={setPrefEarly}
+                id="pref-group"
+                label="Предметы одной группы не подряд"
+                value={prefGroup}
+                onChange={setPrefGroup}
               />
               <PrefSlider
                 id="pref-pairs"
@@ -839,7 +946,8 @@ function RulesCard(props: {
               classroom_mode: mode,
               elementary_group_subjects_leave: showGroupLeave ? groupLeave : undefined,
               pref_teacher_gaps: prefGaps,
-              pref_hard_subjects_early: prefEarly,
+              pref_hard_subjects_early: initial.pref_hard_subjects_early ?? 5,
+              pref_same_group_adjacent: prefGroup,
               pref_adjacent_pairs: prefPairs,
               pref_classroom_stability: prefRooms,
             })

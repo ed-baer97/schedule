@@ -26,6 +26,7 @@ class PreferenceWeights:
     hard_subjects_early: int = WEIGHT_DEFAULT
     adjacent_pairs: int = WEIGHT_DEFAULT
     classroom_stability: int = WEIGHT_DEFAULT
+    same_group_adjacent: int = WEIGHT_DEFAULT
 
     def factor(self, field: str) -> float:
         """0..10 slider → multiplier around 1.0 at the default (5)."""
@@ -43,6 +44,7 @@ class SolverScales:
     teacher_days: int
     late_lesson: int
     room_placement: int
+    same_group_adjacent: int
 
 
 # Later-lesson cap that does not exclude 5–6 (or later) doubles.
@@ -117,7 +119,7 @@ SOFT_STAGE_TIME_WEIGHT = {
 SOFT_STAGE_TAIL_FRACTION = 0.10
 
 SOFT_STAGE_LABELS = {
-    SOFT_STAGE_PACK_GAPS: "окна учителей и сдвоенные",
+    SOFT_STAGE_PACK_GAPS: "окна учителей, сдвоенные и циклы предметов",
     SOFT_STAGE_EARLY_ROOMS: "ранние уроки и кабинеты",
     SOFT_STAGE_COSMETICS: "баланс дней и стабильность кабинетов",
 }
@@ -199,6 +201,8 @@ def solver_scales(prefs: PreferenceWeights) -> SolverScales:
     f_pairs = n_pairs / float(WEIGHT_DEFAULT)
     f_gaps = prefs.factor("teacher_gaps")
     f_stab = prefs.factor("classroom_stability")
+    f_group = prefs.factor("same_group_adjacent")
+    n_group = clamp_weight(prefs.same_group_adjacent)
     soft_pairs = n_pairs > 0 and not hard_pairs
     return SolverScales(
         slot=max(1, int(round(1 * f_early))),
@@ -209,6 +213,7 @@ def solver_scales(prefs: PreferenceWeights) -> SolverScales:
         teacher_days=max(0, int(round(40 * f_gaps))),
         late_lesson=max(0, int(round(25 * f_early))),
         room_placement=max(1, int(round(2 * f_stab))),
+        same_group_adjacent=max(0, int(round(400 * f_group))) if n_group > 0 else 0,
     )
 
 
@@ -227,4 +232,5 @@ def weights_from_settings(settings, overrides: dict | None = None) -> Preference
         hard_subjects_early=pick("pref_hard_subjects_early"),
         adjacent_pairs=pick("pref_adjacent_pairs"),
         classroom_stability=pick("pref_classroom_stability"),
+        same_group_adjacent=pick("pref_same_group_adjacent"),
     )

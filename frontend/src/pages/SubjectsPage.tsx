@@ -11,8 +11,8 @@ import {
   updateSubject,
   updateSubjectColor,
   type Subject,
-  type SubjectDifficulty,
 } from '../api/subjects'
+import { SUBJECT_GROUP_LABELS, SUBJECT_GROUP_OPTIONS, type SubjectGroup } from '../domain/subjectGroups'
 
 const DEFAULT_PALETTE = [
   '#147f78',
@@ -27,12 +27,6 @@ const DEFAULT_PALETTE = [
   '#b86b2e',
 ]
 
-const DIFFICULTY_LABELS: Record<SubjectDifficulty, { label: string; badgeClass: string }> = {
-  easy: { label: 'Лёгкий', badgeClass: 'bg-success-subtle text-success-emphasis border border-success-subtle' },
-  medium: { label: 'Средний', badgeClass: 'bg-secondary-subtle text-secondary-emphasis border border-secondary-subtle' },
-  hard: { label: 'Сложный', badgeClass: 'bg-danger-subtle text-danger-emphasis border border-danger-subtle' },
-}
-
 export function SubjectsPage() {
   const qc = useQueryClient()
   const [filter, setFilter] = useState<'all' | 'elementary' | 'secondary'>('all')
@@ -42,12 +36,12 @@ export function SubjectsPage() {
   const [form, setForm] = useState<{
     name: string
     color: string
-    difficulty: SubjectDifficulty
+    subject_group: SubjectGroup
     requires_fixed_classroom: boolean
   }>({
     name: '',
     color: '#147f78',
-    difficulty: 'medium',
+    subject_group: 'humanities',
     requires_fixed_classroom: false,
   })
 
@@ -76,7 +70,7 @@ export function SubjectsPage() {
       const payload = {
         name: form.name.trim(),
         color: form.color,
-        difficulty: form.difficulty,
+        subject_group: form.subject_group,
         requires_fixed_classroom: form.requires_fixed_classroom,
       }
       if (!payload.name) throw new Error('Укажите название')
@@ -113,7 +107,7 @@ export function SubjectsPage() {
     setForm({
       name: '',
       color: '#147f78',
-      difficulty: 'medium',
+      subject_group: 'humanities',
       requires_fixed_classroom: false,
     })
     setEditingId('new')
@@ -123,7 +117,7 @@ export function SubjectsPage() {
     setForm({
       name: s.name,
       color: s.display_color,
-      difficulty: s.difficulty || 'medium',
+      subject_group: s.subject_group || 'humanities',
       requires_fixed_classroom: s.requires_fixed_classroom,
     })
     setEditingId(s.id)
@@ -169,7 +163,7 @@ export function SubjectsPage() {
             <tr>
               <th style={{ width: 48 }} />
               <th>Название</th>
-              <th>Сложность</th>
+              <th>Группа</th>
               <th>Фикс. кабинет</th>
               <th>Кабинеты</th>
               <th />
@@ -196,8 +190,8 @@ export function SubjectsPage() {
                   </Link>
                 </td>
                 <td>
-                  <span className={`badge ${DIFFICULTY_LABELS[s.difficulty || 'medium']?.badgeClass || 'bg-secondary'}`}>
-                    {DIFFICULTY_LABELS[s.difficulty || 'medium']?.label || s.difficulty}
+                  <span className={`badge ${SUBJECT_GROUP_LABELS[s.subject_group || 'humanities']?.badgeClass || 'bg-secondary'}`}>
+                    {SUBJECT_GROUP_LABELS[s.subject_group || 'humanities']?.label || s.subject_group}
                   </span>
                 </td>
                 <td>{s.requires_fixed_classroom ? 'да' : '—'}</td>
@@ -301,16 +295,21 @@ export function SubjectsPage() {
                   <input type="color" className="form-control form-control-color" value={form.color} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))} />
                 </div>
                 <div className="mb-2">
-                  <label className="form-label">Сложность предмета</label>
+                  <label className="form-label">Группа предметов</label>
                   <select
                     className="form-select"
-                    value={form.difficulty}
-                    onChange={(e) => setForm((f) => ({ ...f, difficulty: e.target.value as SubjectDifficulty }))}
+                    value={form.subject_group}
+                    onChange={(e) => setForm((f) => ({ ...f, subject_group: e.target.value as SubjectGroup }))}
                   >
-                    <option value="easy">Лёгкий (разгрузочный, подходит для конца дня / 7 уроков)</option>
-                    <option value="medium">Средний</option>
-                    <option value="hard">Сложный (математика, физика, химия — ставится раньше, запрещён на 7 уроке)</option>
+                    {SUBJECT_GROUP_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label} — {opt.hint}
+                      </option>
+                    ))}
                   </select>
+                  <div className="form-text">
+                    При автосоставлении соседние уроки одной группы (кроме сдвоенного одного предмета) штрафуются.
+                  </div>
                 </div>
                 <div className="form-check mb-2">
                   <input

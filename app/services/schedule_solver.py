@@ -8,14 +8,23 @@ import threading
 import time
 from typing import Any, Callable
 
-from app.domain.classroom_rules import MSG_NO_CLASSROOM
+from app.domain.classroom_rules import format_no_classroom
 from app.domain.pair_epochs import PairFreezeSpec, freeze_keys_for_good_doubles
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
-from app.domain.shift_grid import lesson_end_exclusive, weekly_slot_count
+from app.domain.days import DAY_NAMES
+from app.domain.shift_grid import (
+    capped_lesson_end_exclusive,
+    lesson_end_exclusive,
+    lessons_count_on_day,
+    weekly_slot_count,
+)
+from app.domain.subject_group import normalize_subject_group
 from app.domain.schedule_rules import (
     classroom_at_capacity,
+    day_placement_bounds,
     leftover_singles_allowed,
     occupancy_blocks_unit,
+    other_day_subject_capacity,
     second_hour_is_split,
     subject_day_limit_reached,
     teacher_busy_at_slot,
@@ -42,7 +51,14 @@ from app.domain.preferences import (
     weights_from_settings,
 )
 from app.models import SchoolClass, TeachingAssignment
-from app.services.assignment_hours import placed_counts, remaining_for
+from app.services.assignment_hours import (
+    occupancy_lessons_by_class_day,
+    placed_counts,
+    placed_counts_except_day,
+    placed_counts_on_day_after_lesson,
+    placed_lessons_by_assignment_day,
+    remaining_for,
+)
 from app.services.classroom_resolver import (
     candidate_classrooms,
     load_classroom_facts,
@@ -242,18 +258,17 @@ def run_staged_cp_sat_search(
     on_progress: Callable[[int, int, str], None] | None = None,
     solve_fn: Callable | None = None,
     pair_freeze: PairFreezeSpec | None = None,
+    phase1_maximize: list | None = None,
+    lock_maximize: bool = False,
 ) -> tuple[str | None, Any, Any, float]:
     """Feasibility, named soft packages, then Minimize tail until the time limit.
 
     Phase 1 has no Minimize — CP-SAT without an objective returns OPTIMAL on
     the first solution, so later stages always run when time remains.
-    Named packages share a weighted slice of leftover time minus a tail
-    reserve, so the last package cannot consume the whole remainder when it
-    proves OPTIMAL in a few seconds. The tail re-Minimizes the last package
-    (new seed each round) until remaining time is gone; it stops early only
-    if a round is OPTIMAL and freeze adds no new keys (same objective is
-    proven). Freeze waits until after pack_gaps so 6h math can pack before
-    2h PE is pinned. Frozen x==1 stays on if a later stage times out.
+    If ``phase1_maximize`` is set (day fill), phase 1 Maximizes those vars
+    instead: an empty assignment is otherwise a trivial feasible solution.
+    ``lock_maximize`` then pins the achieved fill so later Minimize cannot
+    unplace lessons.
     """
 
     def _notify(current: int, message: str) -> None:
@@ -271,11 +286,22 @@ def run_staged_cp_sat_search(
 
     t0 = time.perf_counter()
     budget = max(0.1, float(time_limit_sec))
-    _notify(30, f"Ищу допустимое расписание (лимит {int(budget)} с)…")
+    maximize_terms = [v for v in (phase1_maximize or []) if v is not None]
+    fill_budget = budget
+    if maximize_terms and soft_stages:
+        fill_budget = max(min_remaining_sec, budget * 0.4)
+
+    if maximize_terms:
+        _notify(30, f"Наполняю день (лимит {int(fill_budget)} с)…")
+        model.Maximize(sum(maximize_terms))
+        stop_first = False
+    else:
+        _notify(30, f"Ищу допустимое расписание (лимит {int(budget)} с)…")
+        stop_first = True
 
     solver_feas = cp_model.CpSolver()
     _apply_cp_sat_params(
-        solver_feas, random_seed, budget, num_workers, stop_after_first=True
+        solver_feas, random_seed, fill_budget, num_workers, stop_after_first=stop_first
     )
     status_feas = _solve(solver_feas)
     elapsed = time.perf_counter() - t0
@@ -285,7 +311,11 @@ def run_staged_cp_sat_search(
         return None, status_feas, solver_feas, elapsed
 
     best_status, best_solver = status_feas, solver_feas
-    optimized = False
+    optimized = bool(maximize_terms)
+    if maximize_terms and lock_maximize:
+        achieved = sum(int(best_solver.Value(v)) for v in maximize_terms)
+        model.Add(sum(maximize_terms) >= achieved)
+        model.ClearObjective()
     if not soft_stages:
         _notify(80, f"Допустимое расписание найдено за {elapsed:.0f} с")
         return None, best_status, best_solver, elapsed
@@ -388,6 +418,140 @@ def run_staged_cp_sat_search(
     return None, best_status, best_solver, elapsed
 
 
+def _bool_from_sum(model, terms: list, name: str):
+    flag = model.NewBoolVar(name)
+    if terms:
+        total = sum(terms)
+        model.Add(total >= flag)
+        model.Add(total <= len(terms) * flag)
+    else:
+        model.Add(flag == 0)
+    return flag
+
+
+def _add_same_group_adjacent_costs(
+    model,
+    *,
+    ctx,
+    hard_ctx,
+    weight: int,
+    obj_terms: list,
+) -> None:
+    """Penalize consecutive lessons of different subjects from the same cycle."""
+    if weight <= 0:
+        return
+    group_of = {}
+    subject_of = {}
+    for a in ctx.assignments:
+        subj = a.subject
+        group_of[a.id] = normalize_subject_group(
+            getattr(subj, "subject_group", None) if subj else None
+        )
+        subject_of[a.id] = int(a.subject_id) if a.subject_id else 0
+
+    by_class: dict[int, list[int]] = defaultdict(list)
+    for ui, unit in ctx.unit_list:
+        by_class[unit.class_id].append(ui)
+
+    lesson_start = ctx.shift_obj.start_lesson
+    days = (
+        [ctx.day_of_week]
+        if ctx.day_of_week is not None
+        else list(range(1, ctx.shift_obj.working_days + 1))
+    )
+    for cid, uidxs in by_class.items():
+        group_subjects: dict[str, set[int]] = defaultdict(set)
+        for ui in uidxs:
+            aid = ctx.unit_by_idx[ui].assignment_id
+            grp = group_of.get(aid)
+            sid = subject_of.get(aid, 0)
+            if grp and sid:
+                group_subjects[grp].add(sid)
+        clashable = {g for g, sids in group_subjects.items() if len(sids) >= 2}
+        if not clashable:
+            continue
+        for day in days:
+            if day is None:
+                continue
+            lesson_end = capped_lesson_end_exclusive(
+                ctx.shift_obj, day, ctx.max_lesson
+            )
+            occ_group: dict[tuple[str, int], Any] = {}
+            occ_subj: dict[tuple[int, int], Any] = {}
+            for lesson in range(lesson_start, lesson_end):
+                by_group: dict[str, list] = defaultdict(list)
+                by_subj: dict[int, list] = defaultdict(list)
+                for ui in uidxs:
+                    aid = ctx.unit_by_idx[ui].assignment_id
+                    grp = group_of.get(aid)
+                    sid = subject_of.get(aid, 0)
+                    if grp not in clashable:
+                        continue
+                    for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
+                        if slot.day != day or slot.lesson != lesson:
+                            continue
+                        key = (ui, slot.slot_id)
+                        if key not in hard_ctx.x:
+                            continue
+                        var = hard_ctx.x[key]
+                        if grp:
+                            by_group[grp].append(var)
+                        if sid:
+                            by_subj[sid].append(var)
+                for grp, terms in by_group.items():
+                    occ_group[(grp, lesson)] = _bool_from_sum(
+                        model, terms, f"grp_c{cid}_d{day}_l{lesson}_{grp}"
+                    )
+                for sid, terms in by_subj.items():
+                    occ_subj[(sid, lesson)] = _bool_from_sum(
+                        model, terms, f"sg_c{cid}_d{day}_l{lesson}_s{sid}"
+                    )
+
+            for lesson in range(lesson_start, lesson_end - 1):
+                nxt = lesson + 1
+                groups = {
+                    g
+                    for (g, ln) in occ_group
+                    if ln in (lesson, nxt)
+                }
+                for grp in groups:
+                    g_a = occ_group.get((grp, lesson))
+                    g_b = occ_group.get((grp, nxt))
+                    if g_a is None or g_b is None:
+                        continue
+                    same_bits = []
+                    subj_ids = {
+                        sid
+                        for (sid, ln) in occ_subj
+                        if ln in (lesson, nxt)
+                    }
+                    for sid in subj_ids:
+                        s_a = occ_subj.get((sid, lesson))
+                        s_b = occ_subj.get((sid, nxt))
+                        if s_a is None or s_b is None:
+                            continue
+                        both = model.NewBoolVar(
+                            f"same_c{cid}_d{day}_l{lesson}_s{sid}"
+                        )
+                        model.Add(both <= s_a)
+                        model.Add(both <= s_b)
+                        model.Add(both >= s_a + s_b - 1)
+                        same_bits.append(both)
+                    any_same = _bool_from_sum(
+                        model,
+                        same_bits,
+                        f"anysame_c{cid}_d{day}_l{lesson}_{grp}",
+                    )
+                    clash = model.NewBoolVar(
+                        f"clash_c{cid}_d{day}_l{lesson}_{grp}"
+                    )
+                    model.Add(clash <= g_a)
+                    model.Add(clash <= g_b)
+                    model.Add(clash <= 1 - any_same)
+                    model.Add(clash >= g_a + g_b - any_same - 1)
+                    obj_terms.append(clash * weight)
+
+
 def _add_assignment_pair_packing(
     model,
     *,
@@ -399,12 +563,16 @@ def _add_assignment_pair_packing(
     max_per_subject_day: int,
     scales,
     obj_terms: list,
+    hours_by_assignment: dict[int, int] | None = None,
+    single_day: bool = False,
 ) -> None:
     """Same-day doubles must be neighbouring lessons; slider packs weekly 2+2+…
 
     When max-per-day is 2, two hours of a subject on one day cannot sandwich
     another subject (English 5 + Biology 6 + English 7 is infeasible). Slider 10
     additionally forbids extra singleton days; 1–9 penalize them; 0 does not.
+    ``hours_by_assignment`` overrides weekly hours (remaining hours for day fill).
+    ``single_day`` does not force the leftover singleton onto today.
     """
     if max_per_subject_day < 2:
         return
@@ -414,7 +582,10 @@ def _add_assignment_pair_packing(
     lesson_start = shift_obj.start_lesson
 
     for a in assignments:
-        hours = int(a.hours_per_week or 0)
+        if hours_by_assignment is not None:
+            hours = int(hours_by_assignment.get(a.id, 0))
+        else:
+            hours = int(a.hours_per_week or 0)
         if hours <= 0:
             continue
         uidxs = [ui for ui, u in unit_list if u.assignment_id == a.id]
@@ -482,7 +653,11 @@ def _add_assignment_pair_packing(
         if not is_one_vars:
             continue
         if hard_pack:
-            model.Add(sum(is_one_vars) == leftover)
+            if single_day:
+                if leftover == 0:
+                    model.Add(sum(is_one_vars) == 0)
+            else:
+                model.Add(sum(is_one_vars) == leftover)
         elif w_extra:
             extra = model.NewIntVar(0, shift_obj.working_days, f"asg_extra_a{a.id}")
             model.Add(extra >= sum(is_one_vars) - leftover)
@@ -527,16 +702,56 @@ def _occupy_room(busy: dict, room_id: int, slot: SlotFact) -> None:
     busy.setdefault(room_id, []).append(_slot_busy_fact(slot, room_id))
 
 
+def _assignment_place_names(assignment) -> tuple[str | None, str | None, str | None]:
+    sc = getattr(assignment, "school_class", None)
+    subj = getattr(assignment, "subject", None)
+    teacher = getattr(assignment, "teacher", None)
+    class_name = getattr(sc, "name", None) if sc is not None else None
+    subject_name = None
+    if subj is not None:
+        subject_name = getattr(subj, "display_name", None) or getattr(subj, "name", None)
+    teacher_name = None
+    if teacher is not None:
+        teacher_name = getattr(teacher, "display_name", None)
+    return class_name, subject_name, teacher_name
+
+
+def _no_classroom_for_assignment(
+    assignment,
+    *,
+    day: int | None = None,
+    lessons: list[int] | tuple[int, ...] | None = None,
+    candidate_count: int | None = None,
+) -> str:
+    class_name, subject_name, teacher_name = _assignment_place_names(assignment)
+    return format_no_classroom(
+        class_name=class_name,
+        subject_name=subject_name,
+        teacher_name=teacher_name,
+        day=day,
+        lessons=lessons,
+        candidate_count=candidate_count,
+    )
+
+
+@dataclass
+class RoomAssignResult:
+    by_ui: dict[int, int] | None
+    fail_assignment: Any = None
+    fail_slots: tuple[SlotFact, ...] = ()
+    candidate_count: int = 0
+
+
 def _assign_rooms_to_chosen(
     chosen: list[tuple[int, Any, SlotFact]],
     *,
     candidates_by_assignment: dict[int, list[tuple[int, int]]],
     rooms: list[Any],
     busy: dict,
-) -> dict[int, int] | None:
+) -> RoomAssignResult:
     """Greedy rooms for CP-SAT slots. Consecutive hours of one assignment
     share a room when one is free on both; otherwise each hour is picked
-    separately. None if any hour has no free candidate.
+    separately. ``by_ui`` is None if any hour has no free candidate.
     """
     caps = {r.id: (r.classes_capacity or 1) for r in rooms}
     rows = sorted(
@@ -569,11 +784,16 @@ def _assign_rooms_to_chosen(
                 continue
         rid = _first_free_room(cands, [slot], caps, busy)
         if rid is None:
-            return None
+            return RoomAssignResult(
+                by_ui=None,
+                fail_assignment=assignment,
+                fail_slots=(slot,),
+                candidate_count=len(cands),
+            )
         by_ui[ui] = rid
         _occupy_room(busy, rid, slot)
         i += 1
-    return by_ui
+    return RoomAssignResult(by_ui=by_ui)
 
 
 @dataclass
@@ -643,7 +863,9 @@ class ResidualGraphSolver:
                     if not has_free:
                         reason = "Кабинет уже занят в это время"
                 elif reason is None and not candidates:
-                    reason = MSG_NO_CLASSROOM
+                    reason = _no_classroom_for_assignment(
+                        assignment, candidate_count=0
+                    )
                 if reason is None:
                     subj_key = (unit.assignment_id, slot.day)
                     if subject_day_limit_reached(
@@ -911,6 +1133,11 @@ class _ShiftDataContext:
     slots_by_class: dict[int, list[SlotFact]]
     rooms: list[Any]
     candidates_by_assignment: dict[int, list[tuple[int, int]]]
+    day_of_week: int | None = None
+    max_lesson: int | None = None
+    remaining_by_assignment: dict[int, int] = field(default_factory=dict)
+    min_today_by_assignment: dict[int, int] = field(default_factory=dict)
+    max_today_by_assignment: dict[int, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -920,6 +1147,7 @@ class _HardModelContext:
     feasible_slots_by_unit: dict[int, list[SlotFact]]
     modeled_room_ids: set[int]
     subgroup_pairs: list[tuple[TeachingAssignment, TeachingAssignment]]
+    fill_objective_vars: list = field(default_factory=list)
 
 
 class CpSatScheduleSolver:
@@ -1013,6 +1241,8 @@ class CpSatScheduleSolver:
         should_stop,
         on_progress: Callable[[int, int, str], None] | None = None,
         pair_freeze: PairFreezeSpec | None = None,
+        phase1_maximize: list | None = None,
+        lock_maximize: bool = False,
     ) -> tuple[str | None, Any, Any, float]:
         return run_staged_cp_sat_search(
             model,
@@ -1026,6 +1256,8 @@ class CpSatScheduleSolver:
             on_progress=on_progress,
             solve_fn=lambda solver, m: self._solve_with_cancel(solver, m, should_stop),
             pair_freeze=pair_freeze,
+            phase1_maximize=phase1_maximize,
+            lock_maximize=lock_maximize,
         )
 
     def _load_shift_data(
@@ -1036,6 +1268,8 @@ class CpSatScheduleSolver:
         max_diag_items: int,
         on_progress: Callable[[int, int, str], None] | None,
         should_stop: Callable[[], bool] | None,
+        day_of_week: int | None = None,
+        max_lesson: int | None = None,
     ) -> tuple[CpSatSolveResult | None, _ShiftDataContext | None]:
         shift_classes = (
             self.session.query(SchoolClass)
@@ -1098,6 +1332,51 @@ class CpSatScheduleSolver:
                 ),
                 None,
             )
+        if day_of_week is not None:
+            wd = int(shift_obj.working_days or 5)
+            if int(day_of_week) < 1 or int(day_of_week) > wd:
+                label = (
+                    DAY_NAMES[day_of_week - 1]
+                    if 1 <= int(day_of_week) <= 6
+                    else str(day_of_week)
+                )
+                return (
+                    CpSatSolveResult(
+                        status="MODEL_INVALID",
+                        diagnostics=[
+                            {
+                                "reason": (
+                                    f"День {label} вне сетки смены "
+                                    f"«{shift_obj.name}» ({wd} дн.)"
+                                )
+                            }
+                        ],
+                    ),
+                    None,
+                )
+        cap_lesson: int | None = None
+        if day_of_week is not None and max_lesson is not None:
+            start_l = max(1, int(shift_obj.start_lesson or 1))
+            day_end = lesson_end_exclusive(shift_obj, int(day_of_week))
+            last_l = day_end - 1
+            cap_i = int(max_lesson)
+            if cap_i < start_l:
+                return (
+                    CpSatSolveResult(
+                        status="MODEL_INVALID",
+                        diagnostics=[
+                            {
+                                "reason": (
+                                    f"Лимит «не позже {cap_i}-го урока» раньше "
+                                    f"начала сетки смены (урок {start_l})"
+                                )
+                            }
+                        ],
+                    ),
+                    None,
+                )
+            if cap_i < last_l:
+                cap_lesson = cap_i
         n_shift_slots = weekly_slot_count(shift_obj)
         hours_by_tid: dict[int, int] = defaultdict(int)
         name_by_tid: dict[int, str] = {}
@@ -1134,12 +1413,15 @@ class CpSatScheduleSolver:
             )
 
         n_hours = sum(int(a.hours_per_week or 0) for a in assignments)
+        day_label = ""
+        if day_of_week is not None and 1 <= int(day_of_week) <= 6:
+            day_label = f", {DAY_NAMES[int(day_of_week) - 1]}"
         self._notify(
             on_progress,
             10,
             100,
             (
-                f"Смена «{shift_obj.name}»: {len(shift_classes)} кл., "
+                f"Смена «{shift_obj.name}»{day_label}: {len(shift_classes)} кл., "
                 f"{n_hours} ч, {len(hours_by_tid)} учителей"
             ),
         )
@@ -1148,15 +1430,54 @@ class CpSatScheduleSolver:
         if stopped:
             return stopped, None
 
-        units = build_unit_facts(assignments, hours_mode="full")
-        if not units:
-            return (
-                CpSatSolveResult(
-                    status="MODEL_INVALID",
-                    diagnostics=[{"reason": "Нет часов для размещения"}],
-                ),
-                None,
+        remaining_by_assignment: dict[int, int] = {}
+        min_today_by_assignment: dict[int, int] = {}
+        max_today_by_assignment: dict[int, int] = {}
+        assignment_ids = [a.id for a in assignments]
+        if day_of_week is not None:
+            placed_except = placed_counts_except_day(
+                self.session,
+                assignment_ids,
+                int(day_of_week),
+                max_lesson=cap_lesson,
             )
+            remaining_by_assignment = {
+                a.id: remaining_for(a, placed=placed_except.get(a.id, 0))
+                for a in assignments
+            }
+            units = build_unit_facts(
+                assignments,
+                hours_mode="remaining",
+                placed_counts=placed_except,
+            )
+            if not units:
+                return (
+                    CpSatSolveResult(
+                        status="FEASIBLE",
+                        placed_count=0,
+                        diagnostics=[
+                            {
+                                "reason": (
+                                    "На этот день не осталось непроставленных часов"
+                                )
+                            }
+                        ],
+                    ),
+                    None,
+                )
+        else:
+            remaining_by_assignment = {
+                a.id: int(a.hours_per_week or 0) for a in assignments
+            }
+            units = build_unit_facts(assignments, hours_mode="full")
+            if not units:
+                return (
+                    CpSatSolveResult(
+                        status="MODEL_INVALID",
+                        diagnostics=[{"reason": "Нет часов для размещения"}],
+                    ),
+                    None,
+                )
 
         self._notify(
             on_progress,
@@ -1169,7 +1490,7 @@ class CpSatScheduleSolver:
             shift_classes, session=self.session, with_intervals=True
         )
 
-        # --- feasibility: enough slots per class
+        # --- feasibility: enough slots per class (full week grid)
         for a in assignments:
             n_slots = len(slots_by_class.get(a.class_id, []))
             if a.hours_per_week > n_slots:
@@ -1188,6 +1509,90 @@ class CpSatScheduleSolver:
                     None,
                 )
 
+        if day_of_week is not None:
+            day_i = int(day_of_week)
+            slots_by_class = {
+                cid: [s for s in slots if s.day == day_i]
+                for cid, slots in slots_by_class.items()
+            }
+        if cap_lesson is not None:
+            slots_by_class = {
+                cid: [s for s in slots if s.lesson <= cap_lesson]
+                for cid, slots in slots_by_class.items()
+            }
+
+        if day_of_week is not None:
+            wd = int(shift_obj.working_days or 5)
+            lessons_by_day = {
+                d: lessons_count_on_day(shift_obj, d) for d in range(1, wd + 1)
+            }
+            asg_placed = placed_lessons_by_assignment_day(self.session, assignment_ids)
+            class_occ = occupancy_lessons_by_class_day(self.session, resolved_class_ids)
+            today = int(day_of_week)
+            locked_today = (
+                placed_counts_on_day_after_lesson(
+                    self.session, assignment_ids, today, cap_lesson
+                )
+                if cap_lesson is not None
+                else {}
+            )
+            bound_fail: list[dict[str, str]] = []
+            for a in assignments:
+                rem = remaining_by_assignment.get(a.id, 0)
+                if rem <= 0:
+                    min_today_by_assignment[a.id] = 0
+                    max_today_by_assignment[a.id] = 0
+                    continue
+                cap_other = other_day_subject_capacity(
+                    working_days=wd,
+                    today=today,
+                    max_per_day=max_per_subject_day,
+                    assignment_placed_by_day={
+                        d: asg_placed.get((a.id, d), 0) for d in range(1, wd + 1)
+                    },
+                    class_occupied_by_day={
+                        d: class_occ.get((a.class_id, d), 0) for d in range(1, wd + 1)
+                    },
+                    lessons_by_day=lessons_by_day,
+                )
+                day_end = capped_lesson_end_exclusive(
+                    shift_obj, today, cap_lesson
+                )
+                start_l = max(1, int(shift_obj.start_lesson or 1))
+                day_lessons_today = max(0, day_end - start_l)
+                max_per_today = max(
+                    0,
+                    max_per_subject_day - int(locked_today.get(a.id, 0)),
+                )
+                min_t, max_t = day_placement_bounds(
+                    rem,
+                    max_per_day=max_per_today,
+                    day_lessons=day_lessons_today,
+                    other_day_capacity=cap_other,
+                )
+                min_today_by_assignment[a.id] = min_t
+                max_today_by_assignment[a.id] = max_t
+                if min_t > max_t:
+                    class_name = a.school_class.name if a.school_class else "?"
+                    subj_name = a.subject.display_name if a.subject else "?"
+                    bound_fail.append(
+                        {
+                            "reason": (
+                                f"{class_name} «{subj_name}»: осталось {rem} ч, "
+                                f"сегодня можно поставить не больше {max_t}, "
+                                f"а на другие дни места хватает только на {cap_other}."
+                            )
+                        }
+                    )
+            if bound_fail:
+                return (
+                    CpSatSolveResult(
+                        status="INFEASIBLE",
+                        diagnostics=bound_fail[:max_diag_items],
+                    ),
+                    None,
+                )
+
         rooms = load_classroom_facts(self.session, self.school_id)
         candidates_by_assignment: dict[int, list[tuple[int, int]]] = {
             a.id: candidate_classrooms(a, settings, rooms) for a in assignments
@@ -1196,12 +1601,10 @@ class CpSatScheduleSolver:
         for a in assignments:
             if candidates_by_assignment.get(a.id):
                 continue
-            class_name = a.school_class.name if a.school_class else "?"
-            subj_name = a.subject.display_name if a.subject else "?"
             missing_rooms.append(
                 {
-                    "reason": (
-                        f"{class_name} «{subj_name}»: {MSG_NO_CLASSROOM}"
+                    "reason": _no_classroom_for_assignment(
+                        a, candidate_count=0
                     )
                 }
             )
@@ -1231,6 +1634,11 @@ class CpSatScheduleSolver:
             slots_by_class=slots_by_class,
             rooms=rooms,
             candidates_by_assignment=candidates_by_assignment,
+            day_of_week=int(day_of_week) if day_of_week is not None else None,
+            max_lesson=cap_lesson,
+            remaining_by_assignment=remaining_by_assignment,
+            min_today_by_assignment=min_today_by_assignment,
+            max_today_by_assignment=max_today_by_assignment,
         )
         return None, ctx
 
@@ -1241,12 +1649,22 @@ class CpSatScheduleSolver:
         should_stop: Callable[[], bool] | None,
     ) -> tuple[CpSatSolveResult | None, _HardModelContext | None]:
         teacher_ids_scope = {u.teacher_id for u in ctx.units if u.teacher_id}
-        external_busy = load_external_teacher_busy(
-            self.session, teacher_ids_scope, ctx.class_ids
-        )
+        if ctx.day_of_week is not None:
+            external_busy = load_teacher_busy(
+                self.session,
+                teacher_ids_scope,
+                class_ids_scope=ctx.class_ids,
+                exclude_scope_day=ctx.day_of_week,
+                exclude_scope_max_lesson=ctx.max_lesson,
+            )
+        else:
+            external_busy = load_external_teacher_busy(
+                self.session, teacher_ids_scope, ctx.class_ids
+            )
 
         x: dict[tuple[int, str], cp_model.IntVar] = {}
         feasible_slots_by_unit: dict[int, list[SlotFact]] = {}
+        day_fill = ctx.day_of_week is not None
 
         for ui, unit in ctx.unit_list:
             slot_list = ctx.slots_by_class.get(unit.class_id, [])
@@ -1264,6 +1682,9 @@ class CpSatScheduleSolver:
                 if not teacher_busy_at_slot(s, unit.teacher_id, external_busy)
             ]
             if not feasible:
+                if day_fill:
+                    feasible_slots_by_unit[ui] = []
+                    continue
                 return (
                     CpSatSolveResult(
                         status="INFEASIBLE",
@@ -1287,8 +1708,46 @@ class CpSatScheduleSolver:
                     return stopped, None
 
         for ui, unit in ctx.unit_list:
-            feas = feasible_slots_by_unit[ui]
-            model.AddExactlyOne([x[(ui, s.slot_id)] for s in feas])
+            feas = feasible_slots_by_unit.get(ui) or []
+            vars_ui = [x[(ui, s.slot_id)] for s in feas if (ui, s.slot_id) in x]
+            if not vars_ui:
+                continue
+            if day_fill:
+                model.AddAtMostOne(vars_ui)
+            else:
+                model.AddExactlyOne(vars_ui)
+
+        if day_fill:
+            for a in ctx.assignments:
+                uidxs = [ui for ui, u in ctx.unit_list if u.assignment_id == a.id]
+                terms = []
+                for ui in uidxs:
+                    for slot in feasible_slots_by_unit.get(ui, []):
+                        key = (ui, slot.slot_id)
+                        if key in x:
+                            terms.append(x[key])
+                min_t = int(ctx.min_today_by_assignment.get(a.id, 0))
+                max_t = int(ctx.max_today_by_assignment.get(a.id, 0))
+                if terms:
+                    model.Add(sum(terms) <= max_t)
+                    model.Add(sum(terms) >= min(min_t, len(terms)))
+                elif min_t > 0:
+                    class_name = a.school_class.name if a.school_class else "?"
+                    subj_name = a.subject.display_name if a.subject else "?"
+                    return (
+                        CpSatSolveResult(
+                            status="INFEASIBLE",
+                            diagnostics=[
+                                {
+                                    "reason": (
+                                        f"{class_name} «{subj_name}»: нужно поставить "
+                                        f"сегодня не меньше {min_t} ч, но свободных слотов нет"
+                                    )
+                                }
+                            ],
+                        ),
+                        None,
+                    )
 
         y: dict[tuple[int, str, int], Any] = {}
         modeled_room_ids: set[int] = set()
@@ -1332,17 +1791,22 @@ class CpSatScheduleSolver:
 
         # Hard: class day is a prefix of the shift grid (start_lesson … last used).
         lesson_start = ctx.shift_obj.start_lesson
+        fill_objective_vars: list = []
         for cid in ctx.class_ids:
             uidxs = [ui for ui, u in ctx.unit_list if u.class_id == cid]
             if not uidxs:
                 continue
             for day in range(1, ctx.shift_obj.working_days + 1):
-                lesson_end = lesson_end_exclusive(ctx.shift_obj, day)
+                if ctx.day_of_week is not None and day != ctx.day_of_week:
+                    continue
+                lesson_end = capped_lesson_end_exclusive(
+                    ctx.shift_obj, day, ctx.max_lesson
+                )
                 occ_by_lesson = {}
                 for lesson in range(lesson_start, lesson_end):
                     terms = []
                     for ui in uidxs:
-                        for slot in feasible_slots_by_unit[ui]:
+                        for slot in feasible_slots_by_unit.get(ui, []):
                             if slot.day == day and slot.lesson == lesson:
                                 key = (ui, slot.slot_id)
                                 if key in x:
@@ -1355,9 +1819,17 @@ class CpSatScheduleSolver:
                     else:
                         model.Add(occ == 0)
                     occ_by_lesson[lesson] = occ
+                    if ctx.day_of_week is not None:
+                        fill_objective_vars.append(occ)
 
                 for lesson in range(lesson_start + 1, lesson_end):
-                    model.Add(occ_by_lesson[lesson] <= occ_by_lesson[lesson - 1])
+                    if ctx.day_of_week is None:
+                        model.Add(occ_by_lesson[lesson] <= occ_by_lesson[lesson - 1])
+                    elif lesson + 1 < lesson_end:
+                        model.Add(
+                            occ_by_lesson[lesson]
+                            >= occ_by_lesson[lesson - 1] + occ_by_lesson[lesson + 1] - 1
+                        )
 
         # Teacher: at most one overlapping lesson across all classes in this shift
         by_teacher: dict[int, list[int]] = defaultdict(list)
@@ -1456,7 +1928,9 @@ class CpSatScheduleSolver:
             if not uidxs1 or not uidxs2:
                 continue
             for day in range(1, ctx.shift_obj.working_days + 1):
-                lesson_end = lesson_end_exclusive(ctx.shift_obj, day)
+                lesson_end = capped_lesson_end_exclusive(
+                    ctx.shift_obj, day, ctx.max_lesson
+                )
                 for lesson in range(lesson_start, lesson_end):
                     terms1 = []
                     for ui in uidxs1:
@@ -1507,6 +1981,7 @@ class CpSatScheduleSolver:
             feasible_slots_by_unit=feasible_slots_by_unit,
             modeled_room_ids=modeled_room_ids,
             subgroup_pairs=subgroup_pairs,
+            fill_objective_vars=fill_objective_vars,
         )
         return None, hard_ctx
 
@@ -1529,35 +2004,15 @@ class CpSatScheduleSolver:
         w_subgroup_spread = scales.subgroup_spread
         w_room = scales.room_placement
         for ui, unit in ctx.unit_list:
-            a = ctx.assignment_map.get(unit.assignment_id)
-            subj = a.subject if a else None
-            difficulty = getattr(subj, "difficulty", "medium") if subj else "medium"
-            is_hard = difficulty == "hard"
-            is_easy = difficulty == "easy"
-
-            for slot in hard_ctx.feasible_slots_by_unit[ui]:
+            for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
                 key = (ui, slot.slot_id)
                 if key not in hard_ctx.x:
                     continue
                 weight = slot.day * 100 + slot.lesson
                 if slot.lesson >= 7:
-                    # Deterrent penalty for 7th+ lessons: place them last, only when unavoidable
                     weight += 10000 * (slot.lesson - 6) + scales.late_lesson * 2
-                    if is_hard:
-                        # Heavy deterrent penalty against placing hard subjects on 7th+ lessons
-                        weight += 50000
                 elif slot.lesson >= 6:
                     weight += scales.late_lesson * (slot.lesson - 5)
-                    if is_hard:
-                        weight += scales.late_lesson * 2
-
-                if is_hard:
-                    # Extra preference to place hard subjects earlier (lessons 1-4)
-                    weight += slot.lesson * 25
-                elif is_easy:
-                    # Easy subjects get small discount on later lessons to absorb late slots
-                    weight = max(1, weight - slot.lesson * 5)
-
                 early_rooms.append(hard_ctx.x[key] * weight * w_slot)
 
         # Prefer owner / same-subject rooms
@@ -1567,40 +2022,49 @@ class CpSatScheduleSolver:
             for rid, cost in cands:
                 if cost <= 0:
                     continue
-                for slot in hard_ctx.feasible_slots_by_unit[ui]:
+                for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
                     ykey = (ui, slot.slot_id, rid)
                     if ykey in hard_ctx.y:
                         early_rooms.append(hard_ctx.y[ykey] * cost * w_room)
 
         # Penalize uneven distribution across days per class
-        for cid in ctx.class_ids:
-            uidxs = [ui for ui, u in ctx.unit_list if u.class_id == cid]
-            if not uidxs:
-                continue
-            for day in range(1, ctx.shift_obj.working_days + 1):
-                day_terms = []
-                for ui in uidxs:
-                    for slot in hard_ctx.feasible_slots_by_unit[ui]:
-                        if slot.day == day:
-                            key = (ui, slot.slot_id)
-                            if key in hard_ctx.x:
-                                day_terms.append(hard_ctx.x[key])
-                if day_terms:
-                    dsum = sum(day_terms)
-                    for day2 in range(day + 1, ctx.shift_obj.working_days + 1):
-                        day2_terms = []
-                        for ui in uidxs:
-                            for slot in hard_ctx.feasible_slots_by_unit[ui]:
-                                if slot.day == day2:
-                                    key = (ui, slot.slot_id)
-                                    if key in hard_ctx.x:
-                                        day2_terms.append(hard_ctx.x[key])
-                        if day2_terms:
-                            diff = model.NewIntVar(-len(uidxs), len(uidxs), f"diff_{cid}_{day}_{day2}")
-                            model.Add(diff == dsum - sum(day2_terms))
-                            abs_diff = model.NewIntVar(0, len(uidxs), f"abs_{cid}_{day}_{day2}")
-                            model.AddAbsEquality(abs_diff, diff)
-                            cosmetics.append(abs_diff * w_balance)
+        if ctx.day_of_week is None and w_balance:
+            for cid in ctx.class_ids:
+                uidxs = [ui for ui, u in ctx.unit_list if u.class_id == cid]
+                if not uidxs:
+                    continue
+                for day in range(1, ctx.shift_obj.working_days + 1):
+                    day_terms = []
+                    for ui in uidxs:
+                        for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
+                            if slot.day == day:
+                                key = (ui, slot.slot_id)
+                                if key in hard_ctx.x:
+                                    day_terms.append(hard_ctx.x[key])
+                    if day_terms:
+                        dsum = sum(day_terms)
+                        for day2 in range(day + 1, ctx.shift_obj.working_days + 1):
+                            day2_terms = []
+                            for ui in uidxs:
+                                for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
+                                    if slot.day == day2:
+                                        key = (ui, slot.slot_id)
+                                        if key in hard_ctx.x:
+                                            day2_terms.append(hard_ctx.x[key])
+                            if day2_terms:
+                                diff = model.NewIntVar(-len(uidxs), len(uidxs), f"diff_{cid}_{day}_{day2}")
+                                model.Add(diff == dsum - sum(day2_terms))
+                                abs_diff = model.NewIntVar(0, len(uidxs), f"abs_{cid}_{day}_{day2}")
+                                model.AddAbsEquality(abs_diff, diff)
+                                cosmetics.append(abs_diff * w_balance)
+
+        _add_same_group_adjacent_costs(
+            model,
+            ctx=ctx,
+            hard_ctx=hard_ctx,
+            weight=scales.same_group_adjacent,
+            obj_terms=pack_gaps,
+        )
 
         _add_assignment_pair_packing(
             model,
@@ -1612,31 +2076,38 @@ class CpSatScheduleSolver:
             max_per_subject_day=ctx.max_per_subject_day,
             scales=scales,
             obj_terms=pack_gaps,
+            hours_by_assignment=ctx.remaining_by_assignment or None,
+            single_day=ctx.day_of_week is not None,
         )
 
-        # Subgroup subjects: prefer concentrating lessons in fewer days
-        subgroup_assignments = [a for a in ctx.assignments if a.group_number is not None]
-        for a in subgroup_assignments:
-            uidxs = [ui for ui, u in ctx.unit_list if u.assignment_id == a.id]
-            for day in range(1, ctx.shift_obj.working_days + 1):
-                day_terms = []
-                for ui in uidxs:
-                    for slot in hard_ctx.feasible_slots_by_unit[ui]:
-                        if slot.day == day:
-                            key = (ui, slot.slot_id)
-                            if key in hard_ctx.x:
-                                day_terms.append(hard_ctx.x[key])
-                day_active = model.NewBoolVar(f"subgrp_a{a.id}_d{day}")
-                if day_terms:
-                    dsum = sum(day_terms)
-                    model.Add(dsum >= day_active)
-                    model.Add(dsum <= a.hours_per_week * day_active)
-                else:
-                    model.Add(day_active == 0)
-                if w_subgroup_spread:
-                    cosmetics.append(day_active * w_subgroup_spread)
+        hours_for_strategy = ctx.remaining_by_assignment or {
+            int(a.id): int(a.hours_per_week or 0) for a in ctx.assignments
+        }
 
-        if scales.teacher_days:
+        # Subgroup subjects: prefer concentrating lessons in fewer days
+        if ctx.day_of_week is None:
+            subgroup_assignments = [a for a in ctx.assignments if a.group_number is not None]
+            for a in subgroup_assignments:
+                uidxs = [ui for ui, u in ctx.unit_list if u.assignment_id == a.id]
+                for day in range(1, ctx.shift_obj.working_days + 1):
+                    day_terms = []
+                    for ui in uidxs:
+                        for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
+                            if slot.day == day:
+                                key = (ui, slot.slot_id)
+                                if key in hard_ctx.x:
+                                    day_terms.append(hard_ctx.x[key])
+                    day_active = model.NewBoolVar(f"subgrp_a{a.id}_d{day}")
+                    if day_terms:
+                        dsum = sum(day_terms)
+                        model.Add(dsum >= day_active)
+                        model.Add(dsum <= a.hours_per_week * day_active)
+                    else:
+                        model.Add(day_active == 0)
+                    if w_subgroup_spread:
+                        cosmetics.append(day_active * w_subgroup_spread)
+
+        if scales.teacher_days and ctx.day_of_week is None:
             teacher_ids = {unit.teacher_id for _, unit in ctx.unit_list if unit.teacher_id}
             for tid in teacher_ids:
                 for day in range(1, ctx.shift_obj.working_days + 1):
@@ -1644,7 +2115,7 @@ class CpSatScheduleSolver:
                     for ui, unit in ctx.unit_list:
                         if unit.teacher_id != tid:
                             continue
-                        for slot in hard_ctx.feasible_slots_by_unit[ui]:
+                        for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
                             if slot.day == day:
                                 key = (ui, slot.slot_id)
                                 if key in hard_ctx.x:
@@ -1664,9 +2135,7 @@ class CpSatScheduleSolver:
             hard_ctx.feasible_slots_by_unit,
             hard_ctx.x,
             hard_ctx.y,
-            hours_by_assignment={
-                int(a.id): int(a.hours_per_week or 0) for a in ctx.assignments
-            },
+            hours_by_assignment=hours_for_strategy,
             hours_first=normalize_hours_first(hours_first),
         )
         policy = freeze_policy(prefs)
@@ -1681,9 +2150,7 @@ class CpSatScheduleSolver:
                 ),
                 hard=policy.hard,
                 max_pair_lesson=policy.max_pair_lesson,
-                hours_by_assignment={
-                    int(a.id): int(a.hours_per_week or 0) for a in ctx.assignments
-                },
+                hours_by_assignment=hours_for_strategy,
                 min_hours=policy.min_hours,
             )
         return packages, pair_freeze
@@ -1712,6 +2179,8 @@ class CpSatScheduleSolver:
             should_stop=should_stop,
             on_progress=on_progress,
             pair_freeze=pair_freeze,
+            phase1_maximize=hard_ctx.fill_objective_vars if ctx.day_of_week is not None else None,
+            lock_maximize=ctx.day_of_week is not None,
         )
         if cancelled == "CANCELLED" or (should_stop and should_stop()):
             stopped = CpSatSolveResult(status="CANCELLED")
@@ -1767,13 +2236,20 @@ class CpSatScheduleSolver:
             if stopped:
                 return stopped
             self._notify(on_progress, 90, 100, "Запись расписания в сетку…")
-            self._schedule.delete_cells(class_ids=ctx.class_ids, commit=False)
+            delete_days = [ctx.day_of_week] if ctx.day_of_week is not None else None
+            self._schedule.delete_cells(
+                class_ids=ctx.class_ids,
+                days_of_week=delete_days,
+                max_lesson=ctx.max_lesson,
+                commit=False,
+            )
 
             chosen_rows: list[tuple[int, Any, SlotFact]] = []
+            allow_unplaced = ctx.day_of_week is not None
             for ui, unit in ctx.unit_list:
                 a = ctx.assignment_map[unit.assignment_id]
                 chosen = None
-                for slot in hard_ctx.feasible_slots_by_unit[ui]:
+                for slot in hard_ctx.feasible_slots_by_unit.get(ui, []):
                     key = (ui, slot.slot_id)
                     if key not in hard_ctx.x:
                         continue
@@ -1781,6 +2257,8 @@ class CpSatScheduleSolver:
                         chosen = slot
                         break
                 if not chosen:
+                    if allow_unplaced:
+                        continue
                     self.session.rollback()
                     return CpSatSolveResult(
                         status="ERROR",
@@ -1794,30 +2272,39 @@ class CpSatScheduleSolver:
                 for rid, _ in cands
             }
             busy = load_classroom_busy(self.session, room_ids)
-            rooms_by_ui = _assign_rooms_to_chosen(
+            assigned = _assign_rooms_to_chosen(
                 chosen_rows,
                 candidates_by_assignment=ctx.candidates_by_assignment,
                 rooms=ctx.rooms,
                 busy=busy,
             )
-            if rooms_by_ui is None:
+            if assigned.by_ui is None:
                 self.session.rollback()
+                fail_a = assigned.fail_assignment or chosen_rows[0][1]
+                fail_lessons = [s.lesson for s in assigned.fail_slots]
+                fail_day = assigned.fail_slots[0].day if assigned.fail_slots else None
                 return CpSatSolveResult(
                     status="ERROR",
-                    error_message=MSG_NO_CLASSROOM,
+                    error_message=_no_classroom_for_assignment(
+                        fail_a,
+                        day=fail_day,
+                        lessons=fail_lessons,
+                        candidate_count=assigned.candidate_count,
+                    ),
                 )
 
+            rooms_by_ui = assigned.by_ui
             placements = []
             for ui, a, chosen in chosen_rows:
                 classroom_id = rooms_by_ui.get(ui)
                 if classroom_id is None:
                     self.session.rollback()
-                    class_name = a.school_class.name if a.school_class else "?"
-                    subj_name = a.subject.display_name if a.subject else "?"
                     return CpSatSolveResult(
                         status="ERROR",
-                        error_message=(
-                            f"{class_name} «{subj_name}»: {MSG_NO_CLASSROOM}"
+                        error_message=_no_classroom_for_assignment(
+                            a,
+                            day=chosen.day,
+                            lessons=(chosen.lesson,),
                         ),
                     )
                 self._schedule.insert_cell(
@@ -1868,11 +2355,16 @@ class CpSatScheduleSolver:
         on_progress: Callable[[int, int, str], None] | None = None,
         class_ids: list[int] | None = None,
         hours_first: str = HOURS_FIRST_MORE,
+        day_of_week: int | None = None,
+        max_lesson: int | None = None,
     ) -> CpSatSolveResult:
         """
         Rebuild schedule for classes in the given shift (same school_level).
         If ``class_ids`` is set, only those classes (must belong to the shift).
-        Deletes existing cells for the scoped classes and writes new ones if feasible.
+        If ``day_of_week`` is set, fill that weekday only (remaining hours,
+        other days stay). ``max_lesson`` (day fill) skips later lesson numbers
+        so they can be filled on a later pass. Otherwise deletes existing cells
+        for the scoped classes and writes a full-week grid if feasible.
         """
         if cp_model is None:
             return CpSatSolveResult(
@@ -1887,6 +2379,8 @@ class CpSatScheduleSolver:
             max_diag_items=max_diag_items,
             on_progress=on_progress,
             should_stop=should_stop,
+            day_of_week=day_of_week,
+            max_lesson=max_lesson,
         )
         if err_res is not None or ctx is None:
             return err_res

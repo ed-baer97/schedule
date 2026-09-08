@@ -3,6 +3,7 @@ from sqlalchemy import Boolean, Column, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.db import Base
+from app.domain.subject_group import DEFAULT_SUBJECT_GROUP, SUBJECT_GROUPS
 
 
 class Subject(Base):
@@ -32,16 +33,14 @@ class Subject(Base):
         "#7f8c8d": "#3f5248",
     }
 
-    DIFFICULTY_EASY = "easy"
-    DIFFICULTY_MEDIUM = "medium"
-    DIFFICULTY_HARD = "hard"
-    DIFFICULTIES = (DIFFICULTY_EASY, DIFFICULTY_MEDIUM, DIFFICULTY_HARD)
+    SUBJECT_GROUPS = SUBJECT_GROUPS
+    DEFAULT_GROUP = DEFAULT_SUBJECT_GROUP
 
     id = Column(Integer, primary_key=True)
     school_id = Column(Integer, ForeignKey("schools.id"), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     color = Column(String(7), default=DEFAULT_COLOR)
-    difficulty = Column(String(20), default=DIFFICULTY_MEDIUM, nullable=False)
+    subject_group = Column(String(20), default=DEFAULT_SUBJECT_GROUP, nullable=False)
     requires_fixed_classroom = Column(Boolean, default=False)
 
     school = relationship("School")

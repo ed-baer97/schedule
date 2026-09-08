@@ -487,29 +487,26 @@ def test_elementary_class_home_does_not_tag_specialist_room() -> None:
     assert still.json()["school_level"] is None
 
 
-def test_subject_difficulty_crud_roundtrip() -> None:
-    # Default is medium
+def test_subject_group_crud_roundtrip() -> None:
     created = client.post(
         "/api/subjects/",
         json={"name": "Химия", "color": "#147f78"},
     )
     assert created.status_code == 200, created.text
     sid = created.json()["id"]
-    assert created.json()["difficulty"] == "medium"
+    assert created.json()["subject_group"] == "natural_math"
 
-    # Update to hard
     updated = client.put(
         f"/api/subjects/{sid}",
-        json={"difficulty": "hard"},
+        json={"subject_group": "humanities"},
     )
     assert updated.status_code == 200, updated.text
-    assert updated.json()["difficulty"] == "hard"
+    assert updated.json()["subject_group"] == "humanities"
 
-    # Create explicit easy
-    easy_subj = client.post(
+    pe = client.post(
         "/api/subjects/",
-        json={"name": "ИЗО", "difficulty": "easy"},
+        json={"name": "Физкультура", "subject_group": "practical"},
     )
-    assert easy_subj.status_code == 200, easy_subj.text
-    assert easy_subj.json()["difficulty"] == "easy"
+    assert pe.status_code == 200, pe.text
+    assert pe.json()["subject_group"] == "practical"
 

@@ -592,6 +592,7 @@ class ScheduleQueriesMixin:
         elementary_group_subjects_leave: bool | None = None,
         pref_teacher_gaps: int | None = None,
         pref_hard_subjects_early: int | None = None,
+        pref_same_group_adjacent: int | None = None,
         pref_adjacent_pairs: int | None = None,
         pref_classroom_stability: int | None = None,
     ) -> ScheduleSettingsData:
@@ -609,6 +610,8 @@ class ScheduleQueriesMixin:
             s.pref_teacher_gaps = pref_teacher_gaps
         if pref_hard_subjects_early is not None:
             s.pref_hard_subjects_early = pref_hard_subjects_early
+        if pref_same_group_adjacent is not None:
+            s.pref_same_group_adjacent = pref_same_group_adjacent
         if pref_adjacent_pairs is not None:
             s.pref_adjacent_pairs = pref_adjacent_pairs
         if pref_classroom_stability is not None:

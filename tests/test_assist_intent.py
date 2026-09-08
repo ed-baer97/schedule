@@ -27,6 +27,12 @@ def test_physics_not_after_digit():
     assert intent.max_lesson == 5
 
 
+def test_group_adjacent_phrase_sets_slider():
+    intent = parse_assist_intent("предметы одной группы не подряд")
+    assert intent.preference_updates["pref_same_group_adjacent"] == 10
+    assert "pref_hard_subjects_early" not in intent.preference_updates
+
+
 def test_unknown_phrase_is_empty():
     intent = parse_assist_intent("сделай красиво")
     assert intent.is_empty()

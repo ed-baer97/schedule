@@ -56,6 +56,7 @@ class ScheduleSettingsOut(BaseModel):
     elementary_group_subjects_leave: bool
     pref_teacher_gaps: int = 5
     pref_hard_subjects_early: int = 5
+    pref_same_group_adjacent: int = 5
     pref_adjacent_pairs: int = 5
     pref_classroom_stability: int = 5
 
@@ -213,6 +214,8 @@ class AutoAllStreamBody(BaseModel):
     diagnose: bool = False
     split: str = Field("shift", pattern="^(shift|grade_bands)$")
     hours_first: str = Field("more", pattern="^(more|fewer)$")
+    day_of_week: int = Field(..., ge=1, le=6)
+    max_lesson: int | None = Field(None, ge=1, le=10)
 
 
 class AutoByTeacherStreamBody(BaseModel):
@@ -258,6 +261,7 @@ class SettingsUpdate(BaseModel):
     elementary_group_subjects_leave: bool | None = None
     pref_teacher_gaps: int = Field(5, ge=0, le=10)
     pref_hard_subjects_early: int = Field(5, ge=0, le=10)
+    pref_same_group_adjacent: int = Field(5, ge=0, le=10)
     pref_adjacent_pairs: int = Field(5, ge=0, le=10)
     pref_classroom_stability: int = Field(5, ge=0, le=10)
 

@@ -321,3 +321,27 @@ def test_subgroup_only_room_allows_subgroup():
     ranked = candidate_rooms_for([small], ctx)
     assert ranked == [(5, COST_GENERAL)]
 
+
+def test_format_no_classroom_names_slot_and_pool():
+    from app.domain.classroom_rules import MSG_NO_CLASSROOM, format_no_classroom
+
+    assert format_no_classroom() == MSG_NO_CLASSROOM
+    empty = format_no_classroom(
+        class_name="5А",
+        subject_name="Информатика",
+        teacher_name="Иванов И.И.",
+        candidate_count=0,
+    )
+    assert "5А" in empty and "Информатика" in empty and "Иванов" in empty
+    assert "подходящего кабинета" in empty
+    busy = format_no_classroom(
+        class_name="7Б",
+        subject_name="Физика",
+        day=1,
+        lessons=(3,),
+        candidate_count=2,
+    )
+    assert "Понедельник" in busy
+    assert "урок 3" in busy
+    assert "в пуле 2" in busy
+

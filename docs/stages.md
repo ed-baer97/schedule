@@ -10,7 +10,7 @@
 
 **Не входит в эти этапы:** S3/MinIO, Flower, второй Celery worker, несколько uvicorn workers.
 
-Подробности compose, `.env` и бэкапов — [deploy.md](deploy.md). Alembic head: `14subject_difficulty`.
+Подробности compose, `.env` и бэкапов — [deploy.md](deploy.md). Alembic head: `17classroom_subgroup_only`.
 
 ---
 

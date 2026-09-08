@@ -53,7 +53,7 @@ Cloudflare Tunnel направлять на `http://127.0.0.1:80`. Порты 80
 docker compose --profile queue up -d --build
 ```
 
-UI: http://127.0.0.1:8080 — без `COOKIE_SECURE=false` логин по HTTP не сохранится. Без профиля `queue` «Заполнить всё» сразу `failed`.
+UI: http://127.0.0.1:8080 — без `COOKIE_SECURE=false` логин по HTTP не сохранится. Без профиля `queue` «Заполнить день» сразу `failed`.
 
 ## Правила
 
@@ -61,7 +61,7 @@ UI: http://127.0.0.1:8080 — без `COOKIE_SECURE=false` логин по HTTP 
 - Обновление: `git pull && docker compose --profile queue up -d --build --force-recreate`
 - Проверка: `curl -sS http://127.0.0.1/api/health` — анонимный `GET /api/teachers` должен дать 401
 - 502: не дергайте nginx, пока он `Restarting`. Сначала `docker compose --profile queue ps` и `logs api --tail 80`. Если `api` Up — `docker compose --profile queue up -d --force-recreate --no-deps nginx`
-- Worker: `cpus: 4`, `mem_limit: 4g`, `SOLVER_NUM_WORKERS=4` (потоки = ядра). На 2 vCPU в `.env`: `SOLVER_CPUS=2` и `SOLVER_NUM_WORKERS=2`. «Заполнить всё» — CP-SAT на одну смену, не лесенка по всем учителям.
+- Worker: `cpus: 4`, `mem_limit: 4g`, `SOLVER_NUM_WORKERS=4` (потоки = ядра). На 2 vCPU в `.env`: `SOLVER_CPUS=2` и `SOLVER_NUM_WORKERS=2`. «Заполнить день» — CP-SAT на один день смены, не лесенка по всем учителям.
 - Журнал задачи должен начинаться с «Запуск на Celery worker…». Если job `failed` с текстом про `--profile queue` — Redis/worker не подняты (солвер в api больше не запускается).
 
 ## Бэкап

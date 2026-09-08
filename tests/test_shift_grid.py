@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 
 from app.domain.shift_grid import (
+    capped_lesson_end_exclusive,
     lesson_end_exclusive,
     lessons_count_on_day,
     weekly_slot_count,
@@ -23,6 +24,14 @@ def test_class_hour_day_uses_shorter_count() -> None:
     assert lesson_end_exclusive(shift, 2) == 7
     assert lesson_end_exclusive(shift) == 7
     assert weekly_slot_count(shift) == 4 + 6 * 4
+
+
+def test_capped_lesson_end_cuts_late_slots() -> None:
+    shift = SimpleNamespace(start_lesson=1, lessons_count=7, working_days=5)
+    assert capped_lesson_end_exclusive(shift, 1, None) == 8
+    assert capped_lesson_end_exclusive(shift, 1, 6) == 7
+    assert capped_lesson_end_exclusive(shift, 1, 7) == 8
+    assert capped_lesson_end_exclusive(shift, 1, 10) == 8
 
 
 def test_missing_class_hour_count_keeps_full_day() -> None:

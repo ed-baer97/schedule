@@ -44,12 +44,17 @@ function cellBody(row: TeacherDayLesson) {
   return '—'
 }
 
+function shiftHasLessons(shift: TeacherDayData['shifts'][number]) {
+  return shift.lessons.some((row) => row.occupants.length > 0)
+}
+
 export function TeacherDayGrid(props: {
   data: TeacherDayData | undefined
   loading: boolean
   error: string | null
+  occupiedOnly?: boolean
 }) {
-  const { data, loading, error } = props
+  const { data, loading, error, occupiedOnly = false } = props
   if (loading) {
     return <div className="teacher-day-grid text-muted small">День учителя…</div>
   }
@@ -57,7 +62,8 @@ export function TeacherDayGrid(props: {
     return <div className="teacher-day-grid text-danger small">{error}</div>
   }
   if (!data) return null
-  if (data.shifts.length === 0) {
+  const shifts = occupiedOnly ? data.shifts.filter(shiftHasLessons) : data.shifts
+  if (shifts.length === 0) {
     return (
       <div className="teacher-day-grid">
         <div className="teacher-day-grid-title">День учителя · {data.day_name}</div>
@@ -73,7 +79,7 @@ export function TeacherDayGrid(props: {
         <div className="teacher-day-grid-note">{data.other_shift_gap}</div>
       ) : null}
       <div className="teacher-day-grid-shifts">
-        {data.shifts.map((shift) => (
+        {shifts.map((shift) => (
           <div
             key={shift.shift_id ?? 'none'}
             className={`teacher-day-shift${shift.is_current ? ' is-current' : ' is-other'}`}

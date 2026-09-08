@@ -698,7 +698,7 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 }
 
 .overlay-scroll {
-  --overlay-scroll-bar: 12px;
+  --overlay-scroll-bar: 16px;
   position: relative;
   flex: 1 1 0%;
   min-height: 0;
@@ -714,8 +714,10 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   -ms-overflow-style: none;
 }
 
-/* Keep grid cells out from under the overlay thumb so × stays clickable. */
-.schedule-grid-card .overlay-scroll.has-y .overlay-scroll-viewport {
+/* Reserve the overlay-bar gutters before measure. If the inset is applied only
+   after has-y, column min-widths already filled the full width and the last
+   class sits under the thumb (~12px), so × is not clickable. */
+.schedule-grid-card .overlay-scroll-viewport {
   right: var(--overlay-scroll-bar);
 }
 
@@ -1359,7 +1361,9 @@ html[data-theme='dark'] .report-lesson-index {
   z-index: 18;
   display: none;
   pointer-events: none;
-  max-width: min(22rem, calc(100% - 17rem));
+  max-width: min(38rem, calc(100% - 17rem));
+  max-height: calc(100% - 28px);
+  overflow: hidden;
   padding: 0.65rem 0.85rem;
   border-radius: 10px;
   background: color-mix(in srgb, var(--kivi-surface) 92%, transparent);
@@ -1405,8 +1409,35 @@ html[data-theme='dark'] .report-lesson-index {
   font-size: 0.75rem;
   line-height: 1.35;
   color: color-mix(in srgb, var(--kivi-ink) 78%, transparent);
-  max-height: 40vh;
+  max-height: 18vh;
   overflow: hidden;
+}
+
+.teacher-remaining-tip .teacher-day-grid {
+  margin-top: 0.45rem;
+  padding: 6px 8px 8px;
+}
+
+.teacher-remaining-tip .teacher-day-grid-title {
+  font-size: 0.72rem;
+}
+
+.teacher-remaining-tip .teacher-day-grid-note {
+  font-size: 0.7rem;
+  margin-bottom: 6px;
+}
+
+.teacher-remaining-tip .teacher-day-shift {
+  min-width: 124px;
+}
+
+.teacher-remaining-tip .teacher-day-row {
+  min-height: 20px;
+  font-size: 0.66rem;
+}
+
+.teacher-remaining-tip .teacher-remaining-tip-total {
+  margin-top: 0.45rem;
 }
 
 /* ——— Dashboard quick links ——— */

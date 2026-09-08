@@ -18,7 +18,7 @@ from app.domain.schedule_rules import (
 from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass, Shift
 from app.services.assignment_hours import placed_count
 from app.services.classroom_resolver import classroom_fact, load_settings
-from app.domain.classroom_rules import MSG_NO_CLASSROOM, room_denial_message
+from app.domain.classroom_rules import format_no_classroom, room_denial_message
 from app.services.bell_schedule import get_interval_for_slot
 from app.services.schedule_fact_loader import (
     candidate_slot_fact,
@@ -110,7 +110,27 @@ class ScheduleValidator:
         errors = []
         class_id = assignment.class_id
         if require_classroom and not classroom_id:
-            errors.append(MSG_NO_CLASSROOM)
+            errors.append(
+                format_no_classroom(
+                    class_name=(
+                        assignment.school_class.name
+                        if assignment.school_class
+                        else None
+                    ),
+                    subject_name=(
+                        assignment.subject.display_name
+                        if assignment.subject
+                        else None
+                    ),
+                    teacher_name=(
+                        assignment.teacher.display_name
+                        if assignment.teacher
+                        else None
+                    ),
+                    day=day,
+                    lessons=(lesson,) if lesson else None,
+                )
+            )
 
         if lesson == 0:
             sc = assignment.school_class

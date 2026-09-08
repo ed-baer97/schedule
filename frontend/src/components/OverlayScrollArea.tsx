@@ -9,7 +9,7 @@ import {
   type UIEvent,
 } from 'react'
 
-const BAR = 12
+const BAR = 16
 
 type Metrics = {
   sl: number

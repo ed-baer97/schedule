@@ -79,6 +79,44 @@ def leftover_singles_allowed(hours: int) -> int:
     return max(0, int(hours)) % 2
 
 
+def other_day_subject_capacity(
+    *,
+    working_days: int,
+    today: int,
+    max_per_day: int,
+    assignment_placed_by_day: dict[int, int],
+    class_occupied_by_day: dict[int, int],
+    lessons_by_day: dict[int, int],
+) -> int:
+    """How many hours of this assignment can still land on days other than ``today``."""
+    total = 0
+    for day in range(1, int(working_days) + 1):
+        if day == int(today):
+            continue
+        lessons = max(0, int(lessons_by_day.get(day, 0)))
+        class_free = max(0, lessons - int(class_occupied_by_day.get(day, 0)))
+        asg_free = max(
+            0,
+            min(int(max_per_day), lessons) - int(assignment_placed_by_day.get(day, 0)),
+        )
+        total += min(class_free, asg_free)
+    return total
+
+
+def day_placement_bounds(
+    remaining: int,
+    *,
+    max_per_day: int,
+    day_lessons: int,
+    other_day_capacity: int,
+) -> tuple[int, int]:
+    """``(min_today, max_today)`` so leftovers still fit on other days."""
+    rem = max(0, int(remaining))
+    max_today = max(0, min(int(max_per_day), rem, int(day_lessons)))
+    min_today = max(0, rem - max(0, int(other_day_capacity)))
+    return min_today, max_today
+
+
 def extra_singleton_days(singleton_days: int, hours: int) -> int:
     """How many singleton days exceed the one leftover allowed for odd hours."""
     return max(0, int(singleton_days) - leftover_singles_allowed(hours))

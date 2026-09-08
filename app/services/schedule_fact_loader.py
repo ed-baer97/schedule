@@ -223,11 +223,16 @@ def load_teacher_busy(
     exclude_cell_id: int | None = None,
     class_ids_scope: list[int] | None = None,
     outside_scope_only: bool = False,
+    exclude_scope_day: int | None = None,
+    exclude_scope_max_lesson: int | None = None,
 ) -> dict[int, list[BusySlotFact]]:
     """
     Teacher occupancy with bell intervals.
     ``outside_scope_only`` — only cells whose class_id is outside ``class_ids_scope``
-    (CP-SAT external busy). Otherwise all matching teacher cells (residual/validator).
+    (CP-SAT weekly rebuild). ``exclude_scope_day`` — drop cells of scoped classes
+    on that weekday (CP-SAT day fill; other days and other classes stay as anchors).
+    ``exclude_scope_max_lesson`` — with a day, only drop lessons ``<= N`` so later
+    slots on that day stay busy (day fill with a lesson cap).
     """
     busy: dict[int, list[BusySlotFact]] = defaultdict(list)
     if not teacher_ids:
@@ -243,6 +248,15 @@ def load_teacher_busy(
         if not class_ids_scope:
             return busy
         q = q.filter(~ScheduleCell.class_id.in_(class_ids_scope))
+    elif exclude_scope_day is not None and class_ids_scope:
+        scoped_today = ScheduleCell.class_id.in_(class_ids_scope) & (
+            ScheduleCell.day_of_week == int(exclude_scope_day)
+        )
+        if exclude_scope_max_lesson is not None:
+            scoped_today = scoped_today & (
+                ScheduleCell.lesson_number <= int(exclude_scope_max_lesson)
+            )
+        q = q.filter(~scoped_today)
 
     rows = q.all()
     shift_ids = {

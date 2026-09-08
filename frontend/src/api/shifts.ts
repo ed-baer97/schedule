@@ -33,6 +33,7 @@ export type ShiftBrief = Pick<
   | 'max_lessons_per_day'
   | 'start_lesson'
   | 'lessons_count'
+  | 'class_hour_day'
   | 'class_hour_lessons_count'
 >
 

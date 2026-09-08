@@ -310,6 +310,8 @@ def run_auto_schedule(self, job_id: int) -> dict:
                 random_seed=payload.get("random_seed"),
                 split=payload.get("split") or "shift",
                 hours_first=payload.get("hours_first") or "more",
+                day_of_week=payload.get("day_of_week"),
+                max_lesson=payload.get("max_lesson"),
             )
         elif kind == "auto_by_teacher":
             iterator = scheduler.schedule_by_teacher_ladder_iter(

@@ -42,13 +42,14 @@ _REQUIRED_COLUMNS: dict[str, frozenset[str]] = {
             "elementary_group_subjects_leave",
             "pref_teacher_gaps",
             "pref_hard_subjects_early",
+            "pref_same_group_adjacent",
             "pref_adjacent_pairs",
             "pref_classroom_stability",
         }
     ),
     "teachers": frozenset({"home_classroom_id"}),
     "school_classes": frozenset({"homeroom_teacher_id"}),
-    "subjects": frozenset({"difficulty", "requires_fixed_classroom"}),
+    "subjects": frozenset({"subject_group", "requires_fixed_classroom"}),
 }
 
 _SCHEMA_HINT = "Схема неполная. Из корня проекта: alembic upgrade head"

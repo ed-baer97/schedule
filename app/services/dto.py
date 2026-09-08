@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app.domain.subject_group import normalize_subject_group
+
 
 @dataclass
 class ClassroomBriefData:
@@ -52,6 +54,7 @@ class ScheduleSettingsData:
     elementary_group_subjects_leave: bool
     pref_teacher_gaps: int = 5
     pref_hard_subjects_early: int = 5
+    pref_same_group_adjacent: int = 5
     pref_adjacent_pairs: int = 5
     pref_classroom_stability: int = 5
 
@@ -152,7 +155,7 @@ class SubjectData:
     color: str | None
     display_color: str
     requires_fixed_classroom: bool
-    difficulty: str = "medium"
+    subject_group: str = "humanities"
     classrooms: list[ClassroomBriefData] | None = None
 
 
@@ -229,6 +232,7 @@ def settings_data(s) -> ScheduleSettingsData:
         elementary_group_subjects_leave=s.elementary_group_subjects_leave,
         pref_teacher_gaps=int(getattr(s, "pref_teacher_gaps", 5) or 5),
         pref_hard_subjects_early=int(getattr(s, "pref_hard_subjects_early", 5) or 5),
+        pref_same_group_adjacent=int(getattr(s, "pref_same_group_adjacent", 5) or 5),
         pref_adjacent_pairs=int(getattr(s, "pref_adjacent_pairs", 5) or 5),
         pref_classroom_stability=int(getattr(s, "pref_classroom_stability", 5) or 5),
     )
@@ -309,7 +313,7 @@ def subject_data(s) -> SubjectData:
         color=s.color,
         display_color=s.display_color,
         requires_fixed_classroom=bool(s.requires_fixed_classroom),
-        difficulty=getattr(s, "difficulty", "medium") or "medium",
+        subject_group=normalize_subject_group(getattr(s, "subject_group", None)),
         classrooms=[classroom_brief(r) for r in rooms],
     )
 

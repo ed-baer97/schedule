@@ -61,7 +61,7 @@ def create_subject(
     s = SubjectService(db, school.id).create(
         name=body.name,
         color=body.color,
-        difficulty=body.difficulty,
+        subject_group=body.subject_group,
         requires_fixed_classroom=body.requires_fixed_classroom,
     )
     return SubjectOut.model_validate(asdict(s))
@@ -79,7 +79,7 @@ def update_subject(
         subject_id,
         name=data.get("name"),
         color=data.get("color"),
-        difficulty=data.get("difficulty"),
+        subject_group=data.get("subject_group"),
         requires_fixed_classroom=data.get("requires_fixed_classroom"),
         fields_set=frozenset(data.keys()),
     )

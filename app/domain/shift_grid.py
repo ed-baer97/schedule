@@ -23,6 +23,16 @@ def lesson_end_exclusive(shift: Any, day: int | None = None) -> int:
     return start + lessons_count_on_day(shift, day)
 
 
+def capped_lesson_end_exclusive(
+    shift: Any, day: int | None, max_lesson: int | None
+) -> int:
+    """``lesson_end_exclusive`` cut off so lesson numbers stay ``<= max_lesson``."""
+    end = lesson_end_exclusive(shift, day)
+    if max_lesson is None:
+        return end
+    return min(end, int(max_lesson) + 1)
+
+
 def weekly_slot_count(shift: Any) -> int:
     """Total regular-lesson slots in the shift week (class-hour day may subtract)."""
     wd = max(1, min(6, int(getattr(shift, "working_days", 5) or 5)))

@@ -78,7 +78,7 @@ npm --prefix frontend run build
 
 ## Замечания
 
-- SQLite: `instance/school_schedule.db`. Не коммитить. После `git pull` — `alembic upgrade head` (head — `14subject_difficulty`).
+- SQLite: `instance/school_schedule.db`. Не коммитить. После `git pull` — `alembic upgrade head` (head — `17classroom_subgroup_only`).
 - Redis/Celery локально не обязательны: перед постановкой задачи API делает короткий PING; если Redis нет — автосоставление идёт в фоновом потоке процесса API (`SOLVER_ALLOW_IN_PROCESS` по умолчанию true). В Docker эта переменная `false`: без очереди job сразу `failed`.
 - `QWEN_API_KEY` локально не обязателен: панель «почему» и assist работают с шаблонным текстом.
 - Корневой `npm run dev` (concurrently api+web) оставлен как опция; основной способ — два отдельных процесса выше.

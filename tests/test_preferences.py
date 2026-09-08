@@ -25,6 +25,18 @@ def test_adjacent_pairs_slider_mid_is_soft():
     assert scales.extra_singleton == 150
 
 
+def test_same_group_adjacent_slider_zero_disables():
+    scales = solver_scales(PreferenceWeights(same_group_adjacent=0))
+    assert scales.same_group_adjacent == 0
+
+
+def test_same_group_adjacent_slider_grows():
+    low = solver_scales(PreferenceWeights(same_group_adjacent=1))
+    high = solver_scales(PreferenceWeights(same_group_adjacent=10))
+    assert low.same_group_adjacent > 0
+    assert high.same_group_adjacent > low.same_group_adjacent
+
+
 def test_adjacent_pairs_slider_max_is_hard():
     scales = solver_scales(PreferenceWeights(adjacent_pairs=10))
     assert scales.hard_adjacent_pairs is True

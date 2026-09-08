@@ -367,3 +367,33 @@ def test_second_hour_is_split():
     assert second_hour_is_split([5], 7) is True
     assert second_hour_is_split([5, 6], 7) is False
     assert second_hour_is_split([1], 1) is False
+
+
+def test_day_placement_bounds_and_other_day_capacity():
+    from app.domain.schedule_rules import day_placement_bounds, other_day_subject_capacity
+
+    lessons = {d: 6 for d in range(1, 6)}
+    cap_empty = other_day_subject_capacity(
+        working_days=5,
+        today=1,
+        max_per_day=2,
+        assignment_placed_by_day={},
+        class_occupied_by_day={},
+        lessons_by_day=lessons,
+    )
+    assert cap_empty == 8
+    min_t, max_t = day_placement_bounds(6, max_per_day=2, day_lessons=6, other_day_capacity=8)
+    assert (min_t, max_t) == (0, 2)
+
+    cap_full_others = other_day_subject_capacity(
+        working_days=5,
+        today=5,
+        max_per_day=2,
+        assignment_placed_by_day={},
+        class_occupied_by_day={1: 6, 2: 6, 3: 6, 4: 6},
+        lessons_by_day=lessons,
+    )
+    assert cap_full_others == 0
+    min_t, max_t = day_placement_bounds(6, max_per_day=2, day_lessons=6, other_day_capacity=0)
+    assert min_t > max_t
+    assert (min_t, max_t) == (6, 2)

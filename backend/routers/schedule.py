@@ -306,6 +306,7 @@ def update_settings(
         elementary_group_subjects_leave=body.elementary_group_subjects_leave,
         pref_teacher_gaps=body.pref_teacher_gaps,
         pref_hard_subjects_early=body.pref_hard_subjects_early,
+        pref_same_group_adjacent=body.pref_same_group_adjacent,
         pref_adjacent_pairs=body.pref_adjacent_pairs,
         pref_classroom_stability=body.pref_classroom_stability,
     )

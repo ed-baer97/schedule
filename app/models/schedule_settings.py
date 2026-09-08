@@ -18,6 +18,7 @@ class ScheduleSettings(Base):
     pref_hard_subjects_early = Column(Integer, default=5, nullable=False)
     pref_adjacent_pairs = Column(Integer, default=5, nullable=False)
     pref_classroom_stability = Column(Integer, default=5, nullable=False)
+    pref_same_group_adjacent = Column(Integer, default=5, nullable=False)
 
     school = relationship("School")
 

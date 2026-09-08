@@ -156,6 +156,7 @@ def test_schedule_settings_roundtrip() -> None:
             "elementary_group_subjects_leave": False,
             "pref_teacher_gaps": 8,
             "pref_hard_subjects_early": 9,
+            "pref_same_group_adjacent": 6,
             "pref_adjacent_pairs": 2,
             "pref_classroom_stability": 7,
         },
@@ -164,6 +165,7 @@ def test_schedule_settings_roundtrip() -> None:
     assert upd.json()["classroom_mode"] == "teacher_room"
     assert upd.json()["pref_teacher_gaps"] == 8
     assert upd.json()["pref_hard_subjects_early"] == 9
+    assert upd.json()["pref_same_group_adjacent"] == 6
 
     refreshed = client.get("/api/schedule/settings").json()
     assert refreshed["elementary"]["max_lessons_per_subject_per_day"] == 1
@@ -1385,17 +1387,22 @@ def _add_general_classroom(session, number: str = "101") -> Classroom:
 
 
 def _seed_shift2_math_teacher(
-    n_classes: int = 6, hours: int = 5, *, with_classroom: bool = True
+    n_classes: int = 6,
+    hours: int = 5,
+    *,
+    with_classroom: bool = True,
+    lessons_count: int = 6,
+    max_per_subject: int = 2,
 ) -> dict[str, int]:
-    """One teacher, N classes × `hours` in a 5×6 second-shift grid (exactly N*hours slots)."""
+    """One teacher, N classes × `hours` in a 5×lessons_count grid."""
     with SessionLocal() as session:
         shift = Shift(school_id=TEST_SCHOOL_ID,
             name="2 смена",
             school_level="secondary",
             start_lesson=1,
-            lessons_count=6,
+            lessons_count=lessons_count,
             working_days=5,
-            max_lessons_per_day=7,
+            max_lessons_per_day=max(7, lessons_count),
         )
         math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
         teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Баер Эдуард Викторович")
@@ -1425,7 +1432,7 @@ def _seed_shift2_math_teacher(
         session.add(
             ScheduleSettings(school_id=TEST_SCHOOL_ID,
                 school_level="secondary",
-                max_lessons_per_subject_per_day=2,
+                max_lessons_per_subject_per_day=max_per_subject,
                 classroom_mode="class_room",
                 elementary_group_subjects_leave=True,
             )
@@ -1439,6 +1446,33 @@ def _seed_shift2_math_teacher(
             "assignment_ids": [a.id for a in assignments],
             "classroom_id": room.id if room is not None else None,
         }
+
+
+def _auto_fill_days(session, shift_id: int, days, **kwargs):
+    """Run day-fill CP-SAT for each weekday; return last event with summed count."""
+    from app.services.auto_scheduler import AutoScheduler
+
+    school_level = kwargs.pop("school_level", "secondary")
+    sched = AutoScheduler(session, school_id=TEST_SCHOOL_ID)
+    total = 0
+    last: dict = {"type": "done", "count": 0}
+    for day in days:
+        last = sched.auto_schedule_all_result(
+            school_level=school_level,
+            shift_id=shift_id,
+            day_of_week=day,
+            **kwargs,
+        )
+        if last.get("type") == "error":
+            merged = dict(last)
+            merged["count"] = total
+            return merged
+        total += int(last.get("count") or 0)
+        session.expire_all()
+    merged = dict(last)
+    merged["count"] = total
+    merged["type"] = "done"
+    return merged
 
 
 def _same_day_pair_stats(teacher_id: int) -> tuple[int, int]:
@@ -1559,6 +1593,7 @@ def test_cp_sat_two_phase_fills_small_shift() -> None:
             shift_id=ids["shift_id"],
             time_limit_sec=15.0,
             random_seed=1,
+            day_of_week=1,
         )
         remaining = sum(
             remaining_for(a)
@@ -1581,9 +1616,356 @@ def test_cp_sat_two_phase_fills_small_shift() -> None:
             by.setdefault((cell.class_id, cell.day_of_week), []).append(cell.lesson_number)
         for lessons in by.values():
             occupied = sorted(set(lessons))
-            assert occupied[0] == 1, occupied
             assert occupied[-1] - occupied[0] + 1 == len(occupied), occupied
+        assert min(min(v) for v in by.values()) == 1
         assert all(cell.classroom_id is not None for cell in cells)
+
+
+def test_cp_sat_day_fill_does_not_write_other_days() -> None:
+    pytest.importorskip("ortools")
+    ids = _seed_shift2_math_teacher(n_classes=1, hours=6)
+    with SessionLocal() as session:
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+            day_of_week=1,
+        )
+        cells = (
+            session.query(ScheduleCell)
+            .filter(ScheduleCell.class_id.in_(ids["class_ids"]))
+            .all()
+        )
+    assert result.get("type") == "done", result
+    assert result.get("count") == 2, result
+    assert cells
+    assert all(c.day_of_week == 1 for c in cells)
+
+
+def test_cp_sat_day_fill_keeps_previous_day() -> None:
+    pytest.importorskip("ortools")
+    ids = _seed_shift2_math_teacher(n_classes=1, hours=6)
+    with SessionLocal() as session:
+        from app.services.auto_scheduler import AutoScheduler
+
+        first = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+            day_of_week=1,
+        )
+        monday_keys = {
+            (c.lesson_number, c.assignment_id)
+            for c in session.query(ScheduleCell).filter(ScheduleCell.day_of_week == 1)
+        }
+        session.expire_all()
+        second = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+            day_of_week=2,
+        )
+        monday_after = {
+            (c.lesson_number, c.assignment_id)
+            for c in session.query(ScheduleCell).filter(ScheduleCell.day_of_week == 1)
+        }
+        tuesday = [
+            c
+            for c in session.query(ScheduleCell).all()
+            if c.day_of_week == 2
+        ]
+    assert first.get("type") == "done", first
+    assert second.get("type") == "done", second
+    assert monday_keys == monday_after
+    assert len(tuesday) == 2
+
+
+def _seed_one_class_many_subjects(
+    *, n_subjects: int = 4, hours: int = 2, lessons_count: int = 7
+) -> dict:
+    """One class, several 2h subjects — enough hours to occupy a 7-slot day."""
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=lessons_count,
+            working_days=5,
+            max_lessons_per_day=lessons_count,
+        )
+        session.add(shift)
+        session.flush()
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID,
+            name="7А",
+            grade=7,
+            school_level="secondary",
+            shift_id=shift.id,
+        )
+        session.add(cls)
+        session.flush()
+        assignment_ids = []
+        for i in range(n_subjects):
+            subj = Subject(school_id=TEST_SCHOOL_ID, name=f"Предмет{i}")
+            teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name=f"Учитель {i}")
+            session.add_all([subj, teacher])
+            session.flush()
+            asg = TeachingAssignment(
+                school_id=TEST_SCHOOL_ID,
+                subject_id=subj.id,
+                teacher_id=teacher.id,
+                class_id=cls.id,
+                hours_per_week=hours,
+            )
+            session.add(asg)
+            session.flush()
+            assignment_ids.append(asg.id)
+        session.add(
+            ScheduleSettings(
+                school_id=TEST_SCHOOL_ID,
+                school_level="secondary",
+                max_lessons_per_subject_per_day=2,
+                classroom_mode="class_room",
+                elementary_group_subjects_leave=True,
+            )
+        )
+        room = _add_general_classroom(session)
+        session.commit()
+        return {
+            "shift_id": shift.id,
+            "class_id": cls.id,
+            "assignment_ids": assignment_ids,
+            "classroom_id": room.id,
+        }
+
+
+def test_cp_sat_day_fill_max_lesson_skips_seventh() -> None:
+    pytest.importorskip("ortools")
+    ids = _seed_one_class_many_subjects()
+    with SessionLocal() as session:
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+            day_of_week=1,
+            max_lesson=6,
+        )
+        cells = (
+            session.query(ScheduleCell)
+            .filter(ScheduleCell.class_id == ids["class_id"])
+            .all()
+        )
+    assert result.get("type") == "done", result
+    assert cells
+    assert all(c.day_of_week == 1 for c in cells)
+    assert all(c.lesson_number <= 6 for c in cells)
+    assert max(c.lesson_number for c in cells) <= 6
+    assert 7 not in {c.lesson_number for c in cells}
+
+
+def test_cp_sat_day_fill_max_lesson_keeps_later_slot() -> None:
+    pytest.importorskip("ortools")
+    ids = _seed_one_class_many_subjects()
+    with SessionLocal() as session:
+        session.add(
+            ScheduleCell(
+                school_id=TEST_SCHOOL_ID,
+                class_id=ids["class_id"],
+                day_of_week=1,
+                lesson_number=7,
+                assignment_id=ids["assignment_ids"][0],
+                classroom_id=ids["classroom_id"],
+            )
+        )
+        session.commit()
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+            day_of_week=1,
+            max_lesson=6,
+        )
+        late = [
+            c
+            for c in session.query(ScheduleCell)
+            .filter(ScheduleCell.class_id == ids["class_id"])
+            .all()
+            if c.lesson_number == 7
+        ]
+        early = [
+            c
+            for c in session.query(ScheduleCell)
+            .filter(ScheduleCell.class_id == ids["class_id"])
+            .all()
+            if c.lesson_number <= 6
+        ]
+    assert result.get("type") == "done", result
+    assert len(late) == 1
+    assert late[0].assignment_id == ids["assignment_ids"][0]
+    assert early
+    assert all(c.lesson_number <= 6 for c in early)
+
+
+def test_cp_sat_separates_same_group_subjects() -> None:
+    """Math+Physics doubles should not sit next to each other if History can split them."""
+    pytest.importorskip("ortools")
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=6,
+            working_days=5,
+            max_lessons_per_day=6,
+        )
+        session.add(shift)
+        session.flush()
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID,
+            name="7А",
+            grade=7,
+            school_level="secondary",
+            shift_id=shift.id,
+        )
+        session.add(cls)
+        session.flush()
+        specs = (
+            ("Математика", "natural_math"),
+            ("Физика", "natural_math"),
+            ("История", "humanities"),
+        )
+        assignment_ids = []
+        for i, (name, group) in enumerate(specs):
+            subj = Subject(
+                school_id=TEST_SCHOOL_ID,
+                name=name,
+                subject_group=group,
+            )
+            teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name=f"Учитель {i}")
+            session.add_all([subj, teacher])
+            session.flush()
+            asg = TeachingAssignment(
+                school_id=TEST_SCHOOL_ID,
+                subject_id=subj.id,
+                teacher_id=teacher.id,
+                class_id=cls.id,
+                hours_per_week=2,
+            )
+            session.add(asg)
+            session.flush()
+            assignment_ids.append(asg.id)
+        session.add(
+            ScheduleSettings(
+                school_id=TEST_SCHOOL_ID,
+                school_level="secondary",
+                max_lessons_per_subject_per_day=2,
+                classroom_mode="class_room",
+                pref_same_group_adjacent=10,
+                pref_adjacent_pairs=10,
+            )
+        )
+        _add_general_classroom(session)
+        session.commit()
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=shift.id,
+            time_limit_sec=20.0,
+            random_seed=1,
+            day_of_week=1,
+        )
+        cells = (
+            session.query(ScheduleCell)
+            .filter(ScheduleCell.class_id == cls.id, ScheduleCell.day_of_week == 1)
+            .order_by(ScheduleCell.lesson_number)
+            .all()
+        )
+        asg_group = {}
+        asg_subj = {}
+        for asg in session.query(TeachingAssignment).filter(
+            TeachingAssignment.id.in_(assignment_ids)
+        ):
+            asg_group[asg.id] = asg.subject.subject_group
+            asg_subj[asg.id] = asg.subject_id
+    assert result.get("type") == "done", result
+    assert len(cells) == 6, result
+    clashes = 0
+    ordered = sorted(cells, key=lambda c: c.lesson_number)
+    for a, b in zip(ordered, ordered[1:]):
+        if a.lesson_number + 1 != b.lesson_number:
+            continue
+        if asg_subj.get(a.assignment_id) == asg_subj.get(b.assignment_id):
+            continue
+        if asg_group.get(a.assignment_id) == asg_group.get(b.assignment_id) == "natural_math":
+            clashes += 1
+    assert clashes == 0, [(c.lesson_number, asg_group.get(c.assignment_id)) for c in ordered]
+
+
+def test_cp_sat_day_fill_infeasible_when_other_days_are_full() -> None:
+    """6 leftover hours on Friday while Mon–Thu class slots are already taken."""
+    pytest.importorskip("ortools")
+    ids = _seed_shift2_math_teacher(n_classes=1, hours=6)
+    filler_hours = 4 * 6  # four full days of another subject
+    with SessionLocal() as session:
+        math_asg = session.get(TeachingAssignment, ids["assignment_ids"][0])
+        assert math_asg is not None
+        other = Subject(school_id=TEST_SCHOOL_ID, name="История")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Другой учитель")
+        session.add_all([other, teacher])
+        session.flush()
+        filler = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=other.id,
+            teacher_id=teacher.id,
+            class_id=ids["class_ids"][0],
+            hours_per_week=filler_hours,
+        )
+        session.add(filler)
+        session.flush()
+        for day in range(1, 5):
+            for lesson in range(1, 7):
+                session.add(
+                    ScheduleCell(
+                        school_id=TEST_SCHOOL_ID,
+                        class_id=ids["class_ids"][0],
+                        day_of_week=day,
+                        lesson_number=lesson,
+                        assignment_id=filler.id,
+                    )
+                )
+        session.commit()
+        from app.services.auto_scheduler import AutoScheduler
+
+        before = session.query(ScheduleCell).count()
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=5.0,
+            random_seed=1,
+            day_of_week=5,
+        )
+        after = session.query(ScheduleCell).count()
+    assert result.get("type") == "error", result
+    assert result.get("cp_sat_status") == "INFEASIBLE", result
+    blob = (result.get("message") or "") + " ".join(
+        d.get("reason", "") for d in (result.get("diagnostics") or [])
+    )
+    assert "осталось 6 ч" in blob, blob
+    assert after == before
 
 
 def _set_pref_adjacent_pairs(value: int, school_level: str = "secondary") -> None:
@@ -1615,11 +1997,10 @@ def test_cp_sat_hard_pairs_packs_even_hours_as_doubles() -> None:
     ids = _seed_shift2_math_teacher(n_classes=1, hours=6)
     _set_pref_adjacent_pairs(10)
     with SessionLocal() as session:
-        from app.services.auto_scheduler import AutoScheduler
-
-        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
-            school_level="secondary",
-            shift_id=ids["shift_id"],
+        result = _auto_fill_days(
+            session,
+            ids["shift_id"],
+            range(1, 6),
             time_limit_sec=15.0,
             random_seed=1,
         )
@@ -1635,11 +2016,10 @@ def test_cp_sat_hard_pairs_odd_hours_one_singleton() -> None:
     ids = _seed_shift2_math_teacher(n_classes=1, hours=5)
     _set_pref_adjacent_pairs(10)
     with SessionLocal() as session:
-        from app.services.auto_scheduler import AutoScheduler
-
-        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
-            school_level="secondary",
-            shift_id=ids["shift_id"],
+        result = _auto_fill_days(
+            session,
+            ids["shift_id"],
+            range(1, 6),
             time_limit_sec=15.0,
             random_seed=1,
         )
@@ -1657,11 +2037,10 @@ def test_cp_sat_same_day_pair_is_consecutive_without_max_slider() -> None:
     pytest.importorskip("ortools")
     ids = _seed_shift2_math_teacher(n_classes=1, hours=6)
     with SessionLocal() as session:
-        from app.services.auto_scheduler import AutoScheduler
-
-        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
-            school_level="secondary",
-            shift_id=ids["shift_id"],
+        result = _auto_fill_days(
+            session,
+            ids["shift_id"],
+            range(1, 6),
             time_limit_sec=15.0,
             random_seed=1,
         )
@@ -1688,6 +2067,7 @@ def test_cp_sat_paired_lessons_keep_same_classroom() -> None:
             shift_id=ids["shift_id"],
             time_limit_sec=15.0,
             random_seed=1,
+            day_of_week=1,
         )
         cells = (
             session.query(ScheduleCell)
@@ -1841,6 +2221,7 @@ def test_cp_sat_grade_bands_fills_5_then_7() -> None:
             time_limit_sec=15.0,
             random_seed=1,
             split="grade_bands",
+            day_of_week=1,
         )
         remaining = sum(
             remaining_for(a)
@@ -1867,6 +2248,7 @@ def test_cp_sat_grade_bands_noop_when_all_same_parallel() -> None:
             time_limit_sec=15.0,
             random_seed=1,
             split="grade_bands",
+            day_of_week=1,
         )
     assert result.get("type") == "done", result
     assert result.get("chunks") is None, result
@@ -1885,6 +2267,7 @@ def test_cp_sat_stops_when_teacher_hours_exceed_shift_slots() -> None:
             shift_id=ids["shift_id"],
             time_limit_sec=5.0,
             random_seed=1,
+            day_of_week=1,
         )
         after = session.query(ScheduleCell).count()
     assert result.get("type") == "error", result
@@ -1909,6 +2292,7 @@ def test_cp_sat_infeasible_without_classrooms() -> None:
             shift_id=ids["shift_id"],
             time_limit_sec=5.0,
             random_seed=1,
+            day_of_week=1,
         )
         after = session.query(ScheduleCell).count()
     assert result.get("type") == "error", result
@@ -1917,6 +2301,8 @@ def test_cp_sat_infeasible_without_classrooms() -> None:
         d.get("reason", "") for d in (result.get("diagnostics") or [])
     )
     assert "кабинет" in blob.lower(), blob
+    assert "5А" in blob, blob
+    assert "Математика" in blob, blob
     assert after == before
 
 

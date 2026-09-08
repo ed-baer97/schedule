@@ -163,19 +163,36 @@ ${root} ${mini}{opacity:1;filter:none;box-shadow:0 0 0 1px var(--kivi-primary),0
     .join('\n')
 }
 
-function applyTeacherHover(root: HTMLElement | null, key: string | null) {
+function applyTeacherHover(
+  root: HTMLElement | null,
+  key: string | null,
+  slotId: string | null = null,
+) {
   if (!root) return
-  const prev = root.getAttribute('data-hover-teacher')
-  if ((key ?? '') === (prev ?? '')) return
-  if (key) root.setAttribute('data-hover-teacher', key)
+  const nextKey = key || null
+  const nextSlot = nextKey && slotId ? slotId : null
+  const prevKey = root.getAttribute('data-hover-teacher')
+  const prevSlot = root.getAttribute('data-hover-slot')
+  if ((nextKey ?? '') === (prevKey ?? '') && (nextSlot ?? '') === (prevSlot ?? '')) return
+  if (nextKey) root.setAttribute('data-hover-teacher', nextKey)
   else root.removeAttribute('data-hover-teacher')
-  root.classList.toggle('is-teacher-hover', Boolean(key))
+  if (nextSlot) root.setAttribute('data-hover-slot', nextSlot)
+  else root.removeAttribute('data-hover-slot')
+  root.classList.toggle('is-teacher-hover', Boolean(nextKey))
 }
 
 function hoverTeacherFromEvent(target: EventTarget | null) {
   if (!(target instanceof Element)) return null
   const el = target.closest('[data-teacher-key]') as HTMLElement | null
   return el?.dataset.teacherKey || null
+}
+
+function hoverSlotFromEvent(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null
+  const slotted = target.closest('[data-slot-id]') as HTMLElement | null
+  if (slotted?.dataset.slotId) return slotted.dataset.slotId
+  const td = target.closest('td[id^="slot-"]') as HTMLElement | null
+  return td?.id && td.id.startsWith('slot-') ? td.id : null
 }
 
 function gridQueryKey(level: SchoolLevel, shiftId: number | null) {
@@ -363,6 +380,7 @@ const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
               key={cell.id}
               draggable
               data-teacher-key={teacherHoverKey(cell) || undefined}
+              data-slot-id={slotAnchor(classId, day, lesson)}
               title={`${lessonCardTitle(cell)} · нажмите, чтобы сменить кабинет`}
               onDragStart={(e) => {
                 applyTeacherHover(e.currentTarget.closest('.schedule-grid-card'), null)
@@ -1169,14 +1187,18 @@ export function SchedulePage() {
         <div
           className="card schedule-grid-card"
           onMouseOver={(e) => {
-            applyTeacherHover(e.currentTarget, hoverTeacherFromEvent(e.target))
+            applyTeacherHover(
+              e.currentTarget,
+              hoverTeacherFromEvent(e.target),
+              hoverSlotFromEvent(e.target),
+            )
           }}
           onMouseOut={(e) => {
             const card = e.currentTarget
-            const next = hoverTeacherFromEvent(e.relatedTarget)
             const rel = e.relatedTarget
+            const next = hoverTeacherFromEvent(rel)
             if (next && rel instanceof Node && card.contains(rel)) {
-              applyTeacherHover(card, next)
+              applyTeacherHover(card, next, hoverSlotFromEvent(rel))
               return
             }
             applyTeacherHover(card, null)

@@ -14,6 +14,56 @@ COST_PREFERRED_BONUS = -5
 MSG_NO_CLASSROOM = "Нет доступного кабинета для урока"
 
 
+def format_no_classroom(
+    *,
+    class_name: str | None = None,
+    subject_name: str | None = None,
+    teacher_name: str | None = None,
+    day: int | None = None,
+    lessons: list[int] | tuple[int, ...] | None = None,
+    candidate_count: int | None = None,
+) -> str:
+    """Human-readable missing-room reason for auto-schedule / validator."""
+    from app.domain.days import DAY_NAMES
+
+    parts: list[str] = []
+    who = []
+    if class_name:
+        who.append(str(class_name))
+    if subject_name:
+        who.append(f"«{subject_name}»")
+    if who:
+        parts.append(" ".join(who))
+    if teacher_name:
+        parts.append(str(teacher_name))
+    when = []
+    if day is not None and 1 <= int(day) <= len(DAY_NAMES):
+        when.append(DAY_NAMES[int(day) - 1])
+    nums = sorted({int(n) for n in (lessons or []) if int(n) > 0})
+    if len(nums) == 1:
+        when.append(f"урок {nums[0]}")
+    elif len(nums) >= 2:
+        when.append(f"уроки {nums[0]}–{nums[-1]}")
+    if when:
+        parts.append(", ".join(when))
+    head = ", ".join(parts)
+
+    if candidate_count == 0:
+        tail = (
+            "нет ни одного подходящего кабинета "
+            "(проверьте предметы, уровень школы и флаг «только подгруппы»)"
+        )
+    elif candidate_count is not None:
+        tail = (
+            f"все подходящие кабинеты заняты в это время (в пуле {int(candidate_count)})"
+        )
+    else:
+        tail = MSG_NO_CLASSROOM
+    if not head:
+        return tail
+    return f"{head}: {tail}"
+
+
 CLASSROOM_SCHOOL_LEVELS = frozenset({"elementary", "secondary"})
 
 
