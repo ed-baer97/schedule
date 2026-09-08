@@ -658,6 +658,7 @@ def test_clear_schedule_by_shift_and_day() -> None:
             "school_level": "elementary",
             "days_of_week": [1],
             "shift_id": ids["s1"],
+            "class_ids": [ids["c1"]],
         },
     )
     assert cleared.status_code == 200, cleared.text

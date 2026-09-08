@@ -227,6 +227,7 @@ class AutoByTeacherStreamBody(BaseModel):
 class ClearScheduleBody(BaseModel):
     school_level: str | None = Field(None, pattern="^(elementary|secondary)$")
     class_id: int | None = None
+    class_ids: list[int] | None = None
     teacher_id: int | None = None
     days_of_week: list[int] | None = Field(None, min_length=1)
     shift_id: int | None = None

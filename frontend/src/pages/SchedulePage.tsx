@@ -901,10 +901,11 @@ export function SchedulePage() {
   })
 
   const clearDayM = useMutation({
-    mutationFn: (p: { day: number; shiftId: number | null }) =>
+    mutationFn: (p: { day: number; shiftId: number | null; classIds: number[] }) =>
       clearSchedule({
         school_level: level,
         days_of_week: [p.day],
+        class_ids: p.classIds,
         ...(p.shiftId != null ? { shift_id: p.shiftId } : {}),
       }),
     onSuccess: async (res, p) => {
@@ -1266,9 +1267,16 @@ export function SchedulePage() {
                                 if (!confirm(confirmText)) {
                                   return
                                 }
+                                const classIds = grid.classes.map((c) => c.id)
+                                if (classIds.length === 0) return
                                 clearDayM.mutate({
                                   day: row.day,
-                                  shiftId: grid.current_shift_id,
+                                  shiftId:
+                                    grid.current_shift_id ??
+                                    shiftId ??
+                                    grid.shifts[0]?.id ??
+                                    null,
+                                  classIds,
                                 })
                               }}
                             >

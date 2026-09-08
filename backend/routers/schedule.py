@@ -266,6 +266,7 @@ def clear_schedule(
     count = ScheduleService(db, school.id).clear_schedule(
         school_level=body.school_level,
         class_id=body.class_id,
+        class_ids=body.class_ids,
         teacher_id=body.teacher_id,
         days_of_week=body.days_of_week,
         shift_id=body.shift_id,

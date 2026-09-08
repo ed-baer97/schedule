@@ -315,7 +315,7 @@ class ScheduleCommandsMixin:
         if class_id is not None:
             stmt = stmt.where(ScheduleCell.class_id == class_id)
         elif school_level is not None or shift_id is not None:
-            stmt = stmt.join(SchoolClass).where(
+            stmt = stmt.join(SchoolClass, SchoolClass.id == ScheduleCell.class_id).where(
                 SchoolClass.school_id == self.school_id,
             )
             if school_level is not None:

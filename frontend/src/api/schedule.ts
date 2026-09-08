@@ -158,6 +158,7 @@ export type MoveCellPayload = {
 export type ClearScheduleFilter = {
   school_level?: string
   class_id?: number
+  class_ids?: number[]
   teacher_id?: number
   days_of_week?: number[]
   shift_id?: number

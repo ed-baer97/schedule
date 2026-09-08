@@ -564,6 +564,7 @@ class ScheduleQueriesMixin:
         self,
         school_level: str | None = None,
         class_id: int | None = None,
+        class_ids: list[int] | None = None,
         teacher_id: int | None = None,
         days_of_week: list[int] | None = None,
         shift_id: int | None = None,
@@ -571,6 +572,7 @@ class ScheduleQueriesMixin:
         return self.delete_cells(
             school_level=school_level,
             class_id=class_id,
+            class_ids=class_ids,
             teacher_id=teacher_id,
             days_of_week=days_of_week,
             shift_id=shift_id,
