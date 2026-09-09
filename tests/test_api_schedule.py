@@ -1,6 +1,8 @@
 """Smoke tests for the newly-migrated schedule / assignments / reports / import endpoints."""
 from __future__ import annotations
 
+from datetime import time as dt_time
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, select
@@ -359,6 +361,73 @@ def test_class_hour_day_has_fewer_lessons() -> None:
     tuesday = [lt for lt in times if lt["day_of_week"] == 2]
     assert {lt["lesson_number"] for lt in monday} == {1, 2, 3, 4}
     assert {lt["lesson_number"] for lt in tuesday} == {1, 2, 3, 4, 5, 6}
+
+
+def test_class_hour_slot_rejects_manual_lesson() -> None:
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена КЧ",
+            school_level="elementary",
+            start_lesson=1,
+            lessons_count=5,
+            working_days=5,
+            max_lessons_per_day=5,
+            class_hour_day=1,
+            class_hour_start=dt_time(8, 0),
+            class_hour_end=dt_time(8, 20),
+        )
+        subject = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Сидоров С.С.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID, name="1В", grade=1, school_level="elementary"
+        )
+        session.add_all([shift, subject, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        assignment = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=subject.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=4,
+        )
+        session.add(assignment)
+        session.commit()
+        class_id, assignment_id = cls.id, assignment.id
+
+    denied = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 0,
+            "assignment_id": assignment_id,
+        },
+    )
+    assert denied.status_code == 422, denied.text
+    errors = denied.json()["detail"]["errors"]
+    assert any("классного часа" in e for e in errors)
+
+    created = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 1,
+            "assignment_id": assignment_id,
+        },
+    )
+    assert created.status_code == 201, created.text
+    cell_id = created.json()["id"]
+
+    moved = client.patch(
+        f"/api/schedule/cells/{cell_id}",
+        json={"day_of_week": 1, "lesson_number": 0},
+    )
+    assert moved.status_code == 422, moved.text
+    move_errors = moved.json()["detail"]["errors"]
+    assert any("классного часа" in e for e in move_errors)
 
 
 def test_subject_assignments_split_flow() -> None:

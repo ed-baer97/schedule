@@ -133,18 +133,8 @@ class ScheduleValidator:
             )
 
         if lesson == 0:
-            sc = assignment.school_class
-            sh = self.session.get(Shift, sc.shift_id) if sc and sc.shift_id else None
-            if (
-                not sh
-                or sh.class_hour_day != day
-                or not sh.class_hour_start
-                or not sh.class_hour_end
-            ):
-                errors.append(
-                    'Классный час не настроен для этой смены на выбранный день или не задано время'
-                )
-                return errors
+            errors.append('В слот классного часа нельзя ставить урок')
+            return errors
 
         sc = assignment.school_class
         sh = self.session.get(Shift, sc.shift_id) if sc and sc.shift_id else None

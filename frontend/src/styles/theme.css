@@ -553,7 +553,7 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 
 .schedule-minimap {
   position: absolute;
-  right: 22px;
+  right: 34px;
   bottom: 22px;
   z-index: 16;
   display: flex;
@@ -714,15 +714,28 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   -ms-overflow-style: none;
 }
 
-/* Reserve the overlay-bar gutters before measure. If the inset is applied only
-   after has-y, column min-widths already filled the full width and the last
-   class sits under the thumb (~12px), so × is not clickable. */
+/* Schedule grid: keep the last class column (and ×) clear of the overlay Y bar.
+   Use a full inset shorthand (not only `right`) so it always wins over `inset: 0`.
+   Gutter > bar width leaves a dead strip between content and the thumb. */
+.schedule-grid-card .overlay-scroll {
+  --overlay-scroll-gutter: 28px;
+}
+
 .schedule-grid-card .overlay-scroll-viewport {
-  right: var(--overlay-scroll-bar);
+  inset: 0 var(--overlay-scroll-gutter) 0 0;
 }
 
 .schedule-grid-card .overlay-scroll.has-x .overlay-scroll-viewport {
-  bottom: var(--overlay-scroll-bar);
+  inset: 0 var(--overlay-scroll-gutter) var(--overlay-scroll-bar) 0;
+}
+
+/* Empty track must not steal clicks if anything still peeks under the bar. */
+.schedule-grid-card .overlay-scroll-bar-v {
+  pointer-events: none;
+}
+
+.schedule-grid-card .overlay-scroll-bar-v .overlay-scroll-thumb {
+  pointer-events: auto;
 }
 
 .overlay-scroll-viewport::-webkit-scrollbar {
@@ -758,6 +771,10 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 
 .overlay-scroll.has-y .overlay-scroll-bar-h {
   right: var(--overlay-scroll-bar);
+}
+
+.schedule-grid-card .overlay-scroll.has-y .overlay-scroll-bar-h {
+  right: var(--overlay-scroll-gutter);
 }
 
 .overlay-scroll-thumb {
@@ -954,6 +971,20 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
   color: var(--kivi-muted);
 }
 
+.schedule-slot-cell.is-locked .schedule-slot-empty,
+.schedule-slot-cell.is-locked:hover .schedule-slot-empty,
+.schedule-slot-cell.is-locked:focus-within .schedule-slot-empty {
+  color: transparent;
+}
+
+.schedule-grid-table tr.is-class-hour > td {
+  background: color-mix(in srgb, var(--kivi-accent) 10%, var(--kivi-surface));
+}
+
+.schedule-grid-table tr.is-class-hour > td.schedule-slot-index {
+  background: color-mix(in srgb, var(--kivi-accent) 16%, var(--kivi-surface));
+}
+
 .schedule-slot {
   min-height: 64px;
   border: 2px dashed var(--kivi-line);
@@ -1125,6 +1156,9 @@ html[data-theme='dark'] .report-lesson-index {
 
 .schedule-grid-table.is-compact .lesson-card {
   padding: 3px 6px;
+  /* Always reserve ?/× cluster width — adding it only on hover grows the
+     table and the H-scroll thumb jumps left while scrolled to the right. */
+  padding-right: 3.2rem;
   margin-bottom: 2px;
   border-radius: 4px;
   font-size: 0.78rem;
@@ -1158,13 +1192,6 @@ html[data-theme='dark'] .report-lesson-index {
   .schedule-grid-table.is-compact .lesson-card:focus-within .lesson-card-actions {
     opacity: 1;
     pointer-events: auto;
-  }
-
-  .schedule-grid-table.is-compact .lesson-card:hover .lesson-subject,
-  .schedule-grid-table.is-compact .lesson-card:focus-within .lesson-subject,
-  .schedule-grid-table.is-compact .lesson-card:hover .lesson-card-meta,
-  .schedule-grid-table.is-compact .lesson-card:focus-within .lesson-card-meta {
-    padding-right: 3.2rem;
   }
 }
 
@@ -1354,7 +1381,8 @@ html[data-theme='dark'] .report-lesson-index {
   filter: saturate(0.35);
 }
 
-.teacher-remaining-tip {
+.teacher-remaining-tip,
+.class-remaining-tip {
   position: absolute;
   left: 12px;
   bottom: 22px;
@@ -1374,32 +1402,38 @@ html[data-theme='dark'] .report-lesson-index {
   color: var(--kivi-ink);
 }
 
-.teacher-remaining-tip.is-visible {
+.teacher-remaining-tip.is-visible,
+.class-remaining-tip.is-visible {
   display: block;
 }
 
-.teacher-remaining-tip.is-pending {
+.teacher-remaining-tip.is-pending,
+.class-remaining-tip.is-pending {
   border-color: color-mix(in srgb, var(--kivi-amber, #c4842e) 55%, var(--kivi-line));
 }
 
-.teacher-remaining-tip-name {
+.teacher-remaining-tip-name,
+.class-remaining-tip-name {
   font-weight: 700;
   font-size: 0.82rem;
   line-height: 1.3;
 }
 
-.teacher-remaining-tip-total {
+.teacher-remaining-tip-total,
+.class-remaining-tip-total {
   margin-top: 0.15rem;
   font-size: 0.78rem;
   font-weight: 650;
   color: var(--kivi-primary-deep, var(--kivi-primary));
 }
 
-.teacher-remaining-tip.is-pending .teacher-remaining-tip-total {
+.teacher-remaining-tip.is-pending .teacher-remaining-tip-total,
+.class-remaining-tip.is-pending .class-remaining-tip-total {
   color: var(--kivi-amber, #c4842e);
 }
 
-.teacher-remaining-tip-classes {
+.teacher-remaining-tip-classes,
+.class-remaining-tip-subjects {
   margin: 0.35rem 0 0;
   padding: 0;
   list-style: none;
@@ -1411,6 +1445,17 @@ html[data-theme='dark'] .report-lesson-index {
   color: color-mix(in srgb, var(--kivi-ink) 78%, transparent);
   max-height: 18vh;
   overflow: hidden;
+}
+
+.schedule-grid-table thead th[data-class-id] {
+  cursor: default;
+}
+
+.schedule-grid-card.is-class-hover .schedule-grid-table thead th[data-class-id].is-class-hover-target {
+  background: color-mix(in srgb, var(--kivi-primary) 18%, var(--kivi-surface)) !important;
+  box-shadow: inset 0 0 0 2px var(--kivi-primary);
+  color: var(--kivi-primary-deep, var(--kivi-primary));
+  font-weight: 700;
 }
 
 .teacher-remaining-tip .teacher-day-grid {
@@ -1896,7 +1941,16 @@ html[data-theme='dark'] .schedule-grid-card.card {
   background: var(--kivi-surface);
 }
 
-html[data-theme='dark'] .teacher-remaining-tip {
+html[data-theme='dark'] .schedule-grid-table tr.is-class-hour > td {
+  background-color: #2a2418;
+}
+
+html[data-theme='dark'] .schedule-grid-table tr.is-class-hour > td.schedule-slot-index {
+  background-color: #332b1c;
+}
+
+html[data-theme='dark'] .teacher-remaining-tip,
+html[data-theme='dark'] .class-remaining-tip {
   background: color-mix(in srgb, var(--kivi-surface) 88%, #0d1614);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
 }
