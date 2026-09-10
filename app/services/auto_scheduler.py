@@ -81,10 +81,12 @@ class AutoScheduler:
         hours_first: str = "more",
         day_of_week: int | None = None,
         max_lesson: int | None = None,
+        preserve_existing: bool = False,
     ):
         """
         CP-SAT: заполнение одного дня смены (остаток часов) или полная
         пересборка недели, если ``day_of_week`` не задан.
+        ``preserve_existing`` — мягкий дозапол (не удаляет стоящие ячейки).
         ``class_ids`` ограничивает кусок смены (параллели классов).
         """
 
@@ -92,7 +94,11 @@ class AutoScheduler:
             text = f"{progress_prefix}: {msg}" if progress_prefix else msg
             self._report(cur, tot, text)
 
-        load_msg = "Загрузка классов и нагрузки…"
+        load_msg = (
+            "Дозаполнение: загрузка классов и остатка часов…"
+            if preserve_existing
+            else "Загрузка классов и нагрузки…"
+        )
         yield {
             "type": "progress",
             "current": 2,
@@ -113,6 +119,7 @@ class AutoScheduler:
             hours_first=hours_first,
             day_of_week=day_of_week,
             max_lesson=max_lesson,
+            preserve_existing=preserve_existing,
         )
         if result.status == "CANCELLED" or self._stopped():
             yield self._cancelled_event()
@@ -153,6 +160,7 @@ class AutoScheduler:
             "diagnostics": result.diagnostics,
             "day_of_week": day_of_week,
             "max_lesson": max_lesson,
+            "preserve_existing": bool(preserve_existing),
         }
         if result.status in ("INFEASIBLE", "UNKNOWN"):
             done["solver_used"] = False
@@ -819,6 +827,7 @@ class AutoScheduler:
         hours_first="more",
         day_of_week=None,
         max_lesson=None,
+        preserve_existing=False,
     ):
         """Return last done- или error-event для не-stream маршрутов."""
         last = {'type': 'done', 'count': 0}
@@ -831,6 +840,7 @@ class AutoScheduler:
             hours_first=hours_first,
             day_of_week=day_of_week,
             max_lesson=max_lesson,
+            preserve_existing=preserve_existing,
         ):
             if event.get('type') in ('done', 'error'):
                 last = event
@@ -846,6 +856,7 @@ class AutoScheduler:
         hours_first="more",
         day_of_week=None,
         max_lesson=None,
+        preserve_existing=False,
     ):
         """Автозаполнение CP-SAT для одного дня смены (целиком или кусками по параллелям)."""
         if shift_id is None:
@@ -864,6 +875,7 @@ class AutoScheduler:
         limit = float(time_limit_sec)
         seed = int(random_seed)
         day = int(day_of_week)
+        soft = bool(preserve_existing)
         if split != SPLIT_GRADE_BANDS:
             yield from self.cp_sat_schedule_shift_iter(
                 shift_id=sid,
@@ -873,6 +885,7 @@ class AutoScheduler:
                 hours_first=hours_first,
                 day_of_week=day,
                 max_lesson=max_lesson,
+                preserve_existing=soft,
             )
             return
 
@@ -896,6 +909,7 @@ class AutoScheduler:
                 hours_first=hours_first,
                 day_of_week=day,
                 max_lesson=max_lesson,
+                preserve_existing=soft,
             )
             return
 
@@ -934,6 +948,7 @@ class AutoScheduler:
                 hours_first=hours_first,
                 day_of_week=day,
                 max_lesson=max_lesson,
+                preserve_existing=soft,
             ):
                 if event.get("type") == "cancelled":
                     yield self._cancelled_event(total_placed)
@@ -986,4 +1001,5 @@ class AutoScheduler:
             "chunks": n_chunks,
             "day_of_week": day,
             "max_lesson": max_lesson,
+            "preserve_existing": soft,
         }

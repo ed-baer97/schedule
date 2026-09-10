@@ -318,6 +318,7 @@ export type AutoAllPayload = {
   hours_first?: 'more' | 'fewer'
   day_of_week: number
   max_lesson?: number | null
+  preserve_existing?: boolean
 }
 
 export type AutoByTeacherPayload = {

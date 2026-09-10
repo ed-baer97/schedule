@@ -1856,6 +1856,96 @@ def test_cp_sat_day_fill_keeps_previous_day() -> None:
     assert len(tuesday) == 2
 
 
+def test_cp_sat_soft_fill_keeps_existing_and_adds() -> None:
+    """preserve_existing keeps seeded cells and only inserts into free slots."""
+    pytest.importorskip("ortools")
+    ids = _seed_shift2_math_teacher(n_classes=1, hours=6)
+    with SessionLocal() as session:
+        seed = ScheduleCell(
+            school_id=TEST_SCHOOL_ID,
+            class_id=ids["class_ids"][0],
+            day_of_week=1,
+            lesson_number=1,
+            assignment_id=ids["assignment_ids"][0],
+            classroom_id=ids["classroom_id"],
+        )
+        session.add(seed)
+        session.commit()
+        seed_id = seed.id
+        seed_assignment = seed.assignment_id
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+            day_of_week=1,
+            preserve_existing=True,
+        )
+        monday = (
+            session.query(ScheduleCell)
+            .filter(
+                ScheduleCell.class_id == ids["class_ids"][0],
+                ScheduleCell.day_of_week == 1,
+            )
+            .all()
+        )
+        kept = session.get(ScheduleCell, seed_id)
+    assert result.get("type") == "done", result
+    assert result.get("preserve_existing") is True
+    assert result.get("cp_sat_status") in ("OPTIMAL", "FEASIBLE"), result
+    assert kept is not None
+    assert kept.lesson_number == 1
+    assert kept.assignment_id == seed_assignment
+    assert len(monday) >= 2
+    assert result.get("count", 0) >= 1
+
+
+def test_cp_sat_soft_fill_does_not_delete_when_nothing_to_add() -> None:
+    """Soft fill with no remaining capacity today leaves the grid unchanged."""
+    pytest.importorskip("ortools")
+    ids = _seed_shift2_math_teacher(n_classes=1, hours=2)
+    with SessionLocal() as session:
+        for lesson in (1, 2):
+            session.add(
+                ScheduleCell(
+                    school_id=TEST_SCHOOL_ID,
+                    class_id=ids["class_ids"][0],
+                    day_of_week=1,
+                    lesson_number=lesson,
+                    assignment_id=ids["assignment_ids"][0],
+                    classroom_id=ids["classroom_id"],
+                )
+            )
+        session.commit()
+        before = {
+            (c.lesson_number, c.assignment_id)
+            for c in session.query(ScheduleCell).filter(
+                ScheduleCell.class_id == ids["class_ids"][0]
+            )
+        }
+        from app.services.auto_scheduler import AutoScheduler
+
+        result = AutoScheduler(session, school_id=TEST_SCHOOL_ID).auto_schedule_all_result(
+            school_level="secondary",
+            shift_id=ids["shift_id"],
+            time_limit_sec=15.0,
+            random_seed=1,
+            day_of_week=1,
+            preserve_existing=True,
+        )
+        after = {
+            (c.lesson_number, c.assignment_id)
+            for c in session.query(ScheduleCell).filter(
+                ScheduleCell.class_id == ids["class_ids"][0]
+            )
+        }
+    assert result.get("type") == "done", result
+    assert before == after
+    assert result.get("count", 0) == 0
+
+
 def _seed_one_class_many_subjects(
     *, n_subjects: int = 4, hours: int = 2, lessons_count: int = 7
 ) -> dict:

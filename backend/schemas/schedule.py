@@ -216,6 +216,7 @@ class AutoAllStreamBody(BaseModel):
     hours_first: str = Field("more", pattern="^(more|fewer)$")
     day_of_week: int = Field(..., ge=1, le=6)
     max_lesson: int | None = Field(None, ge=1, le=10)
+    preserve_existing: bool = False
 
 
 class AutoByTeacherStreamBody(BaseModel):

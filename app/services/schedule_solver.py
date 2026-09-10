@@ -50,7 +50,7 @@ from app.domain.preferences import (
     solver_scales,
     weights_from_settings,
 )
-from app.models import SchoolClass, TeachingAssignment
+from app.models import ScheduleCell, SchoolClass, TeachingAssignment
 from app.services.assignment_hours import (
     occupancy_lessons_by_class_day,
     placed_counts,
@@ -1135,9 +1135,15 @@ class _ShiftDataContext:
     candidates_by_assignment: dict[int, list[tuple[int, int]]]
     day_of_week: int | None = None
     max_lesson: int | None = None
+    preserve_existing: bool = False
     remaining_by_assignment: dict[int, int] = field(default_factory=dict)
     min_today_by_assignment: dict[int, int] = field(default_factory=dict)
     max_today_by_assignment: dict[int, int] = field(default_factory=dict)
+    # Soft fill anchors (today): occupied class lessons, assignment lessons, teacher+class counts
+    occupied_lessons_by_class: dict[int, set[int]] = field(default_factory=dict)
+    existing_lessons_by_assignment: dict[int, set[int]] = field(default_factory=dict)
+    existing_teacher_class_today: dict[tuple[int, int], int] = field(default_factory=dict)
+    placed_today_by_assignment: dict[int, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -1270,7 +1276,9 @@ class CpSatScheduleSolver:
         should_stop: Callable[[], bool] | None,
         day_of_week: int | None = None,
         max_lesson: int | None = None,
+        preserve_existing: bool = False,
     ) -> tuple[CpSatSolveResult | None, _ShiftDataContext | None]:
+        soft_fill = bool(preserve_existing) and day_of_week is not None
         shift_classes = (
             self.session.query(SchoolClass)
             .filter_by(
@@ -1433,23 +1441,39 @@ class CpSatScheduleSolver:
         remaining_by_assignment: dict[int, int] = {}
         min_today_by_assignment: dict[int, int] = {}
         max_today_by_assignment: dict[int, int] = {}
+        occupied_lessons_by_class: dict[int, set[int]] = {}
+        existing_lessons_by_assignment: dict[int, set[int]] = {}
+        existing_teacher_class_today: dict[tuple[int, int], int] = {}
+        placed_today_by_assignment: dict[int, int] = {}
         assignment_ids = [a.id for a in assignments]
         if day_of_week is not None:
-            placed_except = placed_counts_except_day(
-                self.session,
-                assignment_ids,
-                int(day_of_week),
-                max_lesson=cap_lesson,
-            )
-            remaining_by_assignment = {
-                a.id: remaining_for(a, placed=placed_except.get(a.id, 0))
-                for a in assignments
-            }
-            units = build_unit_facts(
-                assignments,
-                hours_mode="remaining",
-                placed_counts=placed_except,
-            )
+            if soft_fill:
+                placed_all = placed_counts(self.session, assignment_ids)
+                remaining_by_assignment = {
+                    a.id: remaining_for(a, placed=placed_all.get(a.id, 0))
+                    for a in assignments
+                }
+                units = build_unit_facts(
+                    assignments,
+                    hours_mode="remaining",
+                    placed_counts=placed_all,
+                )
+            else:
+                placed_except = placed_counts_except_day(
+                    self.session,
+                    assignment_ids,
+                    int(day_of_week),
+                    max_lesson=cap_lesson,
+                )
+                remaining_by_assignment = {
+                    a.id: remaining_for(a, placed=placed_except.get(a.id, 0))
+                    for a in assignments
+                }
+                units = build_unit_facts(
+                    assignments,
+                    hours_mode="remaining",
+                    placed_counts=placed_except,
+                )
             if not units:
                 return (
                     CpSatSolveResult(
@@ -1458,7 +1482,9 @@ class CpSatScheduleSolver:
                         diagnostics=[
                             {
                                 "reason": (
-                                    "На этот день не осталось непроставленных часов"
+                                    "Не осталось непроставленных часов для дозаполнения"
+                                    if soft_fill
+                                    else "На этот день не осталось непроставленных часов"
                                 )
                             }
                         ],
@@ -1521,6 +1547,47 @@ class CpSatScheduleSolver:
                 for cid, slots in slots_by_class.items()
             }
 
+        if soft_fill:
+            today = int(day_of_week)
+            class_occ_facts = load_class_occupancy(self.session, resolved_class_ids)
+            for cid, facts in class_occ_facts.items():
+                lessons = {
+                    int(f.lesson)
+                    for f in facts
+                    if int(f.day) == today
+                    and (cap_lesson is None or int(f.lesson) <= cap_lesson)
+                }
+                if lessons:
+                    occupied_lessons_by_class[cid] = lessons
+            # Drop occupied class slots from the candidate grid (soft fill never overwrites).
+            slots_by_class = {
+                cid: [
+                    s
+                    for s in slots
+                    if s.lesson not in occupied_lessons_by_class.get(cid, set())
+                ]
+                for cid, slots in slots_by_class.items()
+            }
+            today_cells = (
+                self.session.query(ScheduleCell)
+                .filter(
+                    ScheduleCell.assignment_id.in_(assignment_ids),
+                    ScheduleCell.day_of_week == today,
+                )
+                .all()
+            )
+            for cell in today_cells:
+                aid = int(cell.assignment_id)
+                lesson = int(cell.lesson_number)
+                existing_lessons_by_assignment.setdefault(aid, set()).add(lesson)
+                placed_today_by_assignment[aid] = placed_today_by_assignment.get(aid, 0) + 1
+                a = assignment_map.get(aid)
+                if a and a.teacher_id:
+                    key = (int(a.teacher_id), int(a.class_id))
+                    existing_teacher_class_today[key] = (
+                        existing_teacher_class_today.get(key, 0) + 1
+                    )
+
         if day_of_week is not None:
             wd = int(shift_obj.working_days or 5)
             lessons_by_day = {
@@ -1533,7 +1600,7 @@ class CpSatScheduleSolver:
                 placed_counts_on_day_after_lesson(
                     self.session, assignment_ids, today, cap_lesson
                 )
-                if cap_lesson is not None
+                if cap_lesson is not None and not soft_fill
                 else {}
             )
             bound_fail: list[dict[str, str]] = []
@@ -1560,10 +1627,16 @@ class CpSatScheduleSolver:
                 )
                 start_l = max(1, int(shift_obj.start_lesson or 1))
                 day_lessons_today = max(0, day_end - start_l)
-                max_per_today = max(
-                    0,
-                    max_per_subject_day - int(locked_today.get(a.id, 0)),
-                )
+                if soft_fill:
+                    occupied_n = len(occupied_lessons_by_class.get(a.class_id, set()))
+                    day_lessons_today = max(0, day_lessons_today - occupied_n)
+                    already_today = int(asg_placed.get((a.id, today), 0))
+                    max_per_today = max(0, max_per_subject_day - already_today)
+                else:
+                    max_per_today = max(
+                        0,
+                        max_per_subject_day - int(locked_today.get(a.id, 0)),
+                    )
                 min_t, max_t = day_placement_bounds(
                     rem,
                     max_per_day=max_per_today,
@@ -1636,9 +1709,14 @@ class CpSatScheduleSolver:
             candidates_by_assignment=candidates_by_assignment,
             day_of_week=int(day_of_week) if day_of_week is not None else None,
             max_lesson=cap_lesson,
+            preserve_existing=soft_fill,
             remaining_by_assignment=remaining_by_assignment,
             min_today_by_assignment=min_today_by_assignment,
             max_today_by_assignment=max_today_by_assignment,
+            occupied_lessons_by_class=occupied_lessons_by_class,
+            existing_lessons_by_assignment=existing_lessons_by_assignment,
+            existing_teacher_class_today=existing_teacher_class_today,
+            placed_today_by_assignment=placed_today_by_assignment,
         )
         return None, ctx
 
@@ -1649,7 +1727,7 @@ class CpSatScheduleSolver:
         should_stop: Callable[[], bool] | None,
     ) -> tuple[CpSatSolveResult | None, _HardModelContext | None]:
         teacher_ids_scope = {u.teacher_id for u in ctx.units if u.teacher_id}
-        if ctx.day_of_week is not None:
+        if ctx.day_of_week is not None and not ctx.preserve_existing:
             external_busy = load_teacher_busy(
                 self.session,
                 teacher_ids_scope,
@@ -1657,6 +1735,9 @@ class CpSatScheduleSolver:
                 exclude_scope_day=ctx.day_of_week,
                 exclude_scope_max_lesson=ctx.max_lesson,
             )
+        elif ctx.day_of_week is not None and ctx.preserve_existing:
+            # Soft fill: keep today's cells as teacher/class anchors (no rewrite).
+            external_busy = load_teacher_busy(self.session, teacher_ids_scope)
         else:
             external_busy = load_external_teacher_busy(
                 self.session, teacher_ids_scope, ctx.class_ids
@@ -1665,6 +1746,11 @@ class CpSatScheduleSolver:
         x: dict[tuple[int, str], cp_model.IntVar] = {}
         feasible_slots_by_unit: dict[int, list[SlotFact]] = {}
         day_fill = ctx.day_of_week is not None
+        class_occ = (
+            load_class_occupancy(self.session, ctx.class_ids)
+            if ctx.preserve_existing
+            else {}
+        )
 
         for ui, unit in ctx.unit_list:
             slot_list = ctx.slots_by_class.get(unit.class_id, [])
@@ -1676,11 +1762,28 @@ class CpSatScheduleSolver:
                     ),
                     None,
                 )
-            feasible = [
-                s
-                for s in slot_list
-                if not teacher_busy_at_slot(s, unit.teacher_id, external_busy)
-            ]
+            existing_lessons = ctx.existing_lessons_by_assignment.get(
+                unit.assignment_id, set()
+            )
+            feasible = []
+            for s in slot_list:
+                if teacher_busy_at_slot(s, unit.teacher_id, external_busy):
+                    continue
+                if ctx.preserve_existing:
+                    blocked = False
+                    for occupied in class_occ.get(unit.class_id, []):
+                        if occupancy_blocks_unit(
+                            unit, occupied, candidate_slot=s
+                        ):
+                            blocked = True
+                            break
+                    if blocked:
+                        continue
+                    if existing_lessons and second_hour_is_split(
+                        existing_lessons, s.lesson
+                    ):
+                        continue
+                feasible.append(s)
             if not feasible:
                 if day_fill:
                     feasible_slots_by_unit[ui] = []
@@ -1794,13 +1897,18 @@ class CpSatScheduleSolver:
         fill_objective_vars: list = []
         for cid in ctx.class_ids:
             uidxs = [ui for ui, u in ctx.unit_list if u.class_id == cid]
-            if not uidxs:
+            if not uidxs and not ctx.preserve_existing:
                 continue
             for day in range(1, ctx.shift_obj.working_days + 1):
                 if ctx.day_of_week is not None and day != ctx.day_of_week:
                     continue
                 lesson_end = capped_lesson_end_exclusive(
                     ctx.shift_obj, day, ctx.max_lesson
+                )
+                occupied_fixed = (
+                    ctx.occupied_lessons_by_class.get(cid, set())
+                    if ctx.preserve_existing
+                    else set()
                 )
                 occ_by_lesson = {}
                 for lesson in range(lesson_start, lesson_end):
@@ -1812,14 +1920,16 @@ class CpSatScheduleSolver:
                                 if key in x:
                                     terms.append(x[key])
                     occ = model.NewBoolVar(f"class_occ_c{cid}_d{day}_l{lesson}")
-                    if terms:
+                    if lesson in occupied_fixed:
+                        model.Add(occ == 1)
+                    elif terms:
                         dsum = sum(terms)
                         model.Add(dsum >= occ)
                         model.Add(dsum <= len(terms) * occ)
                     else:
                         model.Add(occ == 0)
                     occ_by_lesson[lesson] = occ
-                    if ctx.day_of_week is not None:
+                    if ctx.day_of_week is not None and lesson not in occupied_fixed:
                         fill_objective_vars.append(occ)
 
                 for lesson in range(lesson_start + 1, lesson_end):
@@ -1906,7 +2016,12 @@ class CpSatScheduleSolver:
                             if key in x:
                                 terms.append(x[key])
                 if terms:
-                    model.Add(sum(terms) <= ctx.max_per_subject_day)
+                    already = (
+                        int(ctx.placed_today_by_assignment.get(a.id, 0))
+                        if ctx.preserve_existing and day == ctx.day_of_week
+                        else 0
+                    )
+                    model.Add(sum(terms) <= max(0, ctx.max_per_subject_day - already))
 
         # Subgroup pair synchronization (hard)
         subgroup_pairs = []
@@ -1973,7 +2088,12 @@ class CpSatScheduleSolver:
                             if key in x:
                                 terms.append(x[key])
                 if terms:
-                    model.Add(sum(terms) <= max_daily_teacher)
+                    already = (
+                        int(ctx.existing_teacher_class_today.get((tid, cid), 0))
+                        if ctx.preserve_existing and day == ctx.day_of_week
+                        else 0
+                    )
+                    model.Add(sum(terms) <= max(0, max_daily_teacher - already))
 
         hard_ctx = _HardModelContext(
             x=x,
@@ -2236,13 +2356,14 @@ class CpSatScheduleSolver:
             if stopped:
                 return stopped
             self._notify(on_progress, 90, 100, "Запись расписания в сетку…")
-            delete_days = [ctx.day_of_week] if ctx.day_of_week is not None else None
-            self._schedule.delete_cells(
-                class_ids=ctx.class_ids,
-                days_of_week=delete_days,
-                max_lesson=ctx.max_lesson,
-                commit=False,
-            )
+            if not ctx.preserve_existing:
+                delete_days = [ctx.day_of_week] if ctx.day_of_week is not None else None
+                self._schedule.delete_cells(
+                    class_ids=ctx.class_ids,
+                    days_of_week=delete_days,
+                    max_lesson=ctx.max_lesson,
+                    commit=False,
+                )
 
             chosen_rows: list[tuple[int, Any, SlotFact]] = []
             allow_unplaced = ctx.day_of_week is not None
@@ -2357,14 +2478,17 @@ class CpSatScheduleSolver:
         hours_first: str = HOURS_FIRST_MORE,
         day_of_week: int | None = None,
         max_lesson: int | None = None,
+        preserve_existing: bool = False,
     ) -> CpSatSolveResult:
         """
         Rebuild schedule for classes in the given shift (same school_level).
         If ``class_ids`` is set, only those classes (must belong to the shift).
         If ``day_of_week`` is set, fill that weekday only (remaining hours,
         other days stay). ``max_lesson`` (day fill) skips later lesson numbers
-        so they can be filled on a later pass. Otherwise deletes existing cells
-        for the scoped classes and writes a full-week grid if feasible.
+        so they can be filled on a later pass. ``preserve_existing`` keeps
+        today's cells and only inserts into free slots (soft top-up). Otherwise
+        deletes existing cells for the scoped classes and writes a full-week
+        grid if feasible.
         """
         if cp_model is None:
             return CpSatSolveResult(
@@ -2381,6 +2505,7 @@ class CpSatScheduleSolver:
             should_stop=should_stop,
             day_of_week=day_of_week,
             max_lesson=max_lesson,
+            preserve_existing=preserve_existing,
         )
         if err_res is not None or ctx is None:
             return err_res

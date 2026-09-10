@@ -55,6 +55,7 @@ export function AutoSchedulerPage() {
   const [split, setSplit] = useState<'shift' | 'grade_bands'>('shift')
   const [fillDay, setFillDay] = useState<number>(1)
   const [fillMaxLesson, setFillMaxLesson] = useState<number>(7)
+  const [preserveExisting, setPreserveExisting] = useState(false)
   const [diagnose, setDiagnose] = useState<boolean>(false)
   const [teacherId, setTeacherId] = useState<number | ''>('')
   const [running, setRunning] = useState<boolean>(false)
@@ -199,7 +200,9 @@ export function AutoSchedulerPage() {
     if (job.status === 'cancelled') {
       const count = (job.result?.count as number | undefined) ?? 0
       if (job.kind === 'auto_all') {
-        appendLog('Остановлено. Сетка выбранного дня не менялась — CP-SAT записывает результат только в конце.')
+        appendLog(
+          'Остановлено. Сетка не менялась — CP-SAT записывает результат только в конце.',
+        )
       } else {
         appendLog(`Остановлено. Уже поставленные уроки сохранены (${count}).`)
       }
@@ -209,8 +212,13 @@ export function AutoSchedulerPage() {
     const count = e.count ?? '—'
     const wall = e.wall_time_sec as number | undefined
     const day = e.day_of_week as number | undefined
+    const soft = e.preserve_existing as boolean | undefined
     if (typeof day === 'number' && day >= 1 && day <= DAY_NAMES_LIST.length) {
-      appendLog(`Готово. ${DAY_NAMES_LIST[day - 1]}: в сетку записано уроков: ${count}.`)
+      appendLog(
+        soft
+          ? `Готово. ${DAY_NAMES_LIST[day - 1]} (дозапол): добавлено уроков: ${count}.`
+          : `Готово. ${DAY_NAMES_LIST[day - 1]}: в сетку записано уроков: ${count}.`,
+      )
     } else {
       appendLog(`Готово. В сетку записано уроков: ${count}.`)
     }
@@ -329,6 +337,7 @@ export function AutoSchedulerPage() {
         hours_first: hoursFirst,
         day_of_week: fillDay,
         max_lesson: fillMaxLesson,
+        preserve_existing: preserveExisting,
       }),
     )
   }
@@ -495,9 +504,47 @@ export function AutoSchedulerPage() {
       <div className="row g-3 mt-0">
         <div className="col-md-6">
           <div className="card shadow-sm h-100">
-            <div className="card-header fw-semibold">Заполнить день (CP-SAT)</div>
+            <div className="card-header fw-semibold">
+              {preserveExisting ? 'Дозаполнить день (CP-SAT)' : 'Заполнить день (CP-SAT)'}
+            </div>
             <div className="card-body">
               <div className="row g-2">
+                <div className="col-12">
+                  <label className="form-label small">Режим</label>
+                  <div className="form-check">
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="cpSatMode"
+                      id="modeRebuild"
+                      checked={!preserveExisting}
+                      onChange={() => setPreserveExisting(false)}
+                      disabled={running}
+                    />
+                    <label className="form-check-label" htmlFor="modeRebuild">
+                      Пересобрать день
+                    </label>
+                  </div>
+                  <div className="form-check">
+                    <input
+                      className="form-check-input"
+                      type="radio"
+                      name="cpSatMode"
+                      id="modeSoft"
+                      checked={preserveExisting}
+                      onChange={() => setPreserveExisting(true)}
+                      disabled={running}
+                    />
+                    <label className="form-check-label" htmlFor="modeSoft">
+                      Мягкий дозапол (сохранить стоящие)
+                    </label>
+                  </div>
+                  <div className="form-text">
+                    {preserveExisting
+                      ? 'Не удаляет уже стоящие уроки дня — ставит только в свободные слоты.'
+                      : 'Пересобирает сетку выбранного дня. Другие дни не трогает.'}
+                  </div>
+                </div>
                 <div className="col-md-6">
                   <label className="form-label small">Смена</label>
                   <select
@@ -552,7 +599,10 @@ export function AutoSchedulerPage() {
                     })}
                   </div>
                   <div className="form-text">
-                    Заполняет только {DAY_NAMES_LIST[fillDay - 1]}. Остальные дни не трогает.
+                    {preserveExisting
+                      ? `Дозаполняет только ${DAY_NAMES_LIST[fillDay - 1]}: стоящие уроки остаются.`
+                      : `Заполняет только ${DAY_NAMES_LIST[fillDay - 1]}. Остальные дни не трогает.`}
+                    {' '}
                     Запустите следующий день после проверки сетки.
                   </div>
                 </div>
@@ -703,7 +753,7 @@ export function AutoSchedulerPage() {
                   disabled={running}
                   onClick={runAll}
                 >
-                  Запустить
+                  {preserveExisting ? 'Дозаполнить' : 'Запустить'}
                 </button>
                 <button
                   type="button"

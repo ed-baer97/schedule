@@ -312,6 +312,7 @@ def run_auto_schedule(self, job_id: int) -> dict:
                 hours_first=payload.get("hours_first") or "more",
                 day_of_week=payload.get("day_of_week"),
                 max_lesson=payload.get("max_lesson"),
+                preserve_existing=bool(payload.get("preserve_existing")),
             )
         elif kind == "auto_by_teacher":
             iterator = scheduler.schedule_by_teacher_ladder_iter(
