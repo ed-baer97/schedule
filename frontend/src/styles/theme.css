@@ -810,13 +810,20 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 }
 
 /* ——— Schedule grid (сетка) ——— */
-.schedule-grid-table {
+.schedule-grid-page {
   --slot-index-width: 6.25rem;
+}
+
+.schedule-grid-page.is-compact {
+  --slot-index-width: 4.85rem;
+}
+
+.schedule-grid-table {
+  --slot-index-width: inherit;
   font-size: 0.85rem;
 }
 
 .schedule-grid-table.is-compact {
-  --slot-index-width: 4.85rem;
   font-size: 0.8rem;
 }
 
@@ -1384,12 +1391,13 @@ html[data-theme='dark'] .report-lesson-index {
 .teacher-remaining-tip,
 .class-remaining-tip {
   position: absolute;
-  left: 12px;
+  /* Clear sticky lesson-index column so numbers stay readable under the HUD */
+  left: calc(var(--slot-index-width, 4.85rem) + 14px);
   bottom: 22px;
   z-index: 18;
   display: none;
   pointer-events: none;
-  max-width: min(38rem, calc(100% - 17rem));
+  max-width: min(38rem, calc(100% - 17rem - var(--slot-index-width, 4.85rem)));
   max-height: calc(100% - 28px);
   overflow: hidden;
   padding: 0.65rem 0.85rem;
