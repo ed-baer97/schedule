@@ -244,11 +244,15 @@ class ScheduleValidator:
                 f'без другого предмета между ними'
             )
 
-        # Check max lessons per teacher+class per day
+        # Check max lessons per teacher+class+subject per day
         if self.check_teacher_class_per_day_limit(assignment, day, exclude_cell_id):
             teacher_name = assignment.teacher.display_name if assignment.teacher else "учитель"
+            subject_name = (
+                assignment.subject.display_name if assignment.subject else "предмет"
+            )
             errors.append(
-                f'Учитель {teacher_name} уже ведёт 2 урока в этом классе в этот день'
+                f'Учитель {teacher_name} уже ведёт 2 урока «{subject_name}» '
+                f'в этом классе в этот день'
             )
 
         return errors
@@ -290,7 +294,8 @@ class ScheduleValidator:
     def check_teacher_class_per_day_limit(self, assignment, day, exclude_cell_id=None):
         """
         Check if placing another lesson would exceed max 2 lessons per day
-        for the same teacher in the same class.
+        for the same teacher + class + subject.
+        Different subjects for the same teacher/class do not share this limit.
         Returns True if limit exceeded.
         """
         if not assignment.teacher_id:
@@ -300,6 +305,7 @@ class ScheduleValidator:
             ScheduleCell.class_id == assignment.class_id,
             ScheduleCell.day_of_week == day,
             TeachingAssignment.teacher_id == assignment.teacher_id,
+            TeachingAssignment.subject_id == assignment.subject_id,
         )
         if exclude_cell_id:
             query = query.filter(ScheduleCell.id != exclude_cell_id)

@@ -142,6 +142,11 @@ def subject_day_limit_reached(placed_today: int, max_per_day: int) -> bool:
 
 
 def teacher_class_day_limit_reached(placed_today: int, max_per_day: int = 2) -> bool:
+    """True if another lesson of the same subject would exceed the daily cap.
+
+    Count is for one teacher + class + subject on one day. Different subjects
+    do not share this budget (2 math + 1 informatics is allowed; 3 math is not).
+    """
     return int(placed_today) >= int(max_per_day)
 
 

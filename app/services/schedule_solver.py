@@ -880,12 +880,12 @@ class ResidualGraphSolver:
                         ]
                         if second_hour_is_split(existing, slot.lesson):
                             reason = "Сдвоенные уроки должны идти подряд"
-                if reason is None and unit.teacher_id:
-                    tc_key = (unit.teacher_id, unit.class_id, slot.day)
+                if reason is None and unit.teacher_id and unit.subject_id is not None:
+                    tc_key = (unit.teacher_id, unit.class_id, unit.subject_id, slot.day)
                     if teacher_class_day_limit_reached(
                         teacher_class_day_counts.get(tc_key, 0), 2
                     ):
-                        reason = "Лимит учитель+класс в этот день"
+                        reason = "Лимит учитель+класс+предмет в этот день"
                 if reason is not None:
                     diagnostics_raw[assignment.id][reason] += 1
                     continue
@@ -992,11 +992,13 @@ class ResidualGraphSolver:
                 if fact.assignment_id is not None:
                     subject_day_counts[(fact.assignment_id, fact.day)] += 1
 
-        teacher_class_day_counts: dict[tuple[int, int, int], int] = Counter()
+        teacher_class_day_counts: dict[tuple[int, int, int, int], int] = Counter()
         for tid, facts in teacher_busy.items():
             for fact in facts:
-                if fact.class_id is not None:
-                    teacher_class_day_counts[(tid, fact.class_id, fact.day)] += 1
+                if fact.class_id is not None and fact.subject_id is not None:
+                    teacher_class_day_counts[
+                        (tid, fact.class_id, fact.subject_id, fact.day)
+                    ] += 1
 
         adjacency, diagnostics_raw, feasible_by_assignment = self._build_edges(
             units,
@@ -1139,10 +1141,13 @@ class _ShiftDataContext:
     remaining_by_assignment: dict[int, int] = field(default_factory=dict)
     min_today_by_assignment: dict[int, int] = field(default_factory=dict)
     max_today_by_assignment: dict[int, int] = field(default_factory=dict)
-    # Soft fill anchors (today): occupied class lessons, assignment lessons, teacher+class counts
+    # Soft fill anchors (today): occupied class lessons, assignment lessons,
+    # teacher+class+subject counts
     occupied_lessons_by_class: dict[int, set[int]] = field(default_factory=dict)
     existing_lessons_by_assignment: dict[int, set[int]] = field(default_factory=dict)
-    existing_teacher_class_today: dict[tuple[int, int], int] = field(default_factory=dict)
+    existing_teacher_class_today: dict[tuple[int, int, int], int] = field(
+        default_factory=dict
+    )
     placed_today_by_assignment: dict[int, int] = field(default_factory=dict)
 
 
@@ -1443,7 +1448,7 @@ class CpSatScheduleSolver:
         max_today_by_assignment: dict[int, int] = {}
         occupied_lessons_by_class: dict[int, set[int]] = {}
         existing_lessons_by_assignment: dict[int, set[int]] = {}
-        existing_teacher_class_today: dict[tuple[int, int], int] = {}
+        existing_teacher_class_today: dict[tuple[int, int, int], int] = {}
         placed_today_by_assignment: dict[int, int] = {}
         assignment_ids = [a.id for a in assignments]
         if day_of_week is not None:
@@ -1582,8 +1587,8 @@ class CpSatScheduleSolver:
                 existing_lessons_by_assignment.setdefault(aid, set()).add(lesson)
                 placed_today_by_assignment[aid] = placed_today_by_assignment.get(aid, 0) + 1
                 a = assignment_map.get(aid)
-                if a and a.teacher_id:
-                    key = (int(a.teacher_id), int(a.class_id))
+                if a and a.teacher_id and a.subject_id is not None:
+                    key = (int(a.teacher_id), int(a.class_id), int(a.subject_id))
                     existing_teacher_class_today[key] = (
                         existing_teacher_class_today.get(key, 0) + 1
                     )
@@ -2064,23 +2069,30 @@ class CpSatScheduleSolver:
                     if terms1 or terms2:
                         model.Add(sum(terms1) == sum(terms2))
 
-        # For secondary/high school, avoid giving one teacher > 2 lessons in one class in a single day
-        # unless their total weekly hours in this class exceed 2 * working_days (e.g. primary homeroom teachers).
-        teacher_class_days: set[tuple[int, int]] = set()
-        teacher_class_hours: dict[tuple[int, int], int] = defaultdict(int)
+        # At most 2 lessons of the same subject for one teacher in one class per day.
+        # Different subjects do not share this budget (2 math + 1 informatics OK).
+        # If weekly hours for that subject exceed 2 * working_days, allow the daily ceil.
+        teacher_class_subject_hours: dict[tuple[int, int, int], int] = defaultdict(int)
         for a in ctx.assignments:
-            if a.teacher_id:
-                teacher_class_days.add((a.teacher_id, a.class_id))
-                teacher_class_hours[(a.teacher_id, a.class_id)] += int(a.hours_per_week or 0)
+            if a.teacher_id and a.subject_id is not None:
+                teacher_class_subject_hours[
+                    (a.teacher_id, a.class_id, a.subject_id)
+                ] += int(a.hours_per_week or 0)
 
-        for tid, cid in teacher_class_days:
-            total_hours = teacher_class_hours[(tid, cid)]
-            # If teacher has > 2 * working_days hours in this class, allow more lessons per day
-            max_daily_teacher = max(2, (total_hours + ctx.shift_obj.working_days - 1) // ctx.shift_obj.working_days)
+        for (tid, cid, sid), total_hours in teacher_class_subject_hours.items():
+            max_daily_teacher = max(
+                2,
+                (total_hours + ctx.shift_obj.working_days - 1)
+                // ctx.shift_obj.working_days,
+            )
             for day in range(1, ctx.shift_obj.working_days + 1):
                 terms = []
                 for ui, unit in ctx.unit_list:
-                    if unit.teacher_id != tid or unit.class_id != cid:
+                    if (
+                        unit.teacher_id != tid
+                        or unit.class_id != cid
+                        or unit.subject_id != sid
+                    ):
                         continue
                     for slot in feasible_slots_by_unit[ui]:
                         if slot.day == day:
@@ -2089,7 +2101,11 @@ class CpSatScheduleSolver:
                                 terms.append(x[key])
                 if terms:
                     already = (
-                        int(ctx.existing_teacher_class_today.get((tid, cid), 0))
+                        int(
+                            ctx.existing_teacher_class_today.get(
+                                (tid, cid, sid), 0
+                            )
+                        )
                         if ctx.preserve_existing and day == ctx.day_of_week
                         else 0
                     )

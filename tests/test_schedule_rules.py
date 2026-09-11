@@ -8,6 +8,7 @@ from app.domain.schedule_rules import (
     occupancy_blocks_unit,
     slot_facts_conflict,
     teacher_busy_at_slot,
+    teacher_class_day_limit_reached,
     units_cannot_share_class_slot,
 )
 
@@ -397,3 +398,8 @@ def test_day_placement_bounds_and_other_day_capacity():
     min_t, max_t = day_placement_bounds(6, max_per_day=2, day_lessons=6, other_day_capacity=0)
     assert min_t > max_t
     assert (min_t, max_t) == (6, 2)
+
+
+def test_teacher_class_day_limit_is_per_subject_budget():
+    assert teacher_class_day_limit_reached(1, 2) is False
+    assert teacher_class_day_limit_reached(2, 2) is True

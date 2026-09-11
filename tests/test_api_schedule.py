@@ -882,6 +882,85 @@ def _seed_two_classes_one_teacher() -> dict[str, int]:
         }
 
 
+def test_manual_cell_same_teacher_different_subjects_allows_third() -> None:
+    """2 of one subject + 1 of another by same teacher/class/day is allowed; 3 of one is not."""
+    with SessionLocal() as session:
+        shift = Shift(
+            school_id=TEST_SCHOOL_ID,
+            name="1 смена",
+            school_level="secondary",
+            start_lesson=1,
+            lessons_count=6,
+            working_days=5,
+            max_lessons_per_day=6,
+        )
+        math = Subject(school_id=TEST_SCHOOL_ID, name="Математика")
+        info = Subject(school_id=TEST_SCHOOL_ID, name="Информатика")
+        teacher = Teacher(school_id=TEST_SCHOOL_ID, full_name="Иванов И.И.")
+        cls = SchoolClass(
+            school_id=TEST_SCHOOL_ID,
+            name="7Б",
+            grade=7,
+            school_level="secondary",
+        )
+        session.add_all([shift, math, info, teacher, cls])
+        session.flush()
+        cls.shift_id = shift.id
+        a_math = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=math.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=5,
+        )
+        a_info = TeachingAssignment(
+            school_id=TEST_SCHOOL_ID,
+            subject_id=info.id,
+            teacher_id=teacher.id,
+            class_id=cls.id,
+            hours_per_week=2,
+        )
+        session.add_all([a_math, a_info])
+        session.commit()
+        class_id, math_id, info_id = cls.id, a_math.id, a_info.id
+
+    for lesson, aid in ((1, math_id), (2, math_id)):
+        r = client.post(
+            "/api/schedule/cells",
+            json={
+                "class_id": class_id,
+                "day_of_week": 1,
+                "lesson_number": lesson,
+                "assignment_id": aid,
+            },
+        )
+        assert r.status_code == 201, r.text
+
+    third_math = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 3,
+            "assignment_id": math_id,
+        },
+    )
+    assert third_math.status_code == 422, third_math.text
+    errors = third_math.json()["detail"]["errors"]
+    assert any("2 урока" in e and "Математика" in e for e in errors)
+
+    info_ok = client.post(
+        "/api/schedule/cells",
+        json={
+            "class_id": class_id,
+            "day_of_week": 1,
+            "lesson_number": 3,
+            "assignment_id": info_id,
+        },
+    )
+    assert info_ok.status_code == 201, info_ok.text
+
+
 def test_manual_cell_teacher_conflict_returns_reason() -> None:
     ids = _seed_two_classes_one_teacher()
     first = client.post(
