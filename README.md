@@ -4,14 +4,18 @@
 
 ## Документация
 
-| Документ | О чём |
-|----------|--------|
-| [docs/](docs/README.md) | Оглавление |
-| [Архитектура и структура](docs/architecture.md) | Слои, дерево, модели, API, правила слота и кабинета |
-| [Продукт](docs/product.md) | Цель, сущности, роли, правила, стек |
-| [Этапы выкладки](docs/stages.md) | Чеклист стенда (хост, Docker, auth, очередь) |
-| [Локальная разработка (Windows)](docs/local-windows.md) | Первый раз и ежедневный запуск |
-| [Стенд / Docker](docs/deploy.md) | Compose, `.env`, бэкапы, ограничения RAM |
+
+| Документ                                                | О чём                                               |
+| ------------------------------------------------------- | --------------------------------------------------- |
+| [docs/](docs/README.md)                                 | Оглавление                                          |
+| [Архитектура и структура](docs/architecture.md)         | Слои, дерево, модели, API, правила слота и кабинета |
+| [Продукт](docs/product.md)                              | Цель, сущности, роли, правила, стек                 |
+| [Этапы выкладки](docs/stages.md)                        | Чеклист стенда (хост, Docker, auth, очередь)        |
+| [Локальная разработка (Windows)](docs/local-windows.md) | Первый раз и ежедневный запуск                      |
+| [Стенд / Docker](docs/deploy.md)                        | Compose, `.env`, бэкапы, ограничения RAM            |
+
+
+
 
 ## Запуск на Windows (фронт и бэк отдельно)
 
@@ -45,7 +49,7 @@ cd schedule
 python run_api.py
 ```
 
-API / OpenAPI: http://127.0.0.1:8000/docs
+API / OpenAPI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 
 **Frontend** (окно 2):
 
@@ -54,7 +58,7 @@ cd schedule\frontend
 npm run dev
 ```
 
-UI: http://127.0.0.1:5173 — Vite проксирует `/api` на порт 8000. Сначала поднимите API, затем Vite.
+UI: [http://127.0.0.1:5173](http://127.0.0.1:5173) — Vite проксирует `/api` на порт 8000. Сначала поднимите API, затем Vite.
 
 Подробности: [docs/local-windows.md](docs/local-windows.md).
 
@@ -63,11 +67,10 @@ UI: http://127.0.0.1:5173 — Vite проксирует `/api` на порт 800
 ```bash
 git clone <repo> /opt/schedule && cd /opt/schedule
 cp env.example .env
-docker compose --profile queue up -d --build
 # автосоставление только с профилем queue
 ```
 
-Локально по HTTP: `HTTP_PORT=8080` и `COOKIE_SECURE=false` в `.env` → http://127.0.0.1:8080.
+Локально по HTTP: `HTTP_PORT=8080` и `COOKIE_SECURE=false` в `.env` → [http://127.0.0.1:8080](http://127.0.0.1:8080).
 
 Не делать `docker compose down -v` (сотрёт БД). Обновление: `git pull && docker compose --profile queue up -d --build --force-recreate`. Полная инструкция: [docs/deploy.md](docs/deploy.md).
 
@@ -77,6 +80,8 @@ docker compose --profile queue up -d --build
 .\venv\Scripts\activate
 python -m pytest -q
 ```
+
+
 
 ## Лицензия
 

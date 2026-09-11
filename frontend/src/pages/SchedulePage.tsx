@@ -218,8 +218,12 @@ function suppressCardDrag(ev: ReactPointerEvent<HTMLElement>) {
   const restore = () => {
     card.draggable = true
     window.removeEventListener('pointerup', restore)
+    window.removeEventListener('pointercancel', restore)
   }
+  // pointercancel (scroll gesture, dialog, etc.) can fire without pointerup —
+  // without it, memoized cards stay non-draggable until remount.
   window.addEventListener('pointerup', restore)
+  window.addEventListener('pointercancel', restore)
 }
 
 function buildTeacherHoverCss(keys: string[]) {
@@ -589,6 +593,7 @@ const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
       onDragOver={(e) => {
         if (locked) return
         e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
       }}
       onDrop={(e) => {
         if (locked) {
@@ -638,7 +643,7 @@ const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
             return (
             <div
               key={cell.id}
-              draggable
+              draggable={true}
               data-teacher-key={teacherHoverKey(cell) || undefined}
               data-slot-id={anchor}
               title={`${lessonCardTitle(cell, isClassroomAxis ? classLabel : undefined)} · нажмите, чтобы сменить кабинет`}
@@ -646,6 +651,7 @@ const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
                 applyTeacherHover(e.currentTarget.closest('.schedule-grid-card'), null)
                 draggedCellId.current = cell.id
                 e.dataTransfer.setData('text/cell-id', String(cell.id))
+                e.dataTransfer.setData('text/plain', String(cell.id))
                 e.dataTransfer.effectAllowed = 'move'
               }}
               className="lesson-card position-relative"
@@ -898,6 +904,7 @@ export function SchedulePage() {
   const [editCell, setEditCell] = useState<CellOut | null>(null)
   const [whyCell, setWhyCell] = useState<CellOut | null>(null)
   const draggedCellId = useRef<number | null>(null)
+  const gridCellsRef = useRef<CellOut[] | undefined>(undefined)
   const hashTimer = useRef<number>(0)
   const restoreDone = useRef(false)
   const syncAllowed = useRef(false)
@@ -1055,6 +1062,7 @@ export function SchedulePage() {
     queryKey: ['schedule', 'grid', level, shiftId],
     queryFn: () => fetchGrid(level, shiftId),
   })
+  gridCellsRef.current = gridQ.data?.cells
 
   const classroomsQ = useQuery({
     queryKey: ['classrooms'],
@@ -1287,7 +1295,7 @@ export function SchedulePage() {
     (e: ReactDragEvent, target: { class_id: number; day: number; lesson: number }) => {
       e.preventDefault()
       if (target.lesson === 0) return
-      const raw = e.dataTransfer.getData('text/cell-id')
+      const raw = e.dataTransfer.getData('text/cell-id') || e.dataTransfer.getData('text/plain')
       if (!raw) return
       const cell_id = Number(raw)
       if (!cell_id) return
@@ -1308,11 +1316,14 @@ export function SchedulePage() {
     ) => {
       e.preventDefault()
       if (target.lesson === 0) return
-      const raw = e.dataTransfer.getData('text/cell-id')
+      const raw = e.dataTransfer.getData('text/cell-id') || e.dataTransfer.getData('text/plain')
       if (!raw) return
       const cell_id = Number(raw)
       if (!cell_id) return
-      const cell = gridQ.data?.cells.find((c) => c.id === cell_id)
+      // Read cells from a ref so this callback stays referentially stable —
+      // putting gridQ.data?.cells in deps remounts every memoized slot and
+      // aborts an in-progress HTML5 drag.
+      const cell = gridCellsRef.current?.find((c) => c.id === cell_id)
       if (!cell) return
       moveM.mutate({
         cell_id,
@@ -1323,7 +1334,7 @@ export function SchedulePage() {
         set_classroom: true,
       })
     },
-    [moveM.mutate, gridQ.data?.cells],
+    [moveM.mutate],
   )
   const navigateMinimapSlot = useCallback((id: string) => {
     scrollScheduleAnchor(id, 'nearest')
