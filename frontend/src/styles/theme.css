@@ -2243,6 +2243,55 @@ html[data-theme='dark'] .overlay-scroll-thumb {
   }
 }
 
+/* Workload hours matrix — per-cell save feedback */
+.workload-table .workload-cell {
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background-color 0.15s ease;
+}
+
+.workload-table .workload-cell.is-dirty {
+  border-color: #c4a35a;
+  box-shadow: 0 0 0 0.15rem rgba(196, 163, 90, 0.35);
+  background-color: #fff8e8;
+}
+
+.workload-table .workload-cell.is-saving {
+  border-color: #3d7ea6;
+  box-shadow: 0 0 0 0.15rem rgba(61, 126, 166, 0.3);
+  background-color: #eef6fb;
+  opacity: 0.85;
+}
+
+.workload-table .workload-cell.is-saved {
+  border-color: #3d8b6e;
+  box-shadow: 0 0 0 0.15rem rgba(61, 139, 110, 0.35);
+  background-color: #e8f6ef;
+}
+
+.workload-table .workload-cell.is-error {
+  border-color: #b85c4a;
+  box-shadow: 0 0 0 0.15rem rgba(184, 92, 74, 0.35);
+  background-color: #fceceb;
+}
+
+html[data-theme='dark'] .workload-table .workload-cell.is-dirty {
+  background-color: rgba(196, 163, 90, 0.18);
+}
+
+html[data-theme='dark'] .workload-table .workload-cell.is-saving {
+  background-color: rgba(61, 126, 166, 0.2);
+}
+
+html[data-theme='dark'] .workload-table .workload-cell.is-saved {
+  background-color: rgba(61, 139, 110, 0.2);
+}
+
+html[data-theme='dark'] .workload-table .workload-cell.is-error {
+  background-color: rgba(184, 92, 74, 0.2);
+}
+
 @media print {
   .app-navbar,
   .app-sidebar,
