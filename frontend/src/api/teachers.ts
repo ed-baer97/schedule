@@ -49,6 +49,10 @@ export function listTeacherLoad() {
   return apiJson<TeacherLoad[]>('/api/teachers/load')
 }
 
+export function exportTeacherLoadUrl() {
+  return '/api/teachers/load/export'
+}
+
 export function createTeacher(payload: TeacherPayload) {
   return apiJson<Teacher>('/api/teachers/', {
     method: 'POST',

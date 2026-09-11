@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { listTeacherLoad, type TeacherLoad } from '../api/teachers'
+import { exportTeacherLoadUrl, listTeacherLoad, type TeacherLoad } from '../api/teachers'
 import { PageHeader } from '../components/PageHeader'
 
 function hoursWord(n: number) {
@@ -77,9 +77,14 @@ export function TeacherLoadPage() {
         title="Нагрузка учителей"
         subtitle="ФИО, часы в неделю по предметам и сколько часов в каждой смене"
         actions={
-          <Link to="/teachers" className="btn btn-outline-secondary">
-            Справочник учителей
-          </Link>
+          <div className="d-flex flex-wrap gap-2">
+            <a href={exportTeacherLoadUrl()} className="btn btn-success">
+              Скачать Excel
+            </a>
+            <Link to="/teachers" className="btn btn-outline-secondary">
+              Справочник учителей
+            </Link>
+          </div>
         }
       />
 

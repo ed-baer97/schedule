@@ -1,7 +1,9 @@
 """Teachers CRUD API."""
 from dataclasses import asdict
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.models import School
@@ -15,6 +17,22 @@ from backend.schemas.teachers import (
 )
 
 router = APIRouter()
+
+_XLSX_MIME = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
+def _xlsx_stream(buf, filename: str) -> StreamingResponse:
+    buf.seek(0)
+    safe = quote(filename)
+    return StreamingResponse(
+        buf,
+        media_type=_XLSX_MIME,
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{safe}",
+        },
+    )
 
 
 @router.get("/", response_model=list[TeacherOut])
@@ -37,6 +55,15 @@ def list_teacher_load(
         TeacherLoadOut.model_validate(asdict(row))
         for row in TeacherService(db, school.id).list_load()
     ]
+
+
+@router.get("/load/export")
+def export_teacher_load(
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> StreamingResponse:
+    export = TeacherService(db, school.id).export_load()
+    return _xlsx_stream(export.buffer, export.filename)
 
 
 @router.get("/{teacher_id}", response_model=TeacherOut)

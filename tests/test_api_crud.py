@@ -1,8 +1,11 @@
 """CRUD smoke tests for directories already on FastAPI get_db."""
 from __future__ import annotations
 
+import io
+
 import pytest
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 from sqlalchemy import delete
 
 from app.models import (
@@ -404,6 +407,27 @@ def test_teacher_load_hours_and_shifts() -> None:
     assert sidirov["total_hours"] == 0
     assert sidirov["unassigned_shift_hours"] == 0
     assert sidirov["has_classes_without_shift"] is False
+
+    xlsx = client.get("/api/teachers/load/export")
+    assert xlsx.status_code == 200, xlsx.text
+    assert "spreadsheetml" in xlsx.headers["content-type"]
+    assert "filename*=UTF-8''" in xlsx.headers.get("content-disposition", "")
+    wb = load_workbook(io.BytesIO(xlsx.content))
+    assert wb.sheetnames == ["Нагрузка", "По предметам"]
+    summary = wb["Нагрузка"]
+    assert [c.value for c in summary[1]] == [
+        "ФИО",
+        "Предметы, часы в неделю",
+        "Часы по сменам",
+        "Всего",
+    ]
+    by_name = {row[0].value: row for row in summary.iter_rows(min_row=2, max_row=4)}
+    assert by_name["Иванов Иван Иванович"][3].value == 11
+    assert "Математика: 9" in by_name["Иванов Иван Иванович"][1].value
+    assert "1 смена: 7" in by_name["Иванов Иван Иванович"][2].value
+    assert by_name["Петрова Анна Сергеевна"][3].value == 3
+    assert "без смены: 3" in by_name["Петрова Анна Сергеевна"][2].value
+    assert by_name["Сидоров С.С."][3].value == 0
 
 
 def test_classroom_school_level_roundtrip() -> None:
