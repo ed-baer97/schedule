@@ -12,6 +12,7 @@ import {
 } from '../components/ClassRemainingTip'
 import { TeacherRemainingTip } from '../components/TeacherRemainingTip'
 import { extractApiError } from '../api/client'
+import { listClassrooms, type Classroom } from '../api/classrooms'
 import {
   clearSchedule,
   createScheduleCell,
@@ -34,16 +35,26 @@ import { useScheduleExpand } from '../layouts/ScheduleLayout'
 
 type SlotKey = { class_id: number; day: number; lesson: number; class_name: string }
 type ScheduleDensity = 'compact' | 'comfortable'
+type GridAxis = 'class' | 'classroom'
 type GridRow =
   | { kind: 'day'; day: number }
   | { kind: 'class_hour'; day: number }
   | { kind: 'lesson'; day: number; lesson: number }
 
+type RoomColumn = {
+  id: number
+  name: string
+  capacity: number | null
+}
+
 const SHOW_OCCUPIED_VALUE = '__show_occupied__'
 const SWAP_VALUE_PREFIX = 'swap:'
 const EMPTY_CELLS: CellOut[] = []
+/** Synthetic column id for lessons without a classroom. */
+const NO_ROOM_ID = 0
 
 const DENSITY_KEY = 'schedule:density'
+const AXIS_KEY = 'schedule:axis'
 
 if (typeof window !== 'undefined') {
   try {
@@ -63,8 +74,16 @@ function slotAnchor(classId: number, day: number, lesson: number) {
   return `slot-${classId}-${day}-${lesson}`
 }
 
+function roomSlotAnchor(roomId: number, day: number, lesson: number) {
+  return `room-slot-${roomId}-${day}-${lesson}`
+}
+
 function classAnchor(classId: number) {
   return `class-${classId}`
+}
+
+function roomAnchor(roomId: number) {
+  return `room-${roomId}`
 }
 
 function splitBellLabel(label: string): [string, string] | null {
@@ -117,6 +136,57 @@ function saveDensity(next: ScheduleDensity) {
   }
 }
 
+function loadAxis(): GridAxis {
+  try {
+    return localStorage.getItem(AXIS_KEY) === 'classroom' ? 'classroom' : 'class'
+  } catch {
+    return 'class'
+  }
+}
+
+function saveAxis(next: GridAxis) {
+  try {
+    localStorage.setItem(AXIS_KEY, next)
+  } catch {
+    /* ignore */
+  }
+}
+
+function buildRoomColumns(
+  classrooms: Classroom[],
+  cells: CellOut[],
+  level: SchoolLevel,
+): RoomColumn[] {
+  const byId = new Map(classrooms.map((c) => [c.id, c]))
+  const levelRooms = classrooms.filter(
+    (c) => c.school_level == null || c.school_level === level,
+  )
+  const cols: RoomColumn[] = levelRooms
+    .slice()
+    .sort((a, b) =>
+      a.number.localeCompare(b.number, undefined, { numeric: true, sensitivity: 'base' }),
+    )
+    .map((c) => ({
+      id: c.id,
+      name: c.display_name || c.number,
+      capacity: c.classes_capacity ?? 1,
+    }))
+  const seen = new Set(cols.map((c) => c.id))
+  for (const cell of cells) {
+    const id = cell.classroom_id
+    if (id == null || seen.has(id)) continue
+    const c = byId.get(id)
+    cols.push({
+      id,
+      name: c?.display_name || cell.classroom_name || String(id),
+      capacity: c?.classes_capacity ?? 1,
+    })
+    seen.add(id)
+  }
+  cols.push({ id: NO_ROOM_ID, name: 'Без кабинета', capacity: null })
+  return cols
+}
+
 function shortTeacherName(full: string | null | undefined): string {
   const name = (full ?? '').trim()
   if (!name) return '?'
@@ -138,15 +208,6 @@ function classroomNumberLabel(name: string | null | undefined): string {
   if (!raw) return ''
   const m = raw.match(/^(.+?)\s*\([^)]*\)\s*$/)
   return (m ? m[1] : raw).trim()
-}
-
-function lessonCardTitle(cell: CellOut): string {
-  const bits = [cell.subject_name]
-  if (cell.group_number != null) bits.push(`гр.${cell.group_number}`)
-  if (cell.teacher_name) bits.push(cell.teacher_name)
-  const room = classroomNumberLabel(cell.classroom_name)
-  if (room) bits.push(`каб. ${room}`)
-  return bits.join(' · ')
 }
 
 function suppressCardDrag(ev: ReactPointerEvent<HTMLElement>) {
@@ -182,14 +243,14 @@ html[data-theme='dark'] ${root} ${slotIdx} .schedule-slot-num,html[data-theme='d
 }
 
 function teacherKeysForRow(
-  classes: { id: number }[],
+  columnIds: number[],
   day: number,
   lesson: number,
   cellsBySlot: Map<string, CellOut[]>,
 ): string {
   const keys = new Set<string>()
-  for (const c of classes) {
-    const cells = cellsBySlot.get(`${c.id}:${day}:${lesson}`)
+  for (const id of columnIds) {
+    const cells = cellsBySlot.get(`${id}:${day}:${lesson}`)
     if (!cells) continue
     for (const cell of cells) {
       const key = teacherHoverKey(cell)
@@ -197,6 +258,17 @@ function teacherKeysForRow(
     }
   }
   return [...keys].join(' ')
+}
+
+function lessonCardTitle(cell: CellOut, classLabel?: string): string {
+  const bits: string[] = []
+  if (classLabel) bits.push(classLabel)
+  bits.push(cell.subject_name)
+  if (cell.group_number != null) bits.push(`гр.${cell.group_number}`)
+  if (cell.teacher_name) bits.push(cell.teacher_name)
+  const room = classroomNumberLabel(cell.classroom_name)
+  if (room) bits.push(`каб. ${room}`)
+  return bits.join(' · ')
 }
 
 function applyTeacherHover(
@@ -430,6 +502,8 @@ function cellsVisualEq(a: CellOut[], b: CellOut[]) {
       x.teacher_id !== y.teacher_id ||
       x.teacher_name !== y.teacher_name ||
       x.classroom_name !== y.classroom_name ||
+      x.classroom_id !== y.classroom_id ||
+      x.class_id !== y.class_id ||
       x.group_number !== y.group_number
     ) {
       return false
@@ -439,47 +513,79 @@ function cellsVisualEq(a: CellOut[], b: CellOut[]) {
 }
 
 type SlotCellProps = {
-  classId: number
-  className: string
+  axis: GridAxis
+  columnId: number
+  columnLabel: string
   day: number
   lesson: number
   cells: CellOut[]
   density: ScheduleDensity
   locked: boolean
+  /** Class names for classroom-axis cards. */
+  classNameById?: Record<number, string>
+  capacity?: number | null
   draggedCellId: { current: number | null }
   onOpenAdd: (classId: number, className: string, day: number, lesson: number) => void
   onOpenEdit: (cell: CellOut) => void
   onOpenWhy: (cell: CellOut) => void
   onDelete: (cell: CellOut) => void
-  onDrop: (
+  onDropClass: (
     e: ReactDragEvent,
     target: { class_id: number; day: number; lesson: number },
+  ) => void
+  onDropRoom: (
+    e: ReactDragEvent,
+    target: { classroom_id: number | null; day: number; lesson: number },
   ) => void
 }
 
 const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
   const {
-    classId,
-    className,
+    axis,
+    columnId,
+    columnLabel,
     day,
     lesson,
     cells,
     density,
     locked,
+    classNameById,
+    capacity,
     draggedCellId,
     onOpenAdd,
     onOpenEdit,
     onOpenWhy,
     onDelete,
-    onDrop,
+    onDropClass,
+    onDropRoom,
   } = props
-  const canAdd = !locked && slotAcceptsAnotherLesson(cells)
+  const isClassroomAxis = axis === 'classroom'
+  const canAdd = !locked && !isClassroomAxis && slotAcceptsAnotherLesson(cells)
+  const overCapacity =
+    isClassroomAxis &&
+    capacity != null &&
+    capacity > 0 &&
+    cells.length > capacity
+  const anchor = isClassroomAxis
+    ? roomSlotAnchor(columnId, day, lesson)
+    : slotAnchor(columnId, day, lesson)
+
   return (
     <td
-      id={slotAnchor(classId, day, lesson)}
-      className={`schedule-slot-cell align-top${locked ? ' is-locked' : ''}`}
+      id={anchor}
+      className={`schedule-slot-cell align-top${locked ? ' is-locked' : ''}${
+        overCapacity ? ' is-over-capacity' : ''
+      }`}
       style={{ cursor: canAdd ? 'pointer' : 'default' }}
-      title={locked && cells.length === 0 ? 'Классный час — урок поставить нельзя' : undefined}
+      title={
+        locked && cells.length === 0
+          ? 'Классный час — урок поставить нельзя'
+          : overCapacity
+            ? `Переполнение: ${cells.length} / ${capacity}`
+            : isClassroomAxis && cells.length === 0
+              ? 'Свободно — перетащите урок сюда, чтобы назначить кабинет'
+              : undefined
+      }
       onDragOver={(e) => {
         if (locked) return
         e.preventDefault()
@@ -489,30 +595,53 @@ const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
           e.preventDefault()
           return
         }
-        onDrop(e, { class_id: classId, day, lesson })
+        if (isClassroomAxis) {
+          onDropRoom(e, {
+            classroom_id: columnId === NO_ROOM_ID ? null : columnId,
+            day,
+            lesson,
+          })
+        } else {
+          onDropClass(e, { class_id: columnId, day, lesson })
+        }
       }}
       onClick={(e) => {
-        if (locked) return
+        if (locked || isClassroomAxis) return
         if ((e.target as HTMLElement).closest('button, .lesson-card')) return
         if (!canAdd) return
-        onOpenAdd(classId, className, day, lesson)
+        onOpenAdd(columnId, columnLabel, day, lesson)
       }}
     >
       {cells.length === 0 ? (
         <div className={`schedule-slot-empty${locked ? ' is-locked' : ''}`} aria-hidden>
-          {locked ? '' : '+'}
+          {locked || isClassroomAxis ? '' : '+'}
         </div>
       ) : (
         <>
           {cells.map((cell, i) => {
             const room = classroomNumberLabel(cell.classroom_name)
+            const classLabel = classNameById?.[cell.class_id] ?? ''
+            const metaPrimary = isClassroomAxis
+              ? classLabel || `класс ${cell.class_id}`
+              : density === 'compact'
+                ? shortTeacherName(cell.teacher_name)
+                : (cell.teacher_name ?? '?')
+            const metaSecondary = isClassroomAxis
+              ? density === 'compact'
+                ? shortTeacherName(cell.teacher_name)
+                : (cell.teacher_name ?? '?')
+              : room
+                ? density === 'compact'
+                  ? room
+                  : `каб. ${room}`
+                : null
             return (
             <div
               key={cell.id}
               draggable
               data-teacher-key={teacherHoverKey(cell) || undefined}
-              data-slot-id={slotAnchor(classId, day, lesson)}
-              title={`${lessonCardTitle(cell)} · нажмите, чтобы сменить кабинет`}
+              data-slot-id={anchor}
+              title={`${lessonCardTitle(cell, isClassroomAxis ? classLabel : undefined)} · нажмите, чтобы сменить кабинет`}
               onDragStart={(e) => {
                 applyTeacherHover(e.currentTarget.closest('.schedule-grid-card'), null)
                 draggedCellId.current = cell.id
@@ -540,18 +669,16 @@ const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
                 )}
               </div>
               <div className="lesson-card-meta">
-                <span className="teacher-name">
-                  {density === 'compact'
-                    ? shortTeacherName(cell.teacher_name)
-                    : (cell.teacher_name ?? '?')}
+                <span className={isClassroomAxis ? 'lesson-class-name' : 'teacher-name'}>
+                  {metaPrimary}
                 </span>
-                {room ? (
+                {metaSecondary ? (
                   <>
                     <span className="lesson-meta-sep" aria-hidden>
                       ·
                     </span>
-                    <span className="lesson-room">
-                      {density === 'compact' ? room : `каб. ${room}`}
+                    <span className={isClassroomAxis ? 'teacher-name' : 'lesson-room'}>
+                      {metaSecondary}
                     </span>
                   </>
                 ) : null}
@@ -592,28 +719,37 @@ const ScheduleSlotCell = memo(function ScheduleSlotCell(props: SlotCellProps) {
               title="Добавить вторую подгруппу"
               onClick={(ev) => {
                 ev.stopPropagation()
-                onOpenAdd(classId, className, day, lesson)
+                onOpenAdd(columnId, columnLabel, day, lesson)
               }}
             >
               +
             </button>
+          )}
+          {isClassroomAxis && capacity != null && capacity > 0 && (
+            <div className="schedule-room-cap text-muted">
+              {cells.length}/{capacity}
+            </div>
           )}
         </>
       )}
     </td>
   )
 }, (prev, next) => (
-  prev.classId === next.classId &&
-  prev.className === next.className &&
+  prev.axis === next.axis &&
+  prev.columnId === next.columnId &&
+  prev.columnLabel === next.columnLabel &&
   prev.day === next.day &&
   prev.lesson === next.lesson &&
   prev.density === next.density &&
   prev.locked === next.locked &&
+  prev.capacity === next.capacity &&
+  prev.classNameById === next.classNameById &&
   prev.onOpenAdd === next.onOpenAdd &&
   prev.onOpenEdit === next.onOpenEdit &&
   prev.onOpenWhy === next.onOpenWhy &&
   prev.onDelete === next.onDelete &&
-  prev.onDrop === next.onDrop &&
+  prev.onDropClass === next.onDropClass &&
+  prev.onDropRoom === next.onDropRoom &&
   cellsVisualEq(prev.cells, next.cells)
 ))
 
@@ -756,6 +892,7 @@ export function SchedulePage() {
       : storedTab?.shift_id ?? null
   const [toast, setToast] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
   const [density, setDensity] = useState<ScheduleDensity>(loadDensity)
+  const [axis, setAxis] = useState<GridAxis>(loadAxis)
   const { expanded, setExpanded } = useScheduleExpand()
   const [slot, setSlot] = useState<SlotKey | null>(null)
   const [editCell, setEditCell] = useState<CellOut | null>(null)
@@ -769,6 +906,10 @@ export function SchedulePage() {
   useEffect(() => {
     saveDensity(density)
   }, [density])
+
+  useEffect(() => {
+    saveAxis(axis)
+  }, [axis])
 
   function finishRestore() {
     restoreDone.current = true
@@ -793,7 +934,7 @@ export function SchedulePage() {
       }
       return false
     }
-    if (hash.startsWith('slot-')) {
+    if (hash.startsWith('slot-') || hash.startsWith('room-slot-')) {
       if (scrollScheduleAnchor(hash, 'nearest')) {
         replaceHash(hash)
         finishRestore()
@@ -801,7 +942,11 @@ export function SchedulePage() {
       }
       return false
     }
-    if (hash.startsWith('day-') || hash.startsWith('class-')) {
+    if (
+      hash.startsWith('day-') ||
+      hash.startsWith('class-') ||
+      hash.startsWith('room-')
+    ) {
       if (scrollScheduleAnchor(hash, 'start')) {
         replaceHash(hash)
         finishRestore()
@@ -911,6 +1056,13 @@ export function SchedulePage() {
     queryFn: () => fetchGrid(level, shiftId),
   })
 
+  const classroomsQ = useQuery({
+    queryKey: ['classrooms'],
+    queryFn: listClassrooms,
+    enabled: axis === 'classroom',
+    staleTime: 60_000,
+  })
+
   const teacherHoverKeySig = useMemo(
     () =>
       [...new Set((gridQ.data?.cells ?? []).map(teacherHoverKey).filter(Boolean))]
@@ -995,15 +1147,27 @@ export function SchedulePage() {
       class_id: number
       day_of_week: number
       lesson_number: number
+      classroom_id?: number | null
+      set_classroom?: boolean
     }) =>
       updateScheduleCell(p.cell_id, {
         day_of_week: p.day_of_week,
         lesson_number: p.lesson_number,
         class_id: p.class_id,
+        ...(p.set_classroom
+          ? { classroom_id: p.classroom_id ?? null, set_classroom: true }
+          : {}),
       }),
     onSuccess: (cell, p) => {
-      setToast({ kind: 'success', text: 'Урок перемещён' })
-      replaceHash(slotAnchor(p.class_id, p.day_of_week, p.lesson_number))
+      setToast({
+        kind: 'success',
+        text: p.set_classroom ? 'Урок перемещён и кабинет назначен' : 'Урок перемещён',
+      })
+      const hash =
+        axis === 'classroom'
+          ? roomSlotAnchor(cell.classroom_id ?? NO_ROOM_ID, p.day_of_week, p.lesson_number)
+          : slotAnchor(p.class_id, p.day_of_week, p.lesson_number)
+      replaceHash(hash)
       patchGrid((grid) => ({ ...grid, cells: upsertCell(grid.cells, cell) }))
       afterCellWrite()
       stayAt(p.class_id, p.day_of_week, p.lesson_number)
@@ -1136,6 +1300,31 @@ export function SchedulePage() {
     },
     [moveM.mutate],
   )
+
+  const onDropRoomSlot = useCallback(
+    (
+      e: ReactDragEvent,
+      target: { classroom_id: number | null; day: number; lesson: number },
+    ) => {
+      e.preventDefault()
+      if (target.lesson === 0) return
+      const raw = e.dataTransfer.getData('text/cell-id')
+      if (!raw) return
+      const cell_id = Number(raw)
+      if (!cell_id) return
+      const cell = gridQ.data?.cells.find((c) => c.id === cell_id)
+      if (!cell) return
+      moveM.mutate({
+        cell_id,
+        class_id: cell.class_id,
+        day_of_week: target.day,
+        lesson_number: target.lesson,
+        classroom_id: target.classroom_id,
+        set_classroom: true,
+      })
+    },
+    [moveM.mutate, gridQ.data?.cells],
+  )
   const navigateMinimapSlot = useCallback((id: string) => {
     scrollScheduleAnchor(id, 'nearest')
   }, [])
@@ -1150,6 +1339,45 @@ export function SchedulePage() {
     }
     return m
   }, [gridQ.data?.cells])
+
+  const cellsByRoomSlot = useMemo(() => {
+    const m = new Map<string, CellOut[]>()
+    for (const c of gridQ.data?.cells ?? []) {
+      const roomId = c.classroom_id ?? NO_ROOM_ID
+      const key = `${roomId}:${c.day_of_week}:${c.lesson_number}`
+      const arr = m.get(key)
+      if (arr) arr.push(c)
+      else m.set(key, [c])
+    }
+    return m
+  }, [gridQ.data?.cells])
+
+  const roomColumns = useMemo(
+    () =>
+      buildRoomColumns(
+        classroomsQ.data ?? [],
+        gridQ.data?.cells ?? [],
+        level,
+      ),
+    [classroomsQ.data, gridQ.data?.cells, level],
+  )
+
+  const gridColumns = useMemo(() => {
+    if (axis === 'classroom') {
+      return roomColumns.map((r) => ({
+        id: r.id,
+        name: r.name,
+        capacity: r.capacity,
+      }))
+    }
+    return (gridQ.data?.classes ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      capacity: null as number | null,
+    }))
+  }, [axis, roomColumns, gridQ.data?.classes])
+
+  const activeCellsBySlot = axis === 'classroom' ? cellsByRoomSlot : cellsBySlot
 
   const rows = useMemo(() => {
     const grid = gridQ.data
@@ -1292,6 +1520,24 @@ export function SchedulePage() {
         )}
 
         <div className="schedule-grid-view-controls">
+          <div className="schedule-density" role="group" aria-label="Ось сетки">
+            <button
+              type="button"
+              className={axis === 'class' ? 'is-active' : ''}
+              aria-pressed={axis === 'class'}
+              onClick={() => setAxis('class')}
+            >
+              Классы
+            </button>
+            <button
+              type="button"
+              className={axis === 'classroom' ? 'is-active' : ''}
+              aria-pressed={axis === 'classroom'}
+              onClick={() => setAxis('classroom')}
+            >
+              Кабинеты
+            </button>
+          </div>
           <div className="schedule-density" role="group" aria-label="Плотность сетки">
             <button
               type="button"
@@ -1331,9 +1577,13 @@ export function SchedulePage() {
             Нет классов для отображения. Привяжите классы к смене.
           </div>
         </div>
+      ) : axis === 'classroom' && classroomsQ.isPending && !classroomsQ.data ? (
+        <p>Загрузка кабинетов…</p>
+      ) : axis === 'classroom' && classroomsQ.isError ? (
+        <p className="text-danger">{extractApiError(classroomsQ.error)}</p>
       ) : (
         <div
-          className="card schedule-grid-card"
+          className={`card schedule-grid-card${axis === 'classroom' ? ' is-classroom-axis' : ''}`}
           onMouseOver={(e) => {
             applyGridHover(e.currentTarget, e.target)
           }}
@@ -1351,8 +1601,8 @@ export function SchedulePage() {
           <TeacherRemainingTip remainingByKey={remainingByKey} />
           <ClassRemainingTip remainingByClassId={remainingByClassId} />
           <OverlayScrollArea
-            key={`${level}-${shiftId ?? 'auto'}`}
-            persistKey={`schedule-grid:${level}:${shiftId ?? 'auto'}`}
+            key={`${level}-${shiftId ?? 'auto'}-${axis}`}
+            persistKey={`schedule-grid:${level}:${shiftId ?? 'auto'}:${axis}`}
             onScroll={syncHashFromScroll}
             onViewportReady={() => {
               tryRestoreAnchor()
@@ -1362,14 +1612,25 @@ export function SchedulePage() {
               <thead className="table-light">
                 <tr>
                   <th className="schedule-slot-index">Урок</th>
-                  {grid.classes.map((c) => (
+                  {gridColumns.map((col) => (
                     <th
-                      key={c.id}
-                      id={classAnchor(c.id)}
-                      data-class-id={c.id}
-                      className="text-center"
+                      key={col.id}
+                      id={axis === 'classroom' ? roomAnchor(col.id) : classAnchor(col.id)}
+                      data-class-id={axis === 'class' ? col.id : undefined}
+                      data-room-id={axis === 'classroom' ? col.id : undefined}
+                      className={`text-center${
+                        axis === 'classroom' && col.id === NO_ROOM_ID ? ' is-no-room' : ''
+                      }`}
+                      title={
+                        axis === 'classroom' && col.capacity != null
+                          ? `Вместимость: ${col.capacity}`
+                          : undefined
+                      }
                     >
-                      {c.name}
+                      {col.name}
+                      {axis === 'classroom' && col.capacity != null && col.capacity > 1 ? (
+                        <span className="schedule-room-cap-head text-muted"> · {col.capacity}</span>
+                      ) : null}
                     </th>
                   ))}
                 </tr>
@@ -1380,7 +1641,7 @@ export function SchedulePage() {
                     return (
                       <tr key={`d-${row.day}`} id={dayAnchor(row.day)}>
                         <td
-                          colSpan={grid.classes.length + 1}
+                          colSpan={gridColumns.length + 1}
                           className="schedule-day-row"
                         >
                           <div className="schedule-day-row-inner">
@@ -1434,10 +1695,10 @@ export function SchedulePage() {
                     ? grid.class_hour_time_label
                     : grid.lesson_times_by_day[row.day]?.[lesson]
                   const rowTeachers = teacherKeysForRow(
-                    grid.classes,
+                    gridColumns.map((c) => c.id),
                     row.day,
                     lesson,
-                    cellsBySlot,
+                    activeCellsBySlot,
                   )
                   return (
                     <tr
@@ -1458,22 +1719,29 @@ export function SchedulePage() {
                         </div>
                         {time ? <BellLabel time={time} /> : null}
                       </td>
-                      {grid.classes.map((c) => (
+                      {gridColumns.map((col) => (
                         <ScheduleSlotCell
-                          key={c.id}
-                          classId={c.id}
-                          className={c.name}
+                          key={col.id}
+                          axis={axis}
+                          columnId={col.id}
+                          columnLabel={col.name}
                           day={row.day}
                           lesson={lesson}
-                          cells={cellsBySlot.get(`${c.id}:${row.day}:${lesson}`) ?? EMPTY_CELLS}
+                          cells={
+                            activeCellsBySlot.get(`${col.id}:${row.day}:${lesson}`) ??
+                            EMPTY_CELLS
+                          }
                           density={density}
                           locked={isClassHour}
+                          classNameById={classNameById}
+                          capacity={col.capacity}
                           draggedCellId={draggedCellId}
                           onOpenAdd={openAdd}
                           onOpenEdit={openEdit}
                           onOpenWhy={openWhy}
                           onDelete={deleteCell}
-                          onDrop={onDropSlot}
+                          onDropClass={onDropSlot}
+                          onDropRoom={onDropRoomSlot}
                         />
                       ))}
                     </tr>
@@ -1483,10 +1751,15 @@ export function SchedulePage() {
             </table>
           </OverlayScrollArea>
           <ScheduleMinimap
-            layoutKey={`${level}-${shiftId ?? 'auto'}`}
-            classes={grid.classes}
+            layoutKey={`${level}-${shiftId ?? 'auto'}-${axis}`}
+            columns={gridColumns.map((c) => ({ id: c.id, name: c.name }))}
             rows={rows}
-            cellsBySlot={cellsBySlot}
+            cellsBySlot={activeCellsBySlot}
+            slotIdFor={
+              axis === 'classroom'
+                ? (id, day, lesson) => roomSlotAnchor(id, day, lesson)
+                : (id, day, lesson) => slotAnchor(id, day, lesson)
+            }
             dayNames={grid.day_names}
             onNavigateSlot={navigateMinimapSlot}
           />

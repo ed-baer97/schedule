@@ -7,12 +7,14 @@ import {
   type PointerEvent as ReactPointerEvent,
   type WheelEvent as ReactWheelEvent,
 } from 'react'
-import type { ScheduleCell as CellOut, SchoolClassRow } from '../api/schedule'
+import type { ScheduleCell as CellOut } from '../api/schedule'
 
 export type MinimapRow =
   | { kind: 'day'; day: number }
   | { kind: 'class_hour'; day: number }
   | { kind: 'lesson'; day: number; lesson: number }
+
+export type MinimapColumn = { id: number; name: string }
 
 const STORAGE_KEY = 'schedule:minimap'
 const MAX_W = 228
@@ -54,10 +56,6 @@ function teacherHoverKey(cell: Pick<CellOut, 'teacher_id' | 'teacher_name'>) {
   if (cell.teacher_id != null) return `id-${cell.teacher_id}`
   const name = (cell.teacher_name ?? '').trim()
   return name ? `name-${name}` : ''
-}
-
-function slotAnchor(classId: number, day: number, lesson: number) {
-  return `slot-${classId}-${day}-${lesson}`
 }
 
 function emptyView(): View {
@@ -132,14 +130,15 @@ function numsEq(a: number[], b: number[]) {
 }
 
 export const ScheduleMinimap = memo(function ScheduleMinimap(props: {
-  classes: SchoolClassRow[]
+  columns: MinimapColumn[]
   rows: MinimapRow[]
   cellsBySlot: Map<string, CellOut[]>
+  slotIdFor: (columnId: number, day: number, lesson: number) => string
   dayNames: string[]
   layoutKey: string
   onNavigateSlot: (id: string) => void
 }) {
-  const { classes, rows, cellsBySlot, dayNames, layoutKey, onNavigateSlot } = props
+  const { columns, rows, cellsBySlot, slotIdFor, dayNames, layoutKey, onNavigateSlot } = props
   const rootRef = useRef<HTMLElement>(null)
   const mapRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<Drag>(null)
@@ -295,7 +294,7 @@ export const ScheduleMinimap = memo(function ScheduleMinimap(props: {
   const viewTop = (view.st / view.sh) * 100
   const viewW = Math.min(100, (view.cw / view.sw) * 100)
   const viewH = Math.min(100, (view.ch / view.sh) * 100)
-  const colW = weights?.cols ?? [1, ...classes.map(() => 1)]
+  const colW = weights?.cols ?? [1, ...columns.map(() => 1)]
   const rowH = weights?.rows ?? [1, ...rows.map((r) => (r.kind === 'day' ? 0.45 : 1))]
   const bodyRows = rowH.slice(1)
 
@@ -345,10 +344,10 @@ export const ScheduleMinimap = memo(function ScheduleMinimap(props: {
         <div className="schedule-minimap-row is-head" style={{ flexGrow: rowH[0] ?? 1 }}>
           {colW.map((w, i) => (
             <div
-              key={i === 0 ? 'index' : classes[i - 1]?.id ?? i}
+              key={i === 0 ? 'index' : columns[i - 1]?.id ?? i}
               className={i === 0 ? 'schedule-minimap-index' : 'schedule-minimap-colhead'}
               style={{ flexGrow: w }}
-              title={i === 0 ? undefined : classes[i - 1]?.name}
+              title={i === 0 ? undefined : columns[i - 1]?.name}
             />
           ))}
         </div>
@@ -372,20 +371,20 @@ export const ScheduleMinimap = memo(function ScheduleMinimap(props: {
               style={{ flexGrow: grow }}
             >
               <div className="schedule-minimap-index" style={{ flexGrow: colW[0] ?? 1 }} />
-              {classes.map((c, ci) => {
-                const key = `${c.id}:${row.day}:${lesson}`
+              {columns.map((col, ci) => {
+                const key = `${col.id}:${row.day}:${lesson}`
                 const cells = cellsBySlot.get(key) ?? []
-                const slotId = slotAnchor(c.id, row.day, lesson)
+                const slotId = slotIdFor(col.id, row.day, lesson)
                 return (
                   <div
-                    key={c.id}
+                    key={col.id}
                     className="schedule-minimap-cell"
                     data-slot-id={slotId}
                     style={{ flexGrow: colW[ci + 1] ?? 1 }}
                     title={
                       cells.length
                         ? cells.map(lessonTitle).join('\n')
-                        : `${c.name} · ${dayNames[row.day - 1]} · ${
+                        : `${col.name} · ${dayNames[row.day - 1]} · ${
                             row.kind === 'class_hour' ? 'классный час' : `урок ${lesson}`
                           }`
                     }

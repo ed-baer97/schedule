@@ -499,6 +499,37 @@ body.schedule-grid-expanded .schedule-density button {
   font-size: 0.72rem;
 }
 
+.schedule-grid-table th.is-no-room {
+  font-style: italic;
+  color: var(--kivi-muted);
+}
+
+.schedule-room-cap-head {
+  font-weight: 500;
+  font-size: 0.72em;
+}
+
+.schedule-room-cap {
+  font-size: 0.65rem;
+  line-height: 1;
+  margin-top: 0.15rem;
+  text-align: center;
+}
+
+.schedule-slot-cell.is-over-capacity {
+  box-shadow: inset 0 0 0 2px #b85c4a;
+  background: color-mix(in srgb, #b85c4a 10%, var(--kivi-surface));
+}
+
+.schedule-slot-cell.is-over-capacity .schedule-room-cap {
+  color: #b85c4a;
+  font-weight: 700;
+}
+
+.lesson-class-name {
+  font-weight: 600;
+}
+
 .schedule-expand-btn {
   flex-shrink: 0;
 }
