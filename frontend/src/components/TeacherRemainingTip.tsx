@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { extractApiError } from '../api/client'
 import { fetchTeacherDay, type TeacherRemaining, type TeacherRemainingClass } from '../api/schedule'
 import { TeacherDayGrid } from './TeacherDayGrid'
@@ -38,6 +38,37 @@ function parseSlot(slotId: string | null) {
   return { classId: Number(m[1]), day: Number(m[2]), lesson: Number(m[3]) }
 }
 
+function cssEscape(value: string) {
+  return typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(value) : value
+}
+
+function rectsOverlap(a: DOMRectReadOnly, b: DOMRectReadOnly) {
+  return (
+    a.width > 0 &&
+    a.height > 0 &&
+    b.width > 0 &&
+    b.height > 0 &&
+    a.left < b.right &&
+    a.right > b.left &&
+    a.top < b.bottom &&
+    a.bottom > b.top
+  )
+}
+
+function hoverCellEl(card: Element, slotId: string, teacherKey: string | null) {
+  const escSlot = cssEscape(slotId)
+  if (teacherKey) {
+    const match = card.querySelector(
+      `.lesson-card[data-slot-id="${escSlot}"][data-teacher-key="${cssEscape(teacherKey)}"]`,
+    )
+    if (match instanceof HTMLElement) return match
+  }
+  const anyCard = card.querySelector(`.lesson-card[data-slot-id="${escSlot}"]`)
+  if (anyCard instanceof HTMLElement) return anyCard
+  const td = card.querySelector(`#${escSlot}`)
+  return td instanceof HTMLElement ? td : null
+}
+
 type DayParams = {
   teacherId: number
   classId: number
@@ -54,6 +85,7 @@ export function TeacherRemainingTip({
   const [key, setKey] = useState<string | null>(null)
   const [slotId, setSlotId] = useState<string | null>(null)
   const [dayParams, setDayParams] = useState<DayParams | null>(null)
+  const [overCell, setOverCell] = useState(false)
 
   useEffect(() => {
     const card = hostRef.current?.closest('.schedule-grid-card')
@@ -111,12 +143,52 @@ export function TeacherRemainingTip({
   const teacherName = info?.teacher_name || teacherDayQ.data?.teacher_name || ''
   const showDayGrid = dayParams != null
 
+  useLayoutEffect(() => {
+    const tip = hostRef.current
+    const card = tip?.closest('.schedule-grid-card')
+    if (!tip || !card || !visible || !slotId) {
+      setOverCell(false)
+      return
+    }
+
+    let raf = 0
+    const measure = () => {
+      raf = 0
+      const cell = hoverCellEl(card, slotId, key)
+      if (!cell) {
+        setOverCell(false)
+        return
+      }
+      setOverCell(rectsOverlap(tip.getBoundingClientRect(), cell.getBoundingClientRect()))
+    }
+    const schedule = () => {
+      if (raf) return
+      raf = window.requestAnimationFrame(measure)
+    }
+
+    schedule()
+    const viewport = card.querySelector('.overlay-scroll-viewport')
+    viewport?.addEventListener('scroll', schedule, { passive: true })
+    window.addEventListener('resize', schedule)
+    const ro = new ResizeObserver(schedule)
+    ro.observe(tip)
+    const cell = hoverCellEl(card, slotId, key)
+    if (cell) ro.observe(cell)
+
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf)
+      viewport?.removeEventListener('scroll', schedule)
+      window.removeEventListener('resize', schedule)
+      ro.disconnect()
+    }
+  }, [visible, slotId, key, showDayGrid, teacherDayQ.data, info?.remaining_hours])
+
   return (
     <div
       ref={hostRef}
       className={`teacher-remaining-tip${visible ? ' is-visible' : ''}${
         info && info.remaining_hours > 0 ? ' is-pending' : ''
-      }`}
+      }${overCell ? ' is-over-cell' : ''}`}
       role="status"
       aria-live="polite"
       aria-hidden={!visible}

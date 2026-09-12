@@ -734,7 +734,6 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 .overlay-scroll {
   --overlay-scroll-bar: 16px;
   position: relative;
-  z-index: 6;
   flex: 1 1 0%;
   min-height: 0;
   min-width: 0;
@@ -855,10 +854,7 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 
 .schedule-grid-table {
   --slot-index-width: inherit;
-  --bs-table-bg: transparent;
-  --bs-table-striped-bg: transparent;
   font-size: 0.85rem;
-  background-color: transparent;
 }
 
 .schedule-grid-table.is-compact {
@@ -988,17 +984,6 @@ html[data-theme='light'] .btn.schedule-expand-btn:not(.btn-dark) {
 .schedule-slot-cell {
   min-width: 8.125rem;
   padding: 0.25rem !important;
-}
-
-/* Beat Bootstrap `.table > :not(caption) > * > *` fill so the remaining tip
-   (z-index under the scroll layer) can show through empty cell padding. */
-.schedule-grid-table > :not(caption) > * > td.schedule-slot-cell {
-  background-color: transparent;
-  background: transparent;
-}
-
-.schedule-grid-table > :not(caption) > tr.is-class-hour > td.schedule-slot-cell {
-  background: color-mix(in srgb, var(--kivi-accent) 10%, var(--kivi-surface));
 }
 
 .schedule-grid-table.is-compact .schedule-slot-cell {
@@ -1443,9 +1428,7 @@ html[data-theme='dark'] .report-lesson-index {
   /* Clear sticky lesson-index column so numbers stay readable under the HUD */
   left: calc(var(--slot-index-width, 4.85rem) + 14px);
   bottom: 22px;
-  /* Below .overlay-scroll so opaque lesson cards paint over the tip;
-     tip stays visible through transparent empty slot cells. */
-  z-index: 5;
+  z-index: 18;
   display: none;
   pointer-events: none;
   max-width: min(38rem, calc(100% - 17rem - var(--slot-index-width, 4.85rem)));
@@ -1459,6 +1442,17 @@ html[data-theme='dark'] .report-lesson-index {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   color: var(--kivi-ink);
+  transition: opacity 0.12s ease, background 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+}
+
+.teacher-remaining-tip.is-over-cell,
+.class-remaining-tip.is-over-cell {
+  opacity: 0.18;
+  background: color-mix(in srgb, var(--kivi-surface) 35%, transparent);
+  border-color: color-mix(in srgb, var(--kivi-line) 40%, transparent);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .teacher-remaining-tip.is-visible,
@@ -2004,24 +1998,20 @@ html[data-theme='dark'] .schedule-grid-table tr.is-class-hour > td {
   background-color: #2a2418;
 }
 
-html[data-theme='dark'] .schedule-grid-table > :not(caption) > tr.is-class-hour > td.schedule-slot-cell {
-  background-color: #2a2418;
-  background: #2a2418;
-}
-
 html[data-theme='dark'] .schedule-grid-table tr.is-class-hour > td.schedule-slot-index {
   background-color: #332b1c;
-}
-
-html[data-theme='dark'] .schedule-grid-table {
-  --bs-table-bg: transparent;
-  --bs-table-striped-bg: transparent;
 }
 
 html[data-theme='dark'] .teacher-remaining-tip,
 html[data-theme='dark'] .class-remaining-tip {
   background: color-mix(in srgb, var(--kivi-surface) 88%, #0d1614);
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.38);
+}
+
+html[data-theme='dark'] .teacher-remaining-tip.is-over-cell,
+html[data-theme='dark'] .class-remaining-tip.is-over-cell {
+  background: color-mix(in srgb, var(--kivi-surface) 28%, transparent);
+  box-shadow: none;
 }
 
 /* Subject palette is forest/dust hexes meant for light paper. On dark
