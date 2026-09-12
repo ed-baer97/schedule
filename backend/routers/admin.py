@@ -1,7 +1,7 @@
 """Platform admin API: schools, school admins, dashboard."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.models import User
@@ -94,6 +94,16 @@ def update_school(
         is_active=s.is_active,
         admins_count=s.admins_count,
     )
+
+
+@router.delete("/schools/{school_id}", status_code=204, response_class=Response)
+def delete_school(
+    school_id: int,
+    _: User = Depends(require_platform_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    AdminService(db).delete_school(school_id)
+    return Response(status_code=204)
 
 
 @router.get("/schools/{school_id}/admins", response_model=list[SchoolAdminOut])

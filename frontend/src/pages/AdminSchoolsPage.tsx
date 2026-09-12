@@ -6,6 +6,7 @@ import { extractApiError } from '../api/client'
 import {
   createAdminSchool,
   createSchoolAdmin,
+  deleteAdminSchool,
   fetchPlatformDashboard,
   listAdminSchools,
   listSchoolAdmins,
@@ -338,10 +339,31 @@ export function AdminSchoolsPage() {
     onError: (e) => setError(extractApiError(e)),
   })
 
+  const removeSchool = useMutation({
+    mutationFn: (s: AdminSchool) => deleteAdminSchool(s.id),
+    onSuccess: (_data, s) => {
+      setError(null)
+      setOpenId((prev) => (prev === s.id ? null : prev))
+      void qc.invalidateQueries({ queryKey: ['admin-schools'] })
+      void qc.invalidateQueries({ queryKey: ['admin-dashboard'] })
+      void qc.removeQueries({ queryKey: ['admin-school-admins', s.id] })
+    },
+    onError: (e) => setError(extractApiError(e)),
+  })
+
   function onCreateSchool(e: FormEvent) {
     e.preventDefault()
     setError(null)
     createSchool.mutate()
+  }
+
+  function onDeleteSchool(s: AdminSchool) {
+    const ok = window.confirm(
+      `Удалить школу «${s.name}» безвозвратно?\n\nБудут удалены все данные школы: классы, учителя, расписание, админы и настройки.`,
+    )
+    if (!ok) return
+    setError(null)
+    removeSchool.mutate(s)
   }
 
   if (user?.role !== 'platform_admin') {
@@ -475,14 +497,24 @@ export function AdminSchoolsPage() {
                   </h2>
                   <div className={`accordion-collapse collapse ${open ? 'show' : ''}`}>
                     <div className="accordion-body">
-                      <div className="d-flex justify-content-end mb-2">
+                      <div className="d-flex justify-content-end gap-2 mb-2">
                         <button
                           type="button"
                           className="btn btn-sm btn-outline-secondary"
                           onClick={() => toggleSchool.mutate(s)}
-                          disabled={toggleSchool.isPending}
+                          disabled={toggleSchool.isPending || removeSchool.isPending}
                         >
                           {s.is_active ? 'Отключить школу' : 'Включить школу'}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => onDeleteSchool(s)}
+                          disabled={removeSchool.isPending}
+                        >
+                          {removeSchool.isPending && removeSchool.variables?.id === s.id
+                            ? 'Удаление…'
+                            : 'Удалить школу'}
                         </button>
                       </div>
                       {open ? <SchoolPanel schoolId={s.id} /> : null}

@@ -5,10 +5,25 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
-from app.models import Job, ScheduleSettings, School, SchoolClass, Teacher, User
+from app.models import (
+    Classroom,
+    InviteToken,
+    Job,
+    ScheduleCell,
+    ScheduleSettings,
+    School,
+    SchoolClass,
+    Shift,
+    ShiftLessonTime,
+    Subject,
+    Teacher,
+    TeachingAssignment,
+    User,
+)
+from app.models.classroom import classroom_subjects
 from app.models.job import JOB_PENDING, JOB_RUNNING, JOB_CANCELLING
 from app.models.user import ROLE_SCHOOL_ADMIN
 from app.passwords import hash_password
@@ -211,6 +226,64 @@ class AdminService:
         self.db.refresh(school)
         counts = self._admin_counts([school.id])
         return self._school_data(school, counts.get(school.id, 0))
+
+    def delete_school(self, school_id: int) -> None:
+        """Permanently remove a school and all tenant-scoped rows."""
+        school = self.db.get(School, school_id)
+        if school is None:
+            raise NotFoundError("Школа не найдена")
+
+        classroom_ids = select(Classroom.id).where(Classroom.school_id == school_id)
+        subject_ids = select(Subject.id).where(Subject.school_id == school_id)
+
+        self.db.execute(
+            update(Teacher)
+            .where(Teacher.school_id == school_id)
+            .values(home_classroom_id=None)
+        )
+        self.db.execute(
+            update(SchoolClass)
+            .where(SchoolClass.school_id == school_id)
+            .values(
+                home_classroom_id=None,
+                homeroom_teacher_id=None,
+                shift_id=None,
+            )
+        )
+        self.db.execute(
+            delete(ScheduleCell).where(ScheduleCell.school_id == school_id)
+        )
+        self.db.execute(
+            delete(TeachingAssignment).where(
+                TeachingAssignment.school_id == school_id
+            )
+        )
+        self.db.execute(
+            delete(classroom_subjects).where(
+                classroom_subjects.c.classroom_id.in_(classroom_ids)
+                | classroom_subjects.c.subject_id.in_(subject_ids)
+            )
+        )
+        self.db.execute(delete(Job).where(Job.school_id == school_id))
+        self.db.execute(
+            delete(InviteToken).where(InviteToken.school_id == school_id)
+        )
+        self.db.execute(delete(User).where(User.school_id == school_id))
+        self.db.execute(
+            delete(ShiftLessonTime).where(ShiftLessonTime.school_id == school_id)
+        )
+        self.db.execute(
+            delete(SchoolClass).where(SchoolClass.school_id == school_id)
+        )
+        self.db.execute(delete(Teacher).where(Teacher.school_id == school_id))
+        self.db.execute(delete(Classroom).where(Classroom.school_id == school_id))
+        self.db.execute(delete(Subject).where(Subject.school_id == school_id))
+        self.db.execute(delete(Shift).where(Shift.school_id == school_id))
+        self.db.execute(
+            delete(ScheduleSettings).where(ScheduleSettings.school_id == school_id)
+        )
+        self.db.delete(school)
+        self.db.commit()
 
     def list_school_admins(self, school_id: int) -> list[User]:
         school = self.db.get(School, school_id)

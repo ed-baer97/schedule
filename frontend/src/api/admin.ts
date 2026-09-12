@@ -58,6 +58,12 @@ export function updateAdminSchool(id: number, payload: { is_active: boolean }) {
   })
 }
 
+export function deleteAdminSchool(id: number) {
+  return apiJson<void>(`/api/admin/schools/${id}`, {
+    method: 'DELETE',
+  })
+}
+
 export function listSchoolAdmins(schoolId: number) {
   return apiJson<SchoolAdmin[]>(`/api/admin/schools/${schoolId}/admins`)
 }
