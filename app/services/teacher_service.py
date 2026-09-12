@@ -20,7 +20,7 @@ from app.services.dto import (
     teacher_data,
 )
 from app.services.errors import NotFoundError
-from app.services.report_service import ExportFile
+from app.services.report_service import ExportFile, unique_sheet_name
 from app.services.tenancy import require_owned
 
 _HEADER_FILL = PatternFill("solid", fgColor="147F78")
@@ -36,10 +36,6 @@ _GRID = Border(
 _HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)
 _CELL_ALIGN = Alignment(horizontal="left", vertical="center", wrap_text=True)
 _NUM_ALIGN = Alignment(horizontal="center", vertical="center")
-
-
-def _join_hours(parts: list[tuple[str, int]]) -> str:
-    return "; ".join(f"{name}: {hours}" for name, hours in parts)
 
 
 class TeacherService:
@@ -112,76 +108,123 @@ class TeacherService:
         return [self._load_row(teacher, by_teacher.get(int(teacher.id), [])) for teacher in teachers]
 
     def export_load(self) -> ExportFile:
-        """Excel: сводка нагрузки учителей и детализация по предметам."""
-        rows = self.list_load()
-        workbook = Workbook()
-
-        summary = workbook.active
-        summary.title = "Нагрузка"
-        summary_headers = ("ФИО", "Предметы, часы в неделю", "Часы по сменам", "Всего")
-        for col, title in enumerate(summary_headers, start=1):
-            cell = summary.cell(1, col, title)
-            cell.fill = _HEADER_FILL
-            cell.font = _HEADER_FONT
-            cell.alignment = _HEADER_ALIGN
-            cell.border = _GRID
-
-        for row_idx, row in enumerate(rows, start=2):
-            subjects = _join_hours([(s.subject_name, s.hours) for s in row.subjects])
-            shifts = [(s.name, s.hours) for s in row.shifts]
-            if row.unassigned_shift_hours > 0:
-                shifts.append(("без смены", row.unassigned_shift_hours))
-            values = (
-                row.full_name,
-                subjects or "нет назначений",
-                _join_hours(shifts) if shifts else "—",
-                row.total_hours,
+        """Excel: по листу на предмет — учителя × классы, в ячейках часы."""
+        assignments = list(
+            self.db.execute(
+                select(TeachingAssignment)
+                .options(
+                    joinedload(TeachingAssignment.subject),
+                    joinedload(TeachingAssignment.teacher),
+                    joinedload(TeachingAssignment.school_class),
+                )
+                .where(
+                    TeachingAssignment.school_id == self.school_id,
+                    TeachingAssignment.teacher_id.isnot(None),
+                )
             )
-            for col, value in enumerate(values, start=1):
-                cell = summary.cell(row_idx, col, value)
-                cell.font = _TOTAL_FONT if col == 4 else _CELL_FONT
-                cell.alignment = _NUM_ALIGN if col == 4 else _CELL_ALIGN
-                cell.border = _GRID
+            .scalars()
+            .unique()
+            .all()
+        )
 
-        summary.column_dimensions["A"].width = 32
-        summary.column_dimensions["B"].width = 48
-        summary.column_dimensions["C"].width = 36
-        summary.column_dimensions["D"].width = 10
-        summary.freeze_panes = "A2"
-        summary.auto_filter.ref = f"A1:D{max(1, len(rows) + 1)}"
+        # subject_id -> subject_name, class_id -> class meta, teacher_id -> name,
+        # hours[(subject_id, teacher_id, class_id)]
+        subject_names: dict[int, str] = {}
+        class_meta: dict[int, tuple[int, str]] = {}  # id -> (grade, name)
+        teacher_names: dict[int, str] = {}
+        hours: dict[tuple[int, int, int], int] = defaultdict(int)
 
-        detail = workbook.create_sheet("По предметам")
-        detail_headers = ("ФИО", "Предмет", "Часы")
-        for col, title in enumerate(detail_headers, start=1):
-            cell = detail.cell(1, col, title)
-            cell.fill = _HEADER_FILL
-            cell.font = _HEADER_FONT
-            cell.alignment = _HEADER_ALIGN
-            cell.border = _GRID
-
-        detail_row = 2
-        for row in rows:
-            if not row.subjects:
-                for col, value in enumerate((row.full_name, "нет назначений", 0), start=1):
-                    cell = detail.cell(detail_row, col, value)
-                    cell.font = _CELL_FONT
-                    cell.alignment = _NUM_ALIGN if col == 3 else _CELL_ALIGN
-                    cell.border = _GRID
-                detail_row += 1
+        for assignment in assignments:
+            h = int(assignment.hours_per_week or 0)
+            if h <= 0 or assignment.teacher_id is None:
                 continue
-            for subject in row.subjects:
-                values = (row.full_name, subject.subject_name, subject.hours)
-                for col, value in enumerate(values, start=1):
-                    cell = detail.cell(detail_row, col, value)
-                    cell.font = _CELL_FONT
-                    cell.alignment = _NUM_ALIGN if col == 3 else _CELL_ALIGN
-                    cell.border = _GRID
-                detail_row += 1
+            sid = int(assignment.subject_id)
+            tid = int(assignment.teacher_id)
+            cid = int(assignment.class_id)
+            subject_names[sid] = assignment.subject.name
+            teacher_names[tid] = assignment.teacher.full_name
+            school_class = assignment.school_class
+            class_meta[cid] = (int(school_class.grade), school_class.name)
+            hours[(sid, tid, cid)] += h
 
-        for col in range(1, 4):
-            detail.column_dimensions[get_column_letter(col)].width = (32, 28, 10)[col - 1]
-        detail.freeze_panes = "A2"
-        detail.auto_filter.ref = f"A1:C{max(1, detail_row - 1)}"
+        workbook = Workbook()
+        used_sheet_names: set[str] = set()
+
+        if not subject_names:
+            empty = workbook.active
+            empty.title = unique_sheet_name("Нет данных", used_sheet_names)
+            empty.cell(1, 1, "Нет назначений с часами")
+            empty["A1"].font = _CELL_FONT
+        else:
+            first = True
+            for sid, subject_name in sorted(
+                subject_names.items(), key=lambda item: item[1].casefold()
+            ):
+                teacher_ids = sorted(
+                    {tid for (s, tid, _cid) in hours if s == sid},
+                    key=lambda tid: teacher_names[tid].casefold(),
+                )
+                class_ids = sorted(
+                    {cid for (s, _tid, cid) in hours if s == sid},
+                    key=lambda cid: class_meta[cid],
+                )
+                sheet_name = unique_sheet_name(subject_name, used_sheet_names)
+                if first:
+                    ws = workbook.active
+                    ws.title = sheet_name
+                    first = False
+                else:
+                    ws = workbook.create_sheet(sheet_name)
+
+                # Title row with subject name inside the sheet
+                title_cell = ws.cell(1, 1, subject_name)
+                title_cell.font = Font(bold=True, size=14, color="14201A", name="Calibri")
+                last_col = 2 + len(class_ids)  # №, ФИО, classes..., Итого
+                if last_col > 1:
+                    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_col)
+
+                headers = ["№", "ФИО", *[class_meta[cid][1] for cid in class_ids], "Итого"]
+                for col, header in enumerate(headers, start=1):
+                    cell = ws.cell(2, col, header)
+                    cell.fill = _HEADER_FILL
+                    cell.font = _HEADER_FONT
+                    cell.alignment = _HEADER_ALIGN
+                    cell.border = _GRID
+
+                for row_idx, tid in enumerate(teacher_ids, start=3):
+                    row_hours = [hours.get((sid, tid, cid), 0) for cid in class_ids]
+                    total = sum(row_hours)
+                    values: list[object] = [
+                        row_idx - 2,
+                        teacher_names[tid],
+                        *[h if h > 0 else None for h in row_hours],
+                        total if total > 0 else 0,
+                    ]
+                    for col, value in enumerate(values, start=1):
+                        cell = ws.cell(row_idx, col, value)
+                        cell.border = _GRID
+                        if col == 1:
+                            cell.font = _CELL_FONT
+                            cell.alignment = _NUM_ALIGN
+                        elif col == 2:
+                            cell.font = _CELL_FONT
+                            cell.alignment = _CELL_ALIGN
+                        elif col == last_col:
+                            cell.font = _TOTAL_FONT
+                            cell.alignment = _NUM_ALIGN
+                        else:
+                            cell.font = _CELL_FONT
+                            cell.alignment = _NUM_ALIGN
+
+                ws.column_dimensions["A"].width = 5
+                ws.column_dimensions["B"].width = 32
+                for col in range(3, last_col):
+                    ws.column_dimensions[get_column_letter(col)].width = 8
+                ws.column_dimensions[get_column_letter(last_col)].width = 10
+                ws.freeze_panes = "C3"
+                ws.auto_filter.ref = f"A2:{get_column_letter(last_col)}{max(2, 2 + len(teacher_ids))}"
+                ws.row_dimensions[1].height = 22
+                ws.row_dimensions[2].height = 28
 
         buf = io.BytesIO()
         workbook.save(buf)

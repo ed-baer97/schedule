@@ -413,22 +413,26 @@ def test_teacher_load_hours_and_shifts() -> None:
     assert "spreadsheetml" in xlsx.headers["content-type"]
     assert "filename*=UTF-8''" in xlsx.headers.get("content-disposition", "")
     wb = load_workbook(io.BytesIO(xlsx.content))
-    assert wb.sheetnames == ["Нагрузка", "По предметам"]
-    summary = wb["Нагрузка"]
-    assert [c.value for c in summary[1]] == [
-        "ФИО",
-        "Предметы, часы в неделю",
-        "Часы по сменам",
-        "Всего",
-    ]
-    by_name = {row[0].value: row for row in summary.iter_rows(min_row=2, max_row=4)}
-    assert by_name["Иванов Иван Иванович"][3].value == 11
-    assert "Математика: 9" in by_name["Иванов Иван Иванович"][1].value
-    assert "1 смена: 7" in by_name["Иванов Иван Иванович"][2].value
-    assert by_name["Петрова Анна Сергеевна"][3].value == 3
-    assert "без смены: 3" in by_name["Петрова Анна Сергеевна"][2].value
-    assert by_name["Сидоров С.С."][3].value == 0
+    assert wb.sheetnames == ["Информатика", "Математика"]
 
+    math = wb["Математика"]
+    assert math["A1"].value == "Математика"
+    assert [c.value for c in math[2]] == ["№", "ФИО", "1А", "5А", "Итого"]
+    assert math["B3"].value == "Иванов Иван Иванович"
+    assert math["C3"].value == 5
+    assert math["D3"].value == 4
+    assert math["E3"].value == 9
+
+    info = wb["Информатика"]
+    assert info["A1"].value == "Информатика"
+    assert [c.value for c in info[2]] == ["№", "ФИО", "1А", "2Б", "Итого"]
+    by_teacher = {row[1].value: row for row in info.iter_rows(min_row=3, max_row=4)}
+    assert by_teacher["Иванов Иван Иванович"][2].value == 2  # 1А
+    assert by_teacher["Иванов Иван Иванович"][3].value is None  # 2Б
+    assert by_teacher["Иванов Иван Иванович"][4].value == 2
+    assert by_teacher["Петрова Анна Сергеевна"][2].value is None  # 1А
+    assert by_teacher["Петрова Анна Сергеевна"][3].value == 3  # 2Б
+    assert by_teacher["Петрова Анна Сергеевна"][4].value == 3
 
 def test_classroom_school_level_roundtrip() -> None:
     created = client.post(
