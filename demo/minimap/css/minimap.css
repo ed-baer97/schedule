@@ -96,8 +96,11 @@
 }
 
 .schedule-minimap-row.is-day {
-  flex: 0.45 0 0;
-  background: color-mix(in srgb, var(--kivi-ink) 14%, var(--kivi-surface));
+  flex: 0.55 0 0;
+  background: color-mix(in srgb, var(--kivi-ink) 36%, var(--kivi-surface));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--kivi-ink) 45%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--kivi-ink) 45%, transparent);
 }
 
 .schedule-minimap-row.is-class-hour {
