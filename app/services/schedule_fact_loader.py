@@ -10,9 +10,11 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
 from app.domain.shift_grid import lesson_end_exclusive
+from app.domain.schedule_variant import KIND_MAIN
 from app.models import ScheduleCell, SchoolClass, ShiftLessonTime, TeachingAssignment
 from app.services.assignment_hours import remaining_for
 from app.services.bell_schedule import get_interval_for_slot
+from app.services.schedule_scope import variant_filter
 
 
 def unit_fact_from_assignment(
@@ -57,6 +59,7 @@ def build_unit_facts(
     for assignment in assignments:
         if hours_mode == "remaining":
             n = remaining_for(assignment, placed=placed.get(assignment.id, 0))
+            n = int(n)
         else:
             n = int(assignment.hours_per_week or 0)
         for i in range(n):
@@ -206,13 +209,19 @@ def occupancy_fact_from_cell(
     )
 
 
-def _busy_query(session: Session):
+def _busy_query(
+    session: Session,
+    *,
+    schedule_kind: str | None = KIND_MAIN,
+    week_index: int | None = 0,
+):
     return (
         session.query(ScheduleCell)
         .options(
             joinedload(ScheduleCell.school_class).joinedload(SchoolClass.shift),
             joinedload(ScheduleCell.assignment).joinedload(TeachingAssignment.subject),
         )
+        .filter(variant_filter(schedule_kind, week_index))
     )
 
 
@@ -225,6 +234,8 @@ def load_teacher_busy(
     outside_scope_only: bool = False,
     exclude_scope_day: int | None = None,
     exclude_scope_max_lesson: int | None = None,
+    schedule_kind: str | None = KIND_MAIN,
+    week_index: int | None = 0,
 ) -> dict[int, list[BusySlotFact]]:
     """
     Teacher occupancy with bell intervals.
@@ -238,7 +249,7 @@ def load_teacher_busy(
     if not teacher_ids:
         return busy
     q = (
-        _busy_query(session)
+        _busy_query(session, schedule_kind=schedule_kind, week_index=week_index)
         .join(TeachingAssignment)
         .filter(TeachingAssignment.teacher_id.in_(teacher_ids))
     )
@@ -297,12 +308,16 @@ def load_classroom_busy(
     classroom_ids: set[int],
     *,
     exclude_cell_id: int | None = None,
+    schedule_kind: str | None = KIND_MAIN,
+    week_index: int | None = 0,
 ) -> dict[int, list[BusySlotFact]]:
     """Classroom occupancy with bell intervals."""
     busy: dict[int, list[BusySlotFact]] = defaultdict(list)
     if not classroom_ids:
         return busy
-    q = _busy_query(session).filter(ScheduleCell.classroom_id.in_(classroom_ids))
+    q = _busy_query(
+        session, schedule_kind=schedule_kind, week_index=week_index
+    ).filter(ScheduleCell.classroom_id.in_(classroom_ids))
     if exclude_cell_id is not None:
         q = q.filter(ScheduleCell.id != exclude_cell_id)
     rows = q.all()
@@ -328,12 +343,16 @@ def load_class_occupancy(
     class_ids: list[int],
     *,
     exclude_cell_id: int | None = None,
+    schedule_kind: str | None = KIND_MAIN,
+    week_index: int | None = 0,
 ) -> dict[int, list[BusySlotFact]]:
     """Existing class-grid occupancy keyed by class_id."""
     by_class: dict[int, list[BusySlotFact]] = defaultdict(list)
     if not class_ids:
         return by_class
-    q = _busy_query(session).filter(ScheduleCell.class_id.in_(class_ids))
+    q = _busy_query(
+        session, schedule_kind=schedule_kind, week_index=week_index
+    ).filter(ScheduleCell.class_id.in_(class_ids))
     if exclude_cell_id is not None:
         q = q.filter(ScheduleCell.id != exclude_cell_id)
     rows = q.all()
@@ -353,13 +372,17 @@ def load_class_occupancy(
 
 
 def load_cells_for_classes(
-    session: Session, class_ids: list[int]
+    session: Session,
+    class_ids: list[int],
+    *,
+    schedule_kind: str | None = KIND_MAIN,
+    week_index: int | None = 0,
 ) -> list[ScheduleCell]:
     """Schedule cells for class scope (metrics / diagnostics helpers)."""
     if not class_ids:
         return []
     return (
-        _busy_query(session)
+        _busy_query(session, schedule_kind=schedule_kind, week_index=week_index)
         .filter(ScheduleCell.class_id.in_(class_ids))
         .all()
     )

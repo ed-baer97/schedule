@@ -14,6 +14,7 @@ from app.models import (
     Teacher,
     TeachingAssignment,
 )
+from app.services.schedule_scope import variant_filter
 
 
 @dataclass
@@ -121,6 +122,7 @@ class DashboardService:
                 .where(
                     ScheduleCell.school_id == self.school_id,
                     ScheduleCell.class_id.in_(class_ids),
+                    variant_filter(),
                 )
             )
             or 0

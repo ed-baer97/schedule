@@ -1,5 +1,14 @@
 """Pure domain helpers (no Session, no FastAPI)."""
 from app.domain.assignment import hours_exhausted, remaining_hours
+from app.domain.schedule_variant import (
+    KIND_MAIN,
+    KIND_MONTHLY,
+    KIND_TEMPORARY,
+    MONTHLY_WEEKS,
+    is_monthly_only_hours,
+    normalize_variant,
+    snap_hours,
+)
 from app.domain.classroom_rules import (
     ClassroomFact,
     PlacementContext,
@@ -85,6 +94,13 @@ __all__ = [
     "normalize_person_name",
     "remaining_hours",
     "hours_exhausted",
+    "KIND_MAIN",
+    "KIND_MONTHLY",
+    "KIND_TEMPORARY",
+    "MONTHLY_WEEKS",
+    "is_monthly_only_hours",
+    "normalize_variant",
+    "snap_hours",
     "slots_conflict",
     "slot_facts_conflict",
     "time_intervals_overlap",

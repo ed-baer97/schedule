@@ -3,10 +3,12 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
+from app.domain.schedule_variant import KIND_MAIN, KIND_MONTHLY, MONTHLY_WEEKS, normalize_variant
 from app.models import Classroom, ScheduleCell, SchoolClass, TeachingAssignment
 from app.services.errors import ValidationConflict
 from app.services.schedule.types import Placement
 from app.services.schedule_mapping import cell_to_schedule_dict, reload_cell
+from app.services.schedule_scope import variant_filter
 from app.services.tenancy import require_owned
 
 
@@ -30,6 +32,8 @@ class ScheduleCommandsMixin:
             lesson_number=lesson_number,
             assignment_id=assignment_id,
             classroom_id=classroom_id,
+            schedule_kind=getattr(self, "schedule_kind", KIND_MAIN),
+            week_index=getattr(self, "week_index", 0),
         )
         if validate:
             assignment = require_owned(
@@ -120,6 +124,7 @@ class ScheduleCommandsMixin:
     ) -> ScheduleCell:
         """Shared move/reposition path for ScheduleCell."""
         cell = require_owned(self.db, ScheduleCell, cell_id, self.school_id)
+        self.set_variant(cell.schedule_kind, cell.week_index)
 
         new_class_id = cell.class_id
         validation_assignment = cell.assignment
@@ -209,6 +214,14 @@ class ScheduleCommandsMixin:
             raise ValidationConflict(["Нельзя поменять ячейку саму с собой"])
         cell = require_owned(self.db, ScheduleCell, cell_id, self.school_id)
         other = require_owned(self.db, ScheduleCell, other_cell_id, self.school_id)
+        if (cell.schedule_kind, cell.week_index) != (
+            other.schedule_kind,
+            other.week_index,
+        ):
+            raise ValidationConflict(
+                ["Нельзя менять кабинеты между разными сетками расписания"]
+            )
+        self.set_variant(cell.schedule_kind, cell.week_index)
         if other.classroom_id is None:
             raise ValidationConflict(["У второго урока нет кабинета для обмена"])
 
@@ -297,7 +310,13 @@ class ScheduleCommandsMixin:
         commit: bool = False,
     ) -> int:
         """Batch-delete ScheduleCell rows scoped to this school."""
-        stmt = select(ScheduleCell).where(ScheduleCell.school_id == self.school_id)
+        stmt = select(ScheduleCell).where(
+            ScheduleCell.school_id == self.school_id,
+            variant_filter(
+                getattr(self, "schedule_kind", KIND_MAIN),
+                getattr(self, "week_index", 0),
+            ),
+        )
         if cell_ids is not None:
             if not cell_ids:
                 return 0
@@ -338,5 +357,83 @@ class ScheduleCommandsMixin:
             else:
                 self.db.flush()
         return count
+
+    def copy_from_main(
+        self,
+        *,
+        target_kind: str,
+        weeks: list[int] | None = None,
+        class_ids: list[int] | None = None,
+        school_level: str | None = None,
+        shift_id: int | None = None,
+    ) -> int:
+        """Replace target variant cells with a copy of the main weekly grid."""
+        target_kind, _ = normalize_variant(target_kind, 1 if target_kind == KIND_MONTHLY else 0)
+        if target_kind == KIND_MAIN:
+            raise ValidationConflict(["Нельзя копировать основное расписание само в себя"])
+        if target_kind == KIND_MONTHLY:
+            target_weeks = list(weeks) if weeks else list(MONTHLY_WEEKS)
+            for week in target_weeks:
+                normalize_variant(KIND_MONTHLY, week)
+        else:
+            target_weeks = [0]
+
+        source_stmt = select(ScheduleCell).where(
+            ScheduleCell.school_id == self.school_id,
+            variant_filter(KIND_MAIN, 0),
+        )
+        if class_ids:
+            source_stmt = source_stmt.where(ScheduleCell.class_id.in_(class_ids))
+        elif school_level is not None or shift_id is not None:
+            source_stmt = source_stmt.join(
+                SchoolClass, SchoolClass.id == ScheduleCell.class_id
+            ).where(SchoolClass.school_id == self.school_id)
+            if school_level is not None:
+                source_stmt = source_stmt.where(SchoolClass.school_level == school_level)
+            if shift_id is not None:
+                source_stmt = source_stmt.where(SchoolClass.shift_id == shift_id)
+
+        snapshots = [
+            (
+                cell.class_id,
+                cell.day_of_week,
+                cell.lesson_number,
+                cell.assignment_id,
+                cell.classroom_id,
+            )
+            for cell in self.db.scalars(source_stmt).unique().all()
+        ]
+
+        saved_kind = getattr(self, "schedule_kind", KIND_MAIN)
+        saved_week = getattr(self, "week_index", 0)
+        inserted = 0
+        try:
+            for week in target_weeks:
+                self.set_variant(target_kind, week)
+                self.delete_cells(
+                    class_ids=class_ids,
+                    school_level=school_level,
+                    shift_id=shift_id,
+                    commit=False,
+                )
+                for class_id, day, lesson, assignment_id, classroom_id in snapshots:
+                    self.insert_cell(
+                        class_id=class_id,
+                        day_of_week=day,
+                        lesson_number=lesson,
+                        assignment_id=assignment_id,
+                        classroom_id=classroom_id,
+                        validate=False,
+                        commit=False,
+                    )
+                    inserted += 1
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        finally:
+            self.set_variant(saved_kind, saved_week)
+        return inserted
+
 
 

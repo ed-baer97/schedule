@@ -1,15 +1,22 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { uploadSubjectHours } from '../api/import'
 import { exportTeacherLoadUrl, listTeacherLoad, type TeacherLoad } from '../api/teachers'
 import { PageHeader } from '../components/PageHeader'
 
 function hoursWord(n: number) {
+  if (!Number.isInteger(n)) return 'часа'
   const n10 = n % 10
   const n100 = n % 100
   if (n10 === 1 && n100 !== 11) return 'час'
   if (n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14)) return 'часа'
   return 'часов'
+}
+
+function formatHours(n: number) {
+  if (Number.isInteger(n)) return String(n)
+  return String(n)
 }
 
 type ShiftHoursRow = { key: string; name: string; hours: number }
@@ -41,6 +48,13 @@ function matchesQuery(row: TeacherLoad, q: string) {
 export function TeacherLoadPage() {
   const [query, setQuery] = useState('')
   const [shiftId, setShiftId] = useState<string>('all')
+  const [importPending, setImportPending] = useState(false)
+  const [importFlash, setImportFlash] = useState<{
+    kind: 'success' | 'danger'
+    text: string
+  } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const qc = useQueryClient()
 
   const q = useQuery({
     queryKey: ['teachers', 'load'],
@@ -68,6 +82,28 @@ export function TeacherLoadPage() {
     })
   }, [rows, query, shiftId])
 
+  async function onImportFile(fileList: FileList | null) {
+    const files = fileList ? Array.from(fileList) : []
+    if (files.length === 0) return
+    setImportPending(true)
+    setImportFlash(null)
+    try {
+      const parsed = await uploadSubjectHours(files)
+      setImportFlash({
+        kind: 'success',
+        text: parsed.message ?? 'Импорт завершён',
+      })
+      await qc.invalidateQueries({ queryKey: ['teachers', 'load'] })
+    } catch (e) {
+      setImportFlash({
+        kind: 'danger',
+        text: e instanceof Error ? e.message : String(e),
+      })
+    } finally {
+      setImportPending(false)
+    }
+  }
+
   if (q.isLoading) return <p>Загрузка…</p>
   if (q.isError) return <p className="text-danger">{(q.error as Error).message}</p>
 
@@ -81,12 +117,43 @@ export function TeacherLoadPage() {
             <a href={exportTeacherLoadUrl()} className="btn btn-success">
               Скачать Excel
             </a>
+            <button
+              type="button"
+              className="btn btn-outline-success"
+              disabled={importPending}
+              onClick={() => fileRef.current?.click()}
+            >
+              {importPending ? 'Загрузка…' : 'Загрузить Excel'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              className="d-none"
+              accept=".xlsx,.xls"
+              multiple
+              onChange={(e) => {
+                void onImportFile(e.target.files)
+                e.target.value = ''
+              }}
+            />
             <Link to="/teachers" className="btn btn-outline-secondary">
               Справочник учителей
             </Link>
           </div>
         }
       />
+
+      <p className="small text-muted mb-3">
+        Excel: один лист = один предмет (учителя × классы). Можно загрузить
+        книгу целиком или отдельные файлы по предметам — то же, что на странице{' '}
+        <Link to="/import">импорта</Link>.
+      </p>
+
+      {importFlash && (
+        <div className={`alert alert-${importFlash.kind} py-2 mb-3`}>
+          {importFlash.text}
+        </div>
+      )}
 
       <div className="d-flex flex-wrap gap-2 mb-3">
         <input
@@ -116,7 +183,7 @@ export function TeacherLoadPage() {
         <p className="text-muted">
           Нет учителей. Добавьте их в{' '}
           <Link to="/teachers">справочнике</Link> или загрузите нагрузку через{' '}
-          <Link to="/import">импорт Excel</Link>.
+          Excel выше / страницу <Link to="/import">импорта</Link>.
         </p>
       ) : filtered.length === 0 ? (
         <p className="text-muted">Ничего не найдено.</p>
@@ -163,7 +230,7 @@ export function TeacherLoadPage() {
                               />
                               {s.subject_name}
                               <span className="text-muted">
-                                {s.hours} {hoursWord(s.hours)}
+                                {formatHours(s.hours)} {hoursWord(s.hours)}
                               </span>
                             </span>
                           ))}
@@ -185,7 +252,7 @@ export function TeacherLoadPage() {
                             >
                               {s.name}
                               <span className="text-muted">
-                                {s.hours} {hoursWord(s.hours)}
+                                {formatHours(s.hours)} {hoursWord(s.hours)}
                               </span>
                             </span>
                           ))}
@@ -195,7 +262,7 @@ export function TeacherLoadPage() {
                     <td className="text-end text-nowrap">
                       {row.total_hours > 0 ? (
                         <strong>
-                          {row.total_hours} {hoursWord(row.total_hours)}
+                          {formatHours(row.total_hours)} {hoursWord(row.total_hours)}
                         </strong>
                       ) : (
                         <span className="text-muted">0</span>

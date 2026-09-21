@@ -55,7 +55,7 @@ class SubjectAssignClassRow(BaseModel):
     id: int
     name: str
     grade: int
-    hours_per_week: int
+    hours_per_week: float
     teacher_ids: list[int] = []
     is_split: bool = False
 

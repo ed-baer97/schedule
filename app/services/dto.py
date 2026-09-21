@@ -84,7 +84,7 @@ class AssignmentData:
     subject_id: int
     teacher_id: int | None
     class_id: int
-    hours_per_week: int
+    hours_per_week: float
     group_number: int | None
     preferred_classroom_id: int | None
     subject: SubjectBriefData
@@ -108,7 +108,7 @@ class TeacherSubjectHoursData:
     subject_id: int
     subject_name: str
     color: str
-    hours: int
+    hours: float
 
 
 @dataclass
@@ -116,7 +116,7 @@ class TeacherShiftBriefData:
     id: int
     name: str
     school_level: str
-    hours: int
+    hours: float
 
 
 @dataclass
@@ -125,8 +125,8 @@ class TeacherLoadData:
     full_name: str
     subjects: list[TeacherSubjectHoursData]
     shifts: list[TeacherShiftBriefData]
-    total_hours: int
-    unassigned_shift_hours: int
+    total_hours: float
+    unassigned_shift_hours: float
     has_classes_without_shift: bool
 
 

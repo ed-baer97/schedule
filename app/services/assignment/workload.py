@@ -40,10 +40,10 @@ class AssignmentWorkloadMixin:
             ).all()
         )
         # Class timetable hours, not the sum of subgroup teachers.
-        class_hours: dict[tuple[int, int], int] = {}
+        class_hours: dict[tuple[int, int], float] = {}
         for a in assignments:
             key = (a.class_id, a.subject_id)
-            hours = int(a.hours_per_week or 0)
+            hours = float(a.hours_per_week or 0)
             prev = class_hours.get(key)
             if prev is None or hours > prev:
                 class_hours[key] = hours
@@ -56,7 +56,7 @@ class AssignmentWorkloadMixin:
         )
 
     def update_workload_cell(
-        self, class_id: int, subject_id: int, hours: int
+        self, class_id: int, subject_id: int, hours: float
     ) -> None:
         if hours < 0:
             raise BadRequestError("hours must be >= 0")

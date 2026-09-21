@@ -27,7 +27,7 @@ from app.models import (
     Teacher,
     TeachingAssignment,
 )
-from app.services.assignment_hours import placed_counts, remaining_for
+from app.services.assignment_hours import remaining_by_assignment
 from app.services.classroom_resolver import (
     filter_free_classrooms,
     get_classroom_warnings,
@@ -64,6 +64,7 @@ from app.services.schedule.types import (
     _warnings,
 )
 from app.services.schedule_mapping import CELL_LOAD, cell_to_schedule_dict
+from app.services.schedule_scope import variant_filter
 from app.services.tenancy import require_owned
 
 _NONE_SHIFT_NAME = "без смены"
@@ -71,8 +72,16 @@ _NONE_SHIFT_NAME = "без смены"
 
 class ScheduleQueriesMixin:
     def get_grid(
-        self, school_level: str, shift_id: int | None = None
+        self,
+        school_level: str,
+        shift_id: int | None = None,
+        schedule_kind: str | None = None,
+        week_index: int | None = None,
     ) -> GridData:
+        if schedule_kind is not None or week_index is not None:
+            self.set_variant(schedule_kind, week_index)
+        kind = getattr(self, "schedule_kind", "main")
+        week = getattr(self, "week_index", 0)
         shifts = list(
             self.db.scalars(
                 select(Shift)
@@ -148,6 +157,7 @@ class ScheduleQueriesMixin:
                     .where(
                         ScheduleCell.class_id.in_(class_ids),
                         ScheduleCell.school_id == self.school_id,
+                        variant_filter(kind, week),
                     )
                 )
                 .scalars()
@@ -193,6 +203,8 @@ class ScheduleQueriesMixin:
             classroom_warnings=_warnings(raw_warnings),
             settings=settings_data(settings) if settings else None,
             teacher_remaining=self._teacher_remaining(school_level),
+            schedule_kind=kind,
+            week_index=week,
         )
 
     def _teacher_remaining(self, school_level: str) -> list[TeacherRemainingData]:
@@ -216,14 +228,19 @@ class ScheduleQueriesMixin:
             .unique()
             .all()
         )
-        counts = placed_counts(self.db, [a.id for a in assignments])
+        remaining = remaining_by_assignment(
+            self.db,
+            assignments,
+            schedule_kind=getattr(self, "schedule_kind", "main"),
+            week_index=getattr(self, "week_index", 0),
+        )
         teachers: dict[int, dict] = {}
         for assignment in assignments:
             teacher = assignment.teacher
             if teacher is None:
                 continue
             school_class = assignment.school_class
-            remaining = remaining_for(assignment, placed=counts.get(assignment.id, 0))
+            rem = remaining.get(assignment.id, 0)
             bucket = teachers.setdefault(
                 teacher.id,
                 {
@@ -233,8 +250,8 @@ class ScheduleQueriesMixin:
                     "classes": {},
                 },
             )
-            bucket["remaining_hours"] += remaining
-            if remaining <= 0 or school_class is None:
+            bucket["remaining_hours"] += rem
+            if rem <= 0 or school_class is None:
                 continue
             class_bucket = bucket["classes"].setdefault(
                 school_class.id,
@@ -246,12 +263,12 @@ class ScheduleQueriesMixin:
                     "subjects": [],
                 },
             )
-            class_bucket["remaining_hours"] += remaining
+            class_bucket["remaining_hours"] += rem
             subj = assignment.subject
             class_bucket["subjects"].append(
                 TeacherRemainingSubjectData(
                     subject_name=subj.display_name if subj else "?",
-                    remaining_hours=remaining,
+                    remaining_hours=rem,
                     group_number=assignment.group_number,
                 )
             )
@@ -288,7 +305,11 @@ class ScheduleQueriesMixin:
         class_id: int,
         day: int | None = None,
         lesson: int | None = None,
+        schedule_kind: str | None = None,
+        week_index: int | None = None,
     ) -> AssignmentsForClassData:
+        if schedule_kind is not None or week_index is not None:
+            self.set_variant(schedule_kind, week_index)
         school_class = require_owned(self.db, SchoolClass, class_id, self.school_id)
         assignments = list(
             self.db.execute(
@@ -307,11 +328,16 @@ class ScheduleQueriesMixin:
             .unique()
             .all()
         )
-        counts = placed_counts(self.db, [a.id for a in assignments])
+        remaining = remaining_by_assignment(
+            self.db,
+            assignments,
+            schedule_kind=getattr(self, "schedule_kind", "main"),
+            week_index=getattr(self, "week_index", 0),
+        )
         result: list[AssignmentChoiceData] = []
         for a in assignments:
-            remaining = remaining_for(a, placed=counts.get(a.id, 0))
-            if remaining <= 0:
+            rem = remaining.get(a.id, 0)
+            if rem <= 0:
                 continue
             subj = a.subject
             teacher = a.teacher
@@ -326,7 +352,7 @@ class ScheduleQueriesMixin:
                     teacher_id=teacher.id if teacher else None,
                     teacher_name=teacher.display_name if teacher else None,
                     group_number=a.group_number,
-                    remaining_hours=remaining,
+                    remaining_hours=rem,
                     preferred_classroom_id=a.preferred_classroom_id,
                     requires_fixed_classroom=bool(
                         subj.requires_fixed_classroom if subj else False
@@ -349,7 +375,12 @@ class ScheduleQueriesMixin:
                 lesson=lesson,
                 shift_id=school_class.shift_id,
             )
-            busy = load_classroom_busy(self.db, {c.id for c in classrooms})
+            busy = load_classroom_busy(
+                self.db,
+                {c.id for c in classrooms},
+                schedule_kind=getattr(self, "schedule_kind", "main"),
+                week_index=getattr(self, "week_index", 0),
+            )
             classrooms = filter_free_classrooms(
                 classrooms, slot=slot, classroom_busy=busy
             )
@@ -364,8 +395,12 @@ class ScheduleQueriesMixin:
         day: int,
         class_id: int | None = None,
         lesson: int | None = None,
+        schedule_kind: str | None = None,
+        week_index: int | None = None,
     ) -> TeacherDayData:
         """One weekday of a teacher across shifts (for the add-lesson modal)."""
+        if schedule_kind is not None or week_index is not None:
+            self.set_variant(schedule_kind, week_index)
         teacher = require_owned(self.db, Teacher, teacher_id, self.school_id)
         school_class = (
             require_owned(self.db, SchoolClass, class_id, self.school_id)
@@ -397,6 +432,10 @@ class ScheduleQueriesMixin:
                     TeachingAssignment.teacher_id == teacher.id,
                     ScheduleCell.day_of_week == day,
                     ScheduleCell.school_id == self.school_id,
+                    variant_filter(
+                        getattr(self, "schedule_kind", "main"),
+                        getattr(self, "week_index", 0),
+                    ),
                 )
             )
             .scalars()

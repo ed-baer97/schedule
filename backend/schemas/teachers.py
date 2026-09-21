@@ -33,14 +33,14 @@ class TeacherSubjectHoursOut(BaseModel):
     subject_id: int
     subject_name: str
     color: str
-    hours: int
+    hours: float
 
 
 class TeacherShiftBriefOut(BaseModel):
     id: int
     name: str
     school_level: str
-    hours: int
+    hours: float
 
 
 class TeacherLoadOut(BaseModel):
@@ -48,6 +48,6 @@ class TeacherLoadOut(BaseModel):
     full_name: str
     subjects: list[TeacherSubjectHoursOut]
     shifts: list[TeacherShiftBriefOut]
-    total_hours: int
-    unassigned_shift_hours: int = 0
+    total_hours: float
+    unassigned_shift_hours: float = 0
     has_classes_without_shift: bool = False

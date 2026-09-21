@@ -102,7 +102,7 @@ class TeacherService:
         for assignment in assignments:
             if assignment.teacher_id is None:
                 continue
-            if int(assignment.hours_per_week or 0) <= 0:
+            if float(assignment.hours_per_week or 0) <= 0:
                 continue
             by_teacher[int(assignment.teacher_id)].append(assignment)
         return [self._load_row(teacher, by_teacher.get(int(teacher.id), [])) for teacher in teachers]
@@ -132,10 +132,10 @@ class TeacherService:
         subject_names: dict[int, str] = {}
         class_meta: dict[int, tuple[int, str]] = {}  # id -> (grade, name)
         teacher_names: dict[int, str] = {}
-        hours: dict[tuple[int, int, int], int] = defaultdict(int)
+        hours: dict[tuple[int, int, int], float] = defaultdict(float)
 
         for assignment in assignments:
-            h = int(assignment.hours_per_week or 0)
+            h = float(assignment.hours_per_week or 0)
             if h <= 0 or assignment.teacher_id is None:
                 continue
             sid = int(assignment.subject_id)
@@ -236,7 +236,7 @@ class TeacherService:
         shifts: dict[int, TeacherShiftBriefData] = {}
         unassigned_hours = 0
         for assignment in rows:
-            hours = int(assignment.hours_per_week or 0)
+            hours = float(assignment.hours_per_week or 0)
             subject = assignment.subject
             current = subject_hours.get(int(subject.id))
             if current is None:

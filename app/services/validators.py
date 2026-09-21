@@ -15,8 +15,18 @@ from app.domain.schedule_rules import (
     subject_day_limit_reached,
     teacher_class_day_limit_reached,
 )
+from app.domain.schedule_variant import (
+    KIND_MAIN,
+    KIND_MONTHLY,
+    is_monthly_only_hours,
+    monthly_quota_lessons,
+    normalize_variant,
+    snap_hours,
+    format_hours_label,
+)
 from app.models import ScheduleCell, TeachingAssignment, Classroom, SchoolClass, Shift
 from app.services.assignment_hours import placed_count
+from app.services.schedule_scope import variant_filter
 from app.services.classroom_resolver import classroom_fact, load_settings
 from app.domain.classroom_rules import format_no_classroom, room_denial_message
 from app.services.bell_schedule import get_interval_for_slot
@@ -68,9 +78,21 @@ def _cell_brief(cell: ScheduleCell, session: Session | None = None) -> str:
 class ScheduleValidator:
     """Validates schedule for conflicts"""
 
-    def __init__(self, session: Session, school_id: int):
+    def __init__(
+        self,
+        session: Session,
+        school_id: int,
+        schedule_kind: str | None = KIND_MAIN,
+        week_index: int | None = 0,
+    ):
         self.session = session
         self.school_id = school_id
+        self.schedule_kind, self.week_index = normalize_variant(
+            schedule_kind, week_index
+        )
+
+    def _variant(self):
+        return variant_filter(self.schedule_kind, self.week_index)
 
     def _settings_for(self, school_level: str):
         return load_settings(self.session, self.school_id, school_level)
@@ -146,14 +168,66 @@ class ScheduleValidator:
             if lesson < sh.start_lesson or lesson >= lesson_end_exclusive(sh, day):
                 errors.append('Номер урока вне интервала смены')
 
-        if exclude_cell_id is None and hours_exhausted(
-            assignment.hours_per_week, placed_count(self.session, assignment.id)
-        ):
+        hours = snap_hours(assignment.hours_per_week)
+        if is_monthly_only_hours(hours) and self.schedule_kind != KIND_MONTHLY:
             subject_name = assignment.subject.display_name if assignment.subject else "предмет"
             errors.append(
-                f'Все часы по предмету «{subject_name}» уже расставлены '
-                f'({assignment.hours_per_week} ч/нед)'
+                f'Предмет «{subject_name}» с нагрузкой {format_hours_label(hours)} ч/нед '
+                f'(раз в месяц / два раза в месяц) ставится только '
+                f'в месячном расписании'
             )
+        elif exclude_cell_id is None:
+            if is_monthly_only_hours(hours) and self.schedule_kind == KIND_MONTHLY:
+                placed_month = placed_count(
+                    self.session,
+                    assignment.id,
+                    schedule_kind=KIND_MONTHLY,
+                    across_monthly_weeks=True,
+                )
+                placed_week = placed_count(
+                    self.session,
+                    assignment.id,
+                    schedule_kind=KIND_MONTHLY,
+                    week_index=self.week_index,
+                )
+                if placed_week >= 1:
+                    errors.append(
+                        f'Этот предмет уже стоит на неделе {self.week_index}. '
+                        f'{format_hours_label(hours)} ч/нед — не больше одного урока на вкладку'
+                    )
+                elif hours_exhausted(
+                    hours, placed_month, schedule_kind=KIND_MONTHLY
+                ):
+                    quota = monthly_quota_lessons(hours)
+                    subject_name = (
+                        assignment.subject.display_name
+                        if assignment.subject
+                        else "предмет"
+                    )
+                    errors.append(
+                        f'Все часы по предмету «{subject_name}» уже расставлены '
+                        f'({format_hours_label(hours)} ч/нед, {quota} '
+                        f'{"урок" if quota == 1 else "урока"} в месяц)'
+                    )
+            elif hours_exhausted(
+                hours,
+                placed_count(
+                    self.session,
+                    assignment.id,
+                    schedule_kind=self.schedule_kind,
+                    week_index=self.week_index,
+                ),
+                schedule_kind=self.schedule_kind,
+            ):
+                subject_name = (
+                    assignment.subject.display_name
+                    if assignment.subject
+                    else "предмет"
+                )
+                errors.append(
+                    f'Все часы по предмету «{subject_name}» уже расставлены '
+                    f'({format_hours_label(hours)} ч/нед)'
+                )
 
         if not assignment.teacher_id:
             errors.append('У назначения нет учителя — сначала назначьте учителя')
@@ -269,7 +343,8 @@ class ScheduleValidator:
 
         query = self.session.query(ScheduleCell).filter(
             ScheduleCell.assignment_id == assignment.id,
-            ScheduleCell.day_of_week == day
+            ScheduleCell.day_of_week == day,
+            self._variant(),
         )
         if exclude_cell_id:
             query = query.filter(ScheduleCell.id != exclude_cell_id)
@@ -285,6 +360,7 @@ class ScheduleValidator:
         query = self.session.query(ScheduleCell).filter(
             ScheduleCell.assignment_id == assignment.id,
             ScheduleCell.day_of_week == day,
+            self._variant(),
         )
         if exclude_cell_id:
             query = query.filter(ScheduleCell.id != exclude_cell_id)
@@ -306,6 +382,7 @@ class ScheduleValidator:
             ScheduleCell.day_of_week == day,
             TeachingAssignment.teacher_id == assignment.teacher_id,
             TeachingAssignment.subject_id == assignment.subject_id,
+            self._variant(),
         )
         if exclude_cell_id:
             query = query.filter(ScheduleCell.id != exclude_cell_id)
@@ -319,6 +396,8 @@ class ScheduleValidator:
             self.session,
             {teacher_id},
             exclude_cell_id=exclude_cell_id,
+            schedule_kind=self.schedule_kind,
+            week_index=self.week_index,
         )
         for fact in busy_map.get(teacher_id, []):
             if slot_facts_conflict(candidate_slot, fact):
@@ -342,6 +421,8 @@ class ScheduleValidator:
             self.session,
             {classroom_id},
             exclude_cell_id=exclude_cell_id,
+            schedule_kind=self.schedule_kind,
+            week_index=self.week_index,
         )
         overlapping = overlapping_classroom_busy(candidate_slot, classroom_id, busy_map)
         if len(overlapping) < cap:
@@ -390,6 +471,8 @@ class ScheduleValidator:
             self.session,
             [class_id],
             exclude_cell_id=exclude_cell_id,
+            schedule_kind=self.schedule_kind,
+            week_index=self.week_index,
         )
         for occupied in occupancy.get(class_id, []):
             if occupancy_blocks_unit(unit, occupied, candidate_slot=candidate_slot):
@@ -409,7 +492,10 @@ class ScheduleValidator:
         cells = (
             self.session.query(ScheduleCell)
             .join(TeachingAssignment)
-            .filter(TeachingAssignment.teacher_id == teacher_id)
+            .filter(
+                TeachingAssignment.teacher_id == teacher_id,
+                self._variant(),
+            )
             .order_by(ScheduleCell.day_of_week, ScheduleCell.lesson_number)
             .all()
         )

@@ -11,6 +11,7 @@ from app.domain.school_class import (
 )
 from app.models import SchoolClass, TeachingAssignment, ScheduleCell
 from app.services.assignment_hours import remaining_for
+from app.services.schedule_scope import variant_filter
 from app.services.classroom_resolver import (
     load_classroom_facts,
     load_settings,
@@ -213,6 +214,7 @@ class AutoScheduler:
             ScheduleCell.class_id == class_id,
             ScheduleCell.day_of_week == day,
             TeachingAssignment.teacher_id.isnot(None),
+            variant_filter(),
         ).all()
         lessons_by_teacher = {}
         for cell in rows:
@@ -369,7 +371,7 @@ class AutoScheduler:
         """Interleave leftover single hours across classes/subjects."""
         queues = []
         for a in assignments:
-            remaining = remaining_for(a)
+            remaining = int(remaining_for(a))
             if remaining > 0:
                 queues.append([a] * remaining)
         return self._round_robin_from_queues(queues)
@@ -384,7 +386,7 @@ class AutoScheduler:
         pair_queues = []
         hour_queues = []
         for a in assignments:
-            remaining = remaining_for(a)
+            remaining = int(remaining_for(a))
             if remaining <= 0:
                 continue
             n_pairs = remaining // 2
@@ -437,6 +439,7 @@ class AutoScheduler:
                 ScheduleCell.class_id == assignment.class_id,
                 ScheduleCell.day_of_week == day,
                 ScheduleCell.lesson_number.in_((lesson, lesson + 1)),
+                variant_filter(),
             ).all()
         }
         n1 = self._create_hour_cell(assignment, day, lesson, school_level)
@@ -451,6 +454,7 @@ class AutoScheduler:
                 ScheduleCell.class_id == assignment.class_id,
                 ScheduleCell.day_of_week == day,
                 ScheduleCell.lesson_number.in_((lesson, lesson + 1)),
+                variant_filter(),
             ).all()
             if c.id not in before_ids
         ]
@@ -488,6 +492,7 @@ class AutoScheduler:
                 ScheduleCell.class_id == cell.class_id,
                 ScheduleCell.day_of_week == cell.day_of_week,
                 ScheduleCell.lesson_number == cell.lesson_number,
+                variant_filter(),
             )
             .all()
         )
@@ -528,6 +533,7 @@ class AutoScheduler:
                     ScheduleCell.lesson_number == new_lesson,
                     ScheduleCell.assignment_id == c.assignment_id,
                     ScheduleCell.id != c.id,
+                    variant_filter(),
                 )
                 .first()
             )
@@ -643,7 +649,7 @@ class AutoScheduler:
 
         pair_mode = self._prefer_consecutive_pairs(school_level)
 
-        initial_total = sum(remaining_for(a) for a in assignments)
+        initial_total = int(sum(remaining_for(a) for a in assignments))
         if initial_total == 0:
             yield {'type': 'done', 'count': 0}
             return

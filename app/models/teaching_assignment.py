@@ -1,5 +1,5 @@
 """Teaching assignment model."""
-from sqlalchemy import Column, ForeignKey, Integer
+from sqlalchemy import Column, Float, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -13,7 +13,7 @@ class TeachingAssignment(Base):
     subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
     teacher_id = Column(Integer, ForeignKey("teachers.id"), nullable=True)
     class_id = Column(Integer, ForeignKey("school_classes.id"), nullable=False)
-    hours_per_week = Column(Integer, nullable=False)
+    hours_per_week = Column(Float, nullable=False)
     group_number = Column(Integer, nullable=True)
     preferred_classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
 

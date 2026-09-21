@@ -1,5 +1,5 @@
 """Schedule cell model."""
-from sqlalchemy import Column, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -15,6 +15,8 @@ class ScheduleCell(Base):
     lesson_number = Column(Integer, nullable=False)
     assignment_id = Column(Integer, ForeignKey("teaching_assignments.id"), nullable=False)
     classroom_id = Column(Integer, ForeignKey("classrooms.id"), nullable=True)
+    schedule_kind = Column(String(20), nullable=False, default="main", server_default="main")
+    week_index = Column(Integer, nullable=False, default=0, server_default="0")
 
     school = relationship("School")
     school_class = relationship("SchoolClass", back_populates="schedule_cells")
@@ -27,6 +29,8 @@ class ScheduleCell(Base):
             "day_of_week",
             "lesson_number",
             "assignment_id",
+            "schedule_kind",
+            "week_index",
             name="uq_schedule_cell",
         ),
     )

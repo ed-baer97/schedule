@@ -15,6 +15,7 @@ import { extractApiError } from '../api/client'
 import { listClassrooms, type Classroom } from '../api/classrooms'
 import {
   clearSchedule,
+  copyScheduleFromMain,
   createScheduleCell,
   deleteScheduleCell,
   explainSlot,
@@ -29,6 +30,14 @@ import {
   type TeacherRemaining,
 } from '../api/schedule'
 import type { SchoolLevel } from '../domain/schoolLevel'
+import {
+  MONTHLY_WEEKS,
+  SCHEDULE_KIND_LABELS,
+  cellHourWeight,
+  parseScheduleKind,
+  parseWeekIndex,
+  type ScheduleKind,
+} from '../domain/scheduleVariant'
 import { assignmentCanJoinSlot, slotAcceptsAnotherLesson } from '../domain/scheduleRules'
 import { occupantsAtSlot, roomAllows, roomFreeAtSlot } from '../domain/classroomRules'
 import { useScheduleExpand } from '../layouts/ScheduleLayout'
@@ -387,8 +396,13 @@ function buildClassRemainingById(
   return m
 }
 
-function gridQueryKey(level: SchoolLevel, shiftId: number | null) {
-  return ['schedule', 'grid', level, shiftId] as const
+function gridQueryKey(
+  level: SchoolLevel,
+  shiftId: number | null,
+  kind: ScheduleKind,
+  week: number,
+) {
+  return ['schedule', 'grid', level, shiftId, kind, week] as const
 }
 
 function upsertCell(cells: CellOut[], cell: CellOut) {
@@ -765,29 +779,68 @@ function replaceHash(id: string) {
   window.history.replaceState(null, '', next)
 }
 
-function saveTab(level: string, shiftId: number | null) {
+function saveTab(
+  level: string,
+  shiftId: number | null,
+  kind: ScheduleKind = 'main',
+  week = 0,
+) {
   try {
     sessionStorage.setItem(
       'schedule:tab',
-      JSON.stringify({ school_level: level, shift_id: shiftId }),
+      JSON.stringify({
+        school_level: level,
+        shift_id: shiftId,
+        schedule_kind: kind,
+        week_index: week,
+      }),
     )
   } catch {
     /* ignore */
   }
 }
 
-function loadTab(): { school_level: SchoolLevel; shift_id: number | null } | null {
+function loadTab(): {
+  school_level: SchoolLevel
+  shift_id: number | null
+  schedule_kind: ScheduleKind
+  week_index: number
+} | null {
   try {
     const raw = sessionStorage.getItem('schedule:tab')
     if (!raw) return null
-    const v = JSON.parse(raw) as { school_level?: string; shift_id?: number | null }
+    const v = JSON.parse(raw) as {
+      school_level?: string
+      shift_id?: number | null
+      schedule_kind?: string
+      week_index?: number | string
+    }
     const school_level: SchoolLevel = v.school_level === 'secondary' ? 'secondary' : 'elementary'
     const shift_id =
       typeof v.shift_id === 'number' && v.shift_id > 0 ? v.shift_id : null
-    return { school_level, shift_id }
+    const schedule_kind = parseScheduleKind(v.schedule_kind)
+    const week_index = parseWeekIndex(
+      schedule_kind,
+      v.week_index == null ? null : String(v.week_index),
+    )
+    return { school_level, shift_id, schedule_kind, week_index }
   } catch {
     return null
   }
+}
+
+function scheduleSearch(
+  level: SchoolLevel,
+  shiftId: number | null,
+  kind: ScheduleKind,
+  week: number,
+) {
+  const sp = new URLSearchParams()
+  sp.set('school_level', level)
+  if (shiftId) sp.set('shift_id', String(shiftId))
+  if (kind !== 'main') sp.set('schedule_kind', kind)
+  if (kind === 'monthly') sp.set('week_index', String(week || 1))
+  return `?${sp.toString()}`
 }
 
 function viewStorageKey(level: string, shiftId: number | null) {
@@ -896,6 +949,14 @@ export function SchedulePage() {
     shiftRaw && Number(shiftRaw)
       ? Number(shiftRaw)
       : storedTab?.shift_id ?? null
+  const scheduleKind = parseScheduleKind(
+    params.get('schedule_kind') ?? storedTab?.schedule_kind,
+  )
+  const weekIndex = parseWeekIndex(
+    scheduleKind,
+    params.get('week_index') ??
+      (storedTab?.week_index == null ? null : String(storedTab.week_index)),
+  )
   const [toast, setToast] = useState<{ kind: 'success' | 'danger'; text: string } | null>(null)
   const [density, setDensity] = useState<ScheduleDensity>(loadDensity)
   const [axis, setAxis] = useState<GridAxis>(loadAxis)
@@ -972,10 +1033,9 @@ export function SchedulePage() {
     restoreDone.current = false
     syncAllowed.current = false
     pendingAnchor.current = ''
-    saveTab(next, null)
-    const search = `?school_level=${next}`
+    saveTab(next, null, scheduleKind, weekIndex)
     navigate(
-      { pathname: '/schedule', search, hash: '' },
+      { pathname: '/schedule', search: scheduleSearch(next, null, scheduleKind, weekIndex), hash: '' },
       { replace: true, preventScrollReset: true },
     )
   }
@@ -983,13 +1043,38 @@ export function SchedulePage() {
   function setShiftId(id: number) {
     restoreDone.current = false
     syncAllowed.current = false
-    saveTab(level, id)
-    const sp = new URLSearchParams()
-    sp.set('school_level', level)
-    sp.set('shift_id', String(id))
-    const search = `?${sp.toString()}`
+    saveTab(level, id, scheduleKind, weekIndex)
     navigate(
-      { pathname: '/schedule', search, hash: window.location.hash },
+      {
+        pathname: '/schedule',
+        search: scheduleSearch(level, id, scheduleKind, weekIndex),
+        hash: window.location.hash,
+      },
+      { replace: true, preventScrollReset: true },
+    )
+  }
+
+  function setScheduleKind(next: ScheduleKind) {
+    const week = next === 'monthly' ? weekIndex || 1 : 0
+    saveTab(level, shiftId, next, week)
+    navigate(
+      {
+        pathname: '/schedule',
+        search: scheduleSearch(level, shiftId, next, week),
+        hash: window.location.hash,
+      },
+      { replace: true, preventScrollReset: true },
+    )
+  }
+
+  function setWeekIndex(next: number) {
+    saveTab(level, shiftId, 'monthly', next)
+    navigate(
+      {
+        pathname: '/schedule',
+        search: scheduleSearch(level, shiftId, 'monthly', next),
+        hash: window.location.hash,
+      },
       { replace: true, preventScrollReset: true },
     )
   }
@@ -1043,15 +1128,12 @@ export function SchedulePage() {
   }, [toast])
 
   useEffect(() => {
-    saveTab(level, shiftId)
+    saveTab(level, shiftId, scheduleKind, weekIndex)
     if (params.get('school_level')) return
-    const sp = new URLSearchParams()
-    sp.set('school_level', level)
-    if (shiftId) sp.set('shift_id', String(shiftId))
     navigate(
       {
         pathname: '/schedule',
-        search: `?${sp.toString()}`,
+        search: scheduleSearch(level, shiftId, scheduleKind, weekIndex),
         hash: window.location.hash,
       },
       { replace: true, preventScrollReset: true },
@@ -1059,8 +1141,8 @@ export function SchedulePage() {
   }, [])
 
   const gridQ = useQuery({
-    queryKey: ['schedule', 'grid', level, shiftId],
-    queryFn: () => fetchGrid(level, shiftId),
+    queryKey: gridQueryKey(level, shiftId, scheduleKind, weekIndex),
+    queryFn: () => fetchGrid(level, shiftId, scheduleKind, weekIndex),
   })
   gridCellsRef.current = gridQ.data?.cells
 
@@ -1114,7 +1196,10 @@ export function SchedulePage() {
   }, [gridQ.data?.classes])
 
   function patchGrid(updater: (grid: GridData) => GridData) {
-    qc.setQueryData<GridData>(gridQueryKey(level, shiftId), (old) => (old ? updater(old) : old))
+    qc.setQueryData<GridData>(
+      gridQueryKey(level, shiftId, scheduleKind, weekIndex),
+      (old) => (old ? updater(old) : old),
+    )
   }
 
   function afterCellWrite() {
@@ -1129,7 +1214,12 @@ export function SchedulePage() {
       lesson_number: number
       assignment_id: number
       classroom_id: number | null
-    }) => createScheduleCell(p),
+    }) =>
+      createScheduleCell({
+        ...p,
+        schedule_kind: scheduleKind,
+        week_index: scheduleKind === 'monthly' ? weekIndex : 0,
+      }),
     onSuccess: (cell, p) => {
       setSlot(null)
       setToast({ kind: 'success', text: 'Урок добавлен' })
@@ -1140,7 +1230,7 @@ export function SchedulePage() {
         teacher_remaining: patchTeacherRemaining(
           grid.teacher_remaining,
           cell,
-          -1,
+          -cellHourWeight(cell.hours_per_week),
           grid.classes.find((c) => c.id === cell.class_id)?.name ?? '',
         ),
       }))
@@ -1199,7 +1289,7 @@ export function SchedulePage() {
           teacher_remaining: patchTeacherRemaining(
             grid.teacher_remaining,
             removed,
-            1,
+            cellHourWeight(removed.hours_per_week),
             grid.classes.find((c) => c.id === removed.class_id)?.name ?? '',
           ),
         }
@@ -1216,6 +1306,8 @@ export function SchedulePage() {
         school_level: level,
         days_of_week: [p.day],
         class_ids: p.classIds,
+        schedule_kind: scheduleKind,
+        week_index: scheduleKind === 'monthly' ? weekIndex : 0,
         ...(p.shiftId != null ? { shift_id: p.shiftId } : {}),
       }),
     onSuccess: async (res, p) => {
@@ -1228,6 +1320,31 @@ export function SchedulePage() {
             ? `Удалено уроков ${shiftName} за ${name.toLowerCase()}: ${res.count}`
             : `Удалено уроков за ${name.toLowerCase()}: ${res.count}`
           : `Удалено уроков: ${res.count}`,
+      })
+      await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
+    },
+    onError: (e) => setToast({ kind: 'danger', text: extractApiError(e) }),
+  })
+
+  const copyFromMainM = useMutation({
+    mutationFn: (weeks?: number[]) =>
+      copyScheduleFromMain({
+        target_kind: scheduleKind === 'monthly' ? 'monthly' : 'temporary',
+        weeks,
+        school_level: level,
+        shift_id: shiftId ?? gridQ.data?.current_shift_id ?? null,
+        class_ids: gridQ.data?.classes.map((c) => c.id),
+      }),
+    onSuccess: async (res, weeks) => {
+      const where =
+        scheduleKind === 'monthly'
+          ? weeks && weeks.length === 1
+            ? `неделю ${weeks[0]}`
+            : 'все 4 недели'
+          : 'временное расписание'
+      setToast({
+        kind: 'success',
+        text: `Скопировано из основного в ${where}: ${res.count} уроков`,
       })
       await qc.invalidateQueries({ queryKey: ['schedule', 'grid'] })
     },
@@ -1474,6 +1591,86 @@ export function SchedulePage() {
       )}
 
       <div className="schedule-grid-chrome">
+        <ul className="nav nav-tabs mb-3">
+          {(['main', 'temporary', 'monthly'] as ScheduleKind[]).map((kind) => (
+            <li className="nav-item" key={kind}>
+              <button
+                type="button"
+                className={`nav-link ${scheduleKind === kind ? 'active' : ''}`}
+                onClick={() => setScheduleKind(kind)}
+              >
+                {SCHEDULE_KIND_LABELS[kind]}
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        {scheduleKind === 'monthly' && (
+          <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
+            <ul className="nav nav-pills mb-0">
+              {MONTHLY_WEEKS.map((week) => (
+                <li className="nav-item" key={week}>
+                  <button
+                    type="button"
+                    className={`nav-link ${weekIndex === week ? 'active' : ''}`}
+                    onClick={() => setWeekIndex(week)}
+                  >
+                    Неделя {week}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <span className="small text-muted">
+              0.25 ч/нед — один урок в месяц (одна вкладка). 0.5 ч — два урока (две вкладки).
+            </span>
+          </div>
+        )}
+
+        {scheduleKind !== 'main' && (
+          <div className="d-flex flex-wrap gap-2 mb-3">
+            <button
+              type="button"
+              className="btn btn-outline-primary btn-sm"
+              disabled={copyFromMainM.isPending}
+              onClick={() => {
+                const target =
+                  scheduleKind === 'monthly' ? `неделю ${weekIndex}` : 'временное расписание'
+                if (
+                  !confirm(
+                    `Заменить уроки ${target} копией основного расписания этой смены?`,
+                  )
+                ) {
+                  return
+                }
+                copyFromMainM.mutate(
+                  scheduleKind === 'monthly' ? [weekIndex] : undefined,
+                )
+              }}
+            >
+              {copyFromMainM.isPending ? 'Копирование…' : 'Копировать основное'}
+            </button>
+            {scheduleKind === 'monthly' && (
+              <button
+                type="button"
+                className="btn btn-outline-secondary btn-sm"
+                disabled={copyFromMainM.isPending}
+                onClick={() => {
+                  if (
+                    !confirm(
+                      'Заменить все 4 недели копией основного расписания этой смены?',
+                    )
+                  ) {
+                    return
+                  }
+                  copyFromMainM.mutate([1, 2, 3, 4])
+                }}
+              >
+                Во все 4 недели
+              </button>
+            )}
+          </div>
+        )}
+
         <ul className="nav nav-tabs mb-3">
           <li className="nav-item">
             <button
@@ -1785,6 +1982,8 @@ export function SchedulePage() {
           classSchoolLevel={level}
           classNameById={classNameById}
           dayNames={grid.day_names}
+          scheduleKind={scheduleKind}
+          weekIndex={weekIndex}
           error={addM.isError ? extractApiError(addM.error) : null}
           onClose={() => {
             addM.reset()
@@ -2036,12 +2235,27 @@ function AddLessonModal(props: {
   classSchoolLevel: SchoolLevel
   classNameById: Record<number, string>
   dayNames: string[]
+  scheduleKind: ScheduleKind
+  weekIndex: number
   error: string | null
   onClose: () => void
   onSubmit: (assignment_id: number, classroom_id: number | null) => void
   submitting: boolean
 }) {
-  const { slot, occupied, cells, classSchoolLevel, classNameById, dayNames, error, onClose, onSubmit, submitting } = props
+  const {
+    slot,
+    occupied,
+    cells,
+    classSchoolLevel,
+    classNameById,
+    dayNames,
+    scheduleKind,
+    weekIndex,
+    error,
+    onClose,
+    onSubmit,
+    submitting,
+  } = props
   const occupiedSubject =
     occupied.length > 0 && occupied.every((c) => c.subject_name === occupied[0].subject_name)
       ? occupied[0].subject_name
@@ -2051,8 +2265,21 @@ function AddLessonModal(props: {
   const [classroomId, setClassroomId] = useState<number | ''>('')
 
   const q = useQuery({
-    queryKey: ['schedule', 'assignments-for-class', slot.class_id, slot.day, slot.lesson],
-    queryFn: () => fetchAssignmentsForClass(slot.class_id, { day: slot.day, lesson: slot.lesson }),
+    queryKey: [
+      'schedule',
+      'assignments-for-class',
+      slot.class_id,
+      slot.day,
+      slot.lesson,
+      scheduleKind,
+      weekIndex,
+    ],
+    queryFn: () =>
+      fetchAssignmentsForClass(
+        slot.class_id,
+        { day: slot.day, lesson: slot.lesson },
+        { kind: scheduleKind, week: weekIndex },
+      ),
   })
 
   const compatibleAssignments = useMemo(
@@ -2083,13 +2310,24 @@ function AddLessonModal(props: {
 
   const teacherId = selectedAssignment?.teacher_id ?? null
   const teacherDayQ = useQuery({
-    queryKey: ['schedule', 'teacher-day', teacherId, slot.class_id, slot.day, slot.lesson],
+    queryKey: [
+      'schedule',
+      'teacher-day',
+      teacherId,
+      slot.class_id,
+      slot.day,
+      slot.lesson,
+      scheduleKind,
+      weekIndex,
+    ],
     queryFn: () =>
       fetchTeacherDay({
         teacherId: teacherId as number,
         day: slot.day,
         classId: slot.class_id,
         lesson: slot.lesson,
+        scheduleKind,
+        weekIndex,
       }),
     enabled: teacherId != null,
   })
@@ -2315,8 +2553,18 @@ function ChangeClassroomModal(props: {
   const [swapWith, setSwapWith] = useState<CellOut | null>(null)
 
   const q = useQuery({
-    queryKey: ['schedule', 'assignments-for-class', cell.class_id],
-    queryFn: () => fetchAssignmentsForClass(cell.class_id),
+    queryKey: [
+      'schedule',
+      'assignments-for-class',
+      cell.class_id,
+      cell.schedule_kind ?? 'main',
+      cell.week_index ?? 0,
+    ],
+    queryFn: () =>
+      fetchAssignmentsForClass(cell.class_id, undefined, {
+        kind: (cell.schedule_kind as ScheduleKind | undefined) ?? 'main',
+        week: cell.week_index,
+      }),
   })
 
   const allowOpts = {

@@ -167,7 +167,7 @@ class ImportService:
                 stem = Path(filename or path).stem
                 name = subject_name if len(files) == 1 else None
                 try:
-                    payload = self._importer.import_subject_hours(
+                    payloads = self._importer.import_subject_hours(
                         path, subject_name=name, filename=filename
                     )
                 except ValueError as exc:
@@ -176,7 +176,9 @@ class ImportService:
                     raise BadRequestError(
                         f"Ошибка импорта «{stem}»: {exc}"
                     ) from exc
-                results.append(SubjectHoursFileResultData(**payload))
+                results.extend(
+                    SubjectHoursFileResultData(**payload) for payload in payloads
+                )
         finally:
             for path in saved_paths:
                 self.cleanup(path)

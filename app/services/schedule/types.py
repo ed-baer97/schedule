@@ -37,7 +37,7 @@ class AssignmentChoiceData:
     teacher_id: int | None
     teacher_name: str | None
     group_number: int | None
-    remaining_hours: int
+    remaining_hours: float
     preferred_classroom_id: int | None
     requires_fixed_classroom: bool = False
 
@@ -56,7 +56,7 @@ class Placement:
 @dataclass
 class TeacherRemainingSubjectData:
     subject_name: str
-    remaining_hours: int
+    remaining_hours: float
     group_number: int | None = None
 
 
@@ -64,7 +64,7 @@ class TeacherRemainingSubjectData:
 class TeacherRemainingClassData:
     class_id: int
     class_name: str
-    remaining_hours: int
+    remaining_hours: float
     subjects: list[TeacherRemainingSubjectData]
 
 
@@ -72,7 +72,7 @@ class TeacherRemainingClassData:
 class TeacherRemainingData:
     teacher_id: int
     teacher_name: str
-    remaining_hours: int
+    remaining_hours: float
     classes: list[TeacherRemainingClassData]
 
 
@@ -93,6 +93,8 @@ class GridData:
     classroom_warnings: list[ClassroomWarningData]
     settings: ScheduleSettingsData | None
     teacher_remaining: list[TeacherRemainingData]
+    schedule_kind: str = "main"
+    week_index: int = 0
 
 
 @dataclass

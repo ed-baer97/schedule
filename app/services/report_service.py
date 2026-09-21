@@ -21,6 +21,7 @@ from app.services.schedule_mapping import (
     cell_to_report_dict,
     load_cells,
 )
+from app.services.schedule_scope import variant_filter
 from app.services.tenancy import require_owned
 
 _INK = "14201A"
@@ -490,6 +491,7 @@ class ReportService:
             self.db,
             ScheduleCell.class_id == class_id,
             ScheduleCell.school_id == self.school_id,
+            variant_filter(),
             with_class=True,
         )
         return {
@@ -516,6 +518,7 @@ class ReportService:
                 .where(
                     TeachingAssignment.teacher_id == teacher_id,
                     ScheduleCell.school_id == self.school_id,
+                    variant_filter(),
                 )
             )
             .scalars()
@@ -571,6 +574,7 @@ class ReportService:
             self.db,
             ScheduleCell.class_id == class_id,
             ScheduleCell.school_id == self.school_id,
+            variant_filter(),
             with_class=True,
         )
         cell_index: dict[tuple[int, int], list[ScheduleCell]] = defaultdict(list)
@@ -663,6 +667,7 @@ class ReportService:
                 self.db,
                 ScheduleCell.class_id.in_(class_ids),
                 ScheduleCell.school_id == self.school_id,
+                variant_filter(),
                 with_class=True,
             )
             if class_ids

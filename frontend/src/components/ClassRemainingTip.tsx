@@ -20,6 +20,11 @@ function lessonsWord(n: number) {
   return 'уроков'
 }
 
+function remainingLabel(n: number) {
+  if (!Number.isInteger(n)) return `${n} ч`
+  return `${n} ${lessonsWord(n)}`
+}
+
 function subjectLine(subject: ClassRemainingSubject) {
   const name =
     subject.group_number != null
@@ -75,7 +80,7 @@ export function ClassRemainingTip({
           {pending && info ? (
             <>
               <div className="class-remaining-tip-total">
-                Не распределено: {info.remaining_hours} {lessonsWord(info.remaining_hours)}
+                Не распределено: {remainingLabel(info.remaining_hours)}
               </div>
               <ul className="class-remaining-tip-subjects">
                 {info.subjects.map((row, i) => (

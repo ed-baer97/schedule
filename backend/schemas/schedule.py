@@ -45,6 +45,9 @@ class ScheduleCellOut(BaseModel):
     group_number: int | None = None
     classroom_name: str | None = None
     requires_fixed_classroom: bool = False
+    hours_per_week: float = 0
+    schedule_kind: str = "main"
+    week_index: int = 0
 
 
 class ScheduleSettingsOut(BaseModel):
@@ -68,21 +71,21 @@ class ClassroomWarningOut(BaseModel):
 
 class TeacherRemainingSubjectOut(BaseModel):
     subject_name: str
-    remaining_hours: int
+    remaining_hours: float
     group_number: int | None = None
 
 
 class TeacherRemainingClassOut(BaseModel):
     class_id: int
     class_name: str
-    remaining_hours: int
+    remaining_hours: float
     subjects: list[TeacherRemainingSubjectOut] = []
 
 
 class TeacherRemainingOut(BaseModel):
     teacher_id: int
     teacher_name: str
-    remaining_hours: int
+    remaining_hours: float
     classes: list[TeacherRemainingClassOut] = []
 
 
@@ -102,6 +105,8 @@ class ScheduleGridOut(BaseModel):
     classroom_warnings: list[ClassroomWarningOut]
     settings: ScheduleSettingsOut | None = None
     teacher_remaining: list[TeacherRemainingOut] = []
+    schedule_kind: str = "main"
+    week_index: int = 0
 
 
 class AssignmentChoiceOut(BaseModel):
@@ -112,7 +117,7 @@ class AssignmentChoiceOut(BaseModel):
     teacher_id: int | None = None
     teacher_name: str | None = None
     group_number: int | None = None
-    remaining_hours: int
+    remaining_hours: float
     preferred_classroom_id: int | None = None
     requires_fixed_classroom: bool = False
 
@@ -176,6 +181,8 @@ class ScheduleCellCreate(BaseModel):
     lesson_number: int = Field(..., ge=0, le=20)
     assignment_id: int
     classroom_id: int | None = None
+    schedule_kind: str = Field("main", pattern="^(main|temporary|monthly)$")
+    week_index: int | None = Field(None, ge=0, le=4)
 
 
 class ScheduleCellMove(BaseModel):
@@ -232,6 +239,8 @@ class ClearScheduleBody(BaseModel):
     teacher_id: int | None = None
     days_of_week: list[int] | None = Field(None, min_length=1)
     shift_id: int | None = None
+    schedule_kind: str = Field("main", pattern="^(main|temporary|monthly)$")
+    week_index: int | None = Field(None, ge=0, le=4)
 
     @field_validator("days_of_week")
     @classmethod
@@ -250,6 +259,33 @@ class ClearScheduleBody(BaseModel):
 
 
 class ClearScheduleResult(BaseModel):
+    count: int
+
+
+class CopyScheduleBody(BaseModel):
+    target_kind: str = Field(..., pattern="^(temporary|monthly)$")
+    weeks: list[int] | None = Field(None, min_length=1)
+    school_level: str | None = Field(None, pattern="^(elementary|secondary)$")
+    shift_id: int | None = None
+    class_ids: list[int] | None = None
+
+    @field_validator("weeks")
+    @classmethod
+    def _weeks(cls, value: list[int] | None) -> list[int] | None:
+        if value is None:
+            return None
+        seen: set[int] = set()
+        weeks: list[int] = []
+        for week in value:
+            if week < 1 or week > 4:
+                raise ValueError("weeks must be 1..4")
+            if week not in seen:
+                seen.add(week)
+                weeks.append(week)
+        return weeks
+
+
+class CopyScheduleResult(BaseModel):
     count: int
 
 
@@ -275,6 +311,8 @@ class ExplainSlotBody(BaseModel):
     lesson_number: int = Field(..., ge=0, le=20)
     classroom_id: int | None = None
     cell_id: int | None = None
+    schedule_kind: str = Field("main", pattern="^(main|temporary|monthly)$")
+    week_index: int | None = Field(None, ge=0, le=4)
 
 
 class ExplainSlotOut(BaseModel):

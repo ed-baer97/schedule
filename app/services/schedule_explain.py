@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.domain.days import DAY_NAMES, time_range_label
 from app.domain.shift_grid import lesson_end_exclusive
-from app.models import SchoolClass, TeachingAssignment
-from app.services.assignment_hours import placed_count, remaining_for
+from app.models import ScheduleCell, SchoolClass, TeachingAssignment
+from app.services.assignment_hours import remaining_for
 from app.services.bell_schedule import get_interval_for_slot
 from app.services.classroom_resolver import pick_classroom_for
 from app.services.errors import NotFoundError
@@ -92,6 +92,8 @@ class ScheduleExplainService:
         lesson_number: int,
         classroom_id: int | None = None,
         cell_id: int | None = None,
+        schedule_kind: str | None = None,
+        week_index: int | None = None,
     ) -> ExplainResult:
         require_owned(self.db, TeachingAssignment, assignment_id, self.school_id)
         assignment = (
@@ -110,6 +112,22 @@ class ScheduleExplainService:
         if assignment is None:
             raise NotFoundError("Назначение не найдено")
 
+        if cell_id is not None:
+            cell = require_owned(self.db, ScheduleCell, cell_id, self.school_id)
+            self.validator = ScheduleValidator(
+                self.db,
+                self.school_id,
+                schedule_kind=cell.schedule_kind,
+                week_index=cell.week_index,
+            )
+        else:
+            self.validator = ScheduleValidator(
+                self.db,
+                self.school_id,
+                schedule_kind=schedule_kind,
+                week_index=week_index,
+            )
+
         school_class = assignment.school_class
         school_level = school_class.school_level if school_class else "elementary"
         shift_id = school_class.shift_id if school_class else None
@@ -123,6 +141,8 @@ class ScheduleExplainService:
                 day=day_of_week,
                 lesson=lesson_number,
                 exclude_cell_id=cell_id,
+                schedule_kind=self.validator.schedule_kind,
+                week_index=self.validator.week_index,
             )
 
         blockers = self.validator.validate_cell(
@@ -139,7 +159,10 @@ class ScheduleExplainService:
             skip=(day_of_week, lesson_number),
         )
         remaining = remaining_for(
-            assignment, placed=placed_count(self.db, assignment.id)
+            assignment,
+            db=self.db,
+            schedule_kind=self.validator.schedule_kind,
+            week_index=self.validator.week_index,
         )
         facts = {
             "slot": {

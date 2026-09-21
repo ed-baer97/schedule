@@ -12,6 +12,7 @@ from app.domain.classroom_rules import format_no_classroom
 from app.domain.pair_epochs import PairFreezeSpec, freeze_keys_for_good_doubles
 from app.domain.schedule_facts import BusySlotFact, SlotFact, UnitFact
 from app.domain.days import DAY_NAMES
+from app.domain.schedule_variant import format_hours_label
 from app.domain.shift_grid import (
     capped_lesson_end_exclusive,
     lesson_end_exclusive,
@@ -59,6 +60,7 @@ from app.services.assignment_hours import (
     placed_lessons_by_assignment_day,
     remaining_for,
 )
+from app.services.schedule_scope import variant_filter
 from app.services.classroom_resolver import (
     candidate_classrooms,
     load_classroom_facts,
@@ -1578,6 +1580,7 @@ class CpSatScheduleSolver:
                 .filter(
                     ScheduleCell.assignment_id.in_(assignment_ids),
                     ScheduleCell.day_of_week == today,
+                    variant_filter(),
                 )
                 .all()
             )
@@ -1656,7 +1659,7 @@ class CpSatScheduleSolver:
                     bound_fail.append(
                         {
                             "reason": (
-                                f"{class_name} «{subj_name}»: осталось {rem} ч, "
+                                f"{class_name} «{subj_name}»: осталось {format_hours_label(rem)} ч, "
                                 f"сегодня можно поставить не больше {max_t}, "
                                 f"а на другие дни места хватает только на {cap_other}."
                             )

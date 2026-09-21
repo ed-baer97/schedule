@@ -1,6 +1,7 @@
 import { apiJson, extractApiError, ApiError } from './client'
 import type { ShiftBrief } from './shifts'
 import type { SchoolLevel } from '../domain/schoolLevel'
+import type { ScheduleKind } from '../domain/scheduleVariant'
 
 export type ClassroomMode = 'class_room' | 'teacher_room'
 
@@ -53,6 +54,9 @@ export type ScheduleCell = {
   group_number: number | null
   classroom_name: string | null
   requires_fixed_classroom?: boolean
+  hours_per_week?: number
+  schedule_kind?: ScheduleKind
+  week_index?: number
 }
 
 export type SchoolClassRow = {
@@ -85,6 +89,8 @@ export type GridData = {
   classroom_warnings: ClassroomWarning[]
   settings: ScheduleSettings | null
   teacher_remaining?: TeacherRemaining[]
+  schedule_kind?: ScheduleKind
+  week_index?: number
 }
 
 export type ClassroomChoice = {
@@ -145,6 +151,8 @@ export type CreateCellPayload = {
   lesson_number: number
   assignment_id: number
   classroom_id: number | null
+  schedule_kind?: ScheduleKind
+  week_index?: number
 }
 
 export type MoveCellPayload = {
@@ -162,11 +170,22 @@ export type ClearScheduleFilter = {
   teacher_id?: number
   days_of_week?: number[]
   shift_id?: number
+  schedule_kind?: ScheduleKind
+  week_index?: number
 }
 
-export function fetchGrid(schoolLevel: SchoolLevel, shiftId?: number | null) {
-  const qs = shiftId ? `&shift_id=${shiftId}` : ''
-  return apiJson<GridData>(`/api/schedule/grid?school_level=${schoolLevel}${qs}`)
+export function fetchGrid(
+  schoolLevel: SchoolLevel,
+  shiftId?: number | null,
+  scheduleKind: ScheduleKind = 'main',
+  weekIndex?: number | null,
+) {
+  const qs = new URLSearchParams()
+  qs.set('school_level', schoolLevel)
+  if (shiftId) qs.set('shift_id', String(shiftId))
+  if (scheduleKind !== 'main') qs.set('schedule_kind', scheduleKind)
+  if (scheduleKind === 'monthly' && weekIndex) qs.set('week_index', String(weekIndex))
+  return apiJson<GridData>(`/api/schedule/grid?${qs.toString()}`)
 }
 
 export function createScheduleCell(payload: CreateCellPayload) {
@@ -200,12 +219,19 @@ export function swapScheduleClassrooms(cellId: number, otherCellId: number) {
 export function fetchAssignmentsForClass(
   classId: number,
   slot?: { day: number; lesson: number },
+  variant?: { kind: ScheduleKind; week?: number },
 ) {
-  const q =
-    slot != null
-      ? `?day_of_week=${slot.day}&lesson_number=${slot.lesson}`
-      : ''
-  return apiJson<AssignmentsData>(`/api/schedule/assignments-for-class/${classId}${q}`)
+  const q = new URLSearchParams()
+  if (slot != null) {
+    q.set('day_of_week', String(slot.day))
+    q.set('lesson_number', String(slot.lesson))
+  }
+  if (variant?.kind && variant.kind !== 'main') q.set('schedule_kind', variant.kind)
+  if (variant?.kind === 'monthly' && variant.week) q.set('week_index', String(variant.week))
+  const qs = q.toString()
+  return apiJson<AssignmentsData>(
+    `/api/schedule/assignments-for-class/${classId}${qs ? `?${qs}` : ''}`,
+  )
 }
 
 export type TeacherDayOccupant = {
@@ -247,12 +273,20 @@ export function fetchTeacherDay(params: {
   day: number
   classId?: number
   lesson?: number
+  scheduleKind?: ScheduleKind
+  weekIndex?: number
 }) {
   const q = new URLSearchParams()
   q.set('teacher_id', String(params.teacherId))
   q.set('day_of_week', String(params.day))
   if (params.classId != null) q.set('class_id', String(params.classId))
   if (params.lesson != null) q.set('lesson_number', String(params.lesson))
+  if (params.scheduleKind && params.scheduleKind !== 'main') {
+    q.set('schedule_kind', params.scheduleKind)
+  }
+  if (params.scheduleKind === 'monthly' && params.weekIndex) {
+    q.set('week_index', String(params.weekIndex))
+  }
   return apiJson<TeacherDayData>(`/api/schedule/teacher-day?${q.toString()}`)
 }
 
@@ -271,6 +305,21 @@ export function clearSchedule(filter: ClearScheduleFilter) {
   return apiJson<{ count: number }>('/api/schedule/clear', {
     method: 'POST',
     body: JSON.stringify(filter),
+  })
+}
+
+export type CopySchedulePayload = {
+  target_kind: 'temporary' | 'monthly'
+  weeks?: number[]
+  school_level?: SchoolLevel
+  shift_id?: number | null
+  class_ids?: number[]
+}
+
+export function copyScheduleFromMain(payload: CopySchedulePayload) {
+  return apiJson<{ count: number }>('/api/schedule/copy-from-main', {
+    method: 'POST',
+    body: JSON.stringify(payload),
   })
 }
 
@@ -347,6 +396,8 @@ export type ExplainSlotPayload = {
   lesson_number: number
   classroom_id?: number | null
   cell_id?: number | null
+  schedule_kind?: ScheduleKind
+  week_index?: number
 }
 
 export type ExplainSlotOut = {

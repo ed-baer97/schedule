@@ -22,6 +22,7 @@ from app.models import ScheduleCell, SchoolClass, TeachingAssignment
 from app.services.classroom_resolver import load_settings
 from app.services.errors import ValidationConflict
 from app.services.qwen_client import complete_json, qwen_configured
+from app.services.schedule_scope import variant_filter
 from app.services.schedule_service import ScheduleService
 from app.services.validators import ScheduleValidator
 
@@ -219,6 +220,7 @@ class ScheduleAssistService:
                 SchoolClass.school_id == self.school_id,
                 SchoolClass.school_level == school_level,
                 ScheduleCell.lesson_number > max_lesson,
+                variant_filter(),
             )
         )
         if shift_id is not None:

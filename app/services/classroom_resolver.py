@@ -22,6 +22,7 @@ from app.models import (
     TeachingAssignment,
 )
 from app.services.schedule_fact_loader import load_classroom_busy
+from app.services.schedule_scope import variant_filter
 
 
 def load_settings(
@@ -198,6 +199,8 @@ def adjacent_pair_classroom_id(
     lesson: int,
     *,
     exclude_cell_id: int | None = None,
+    schedule_kind: str | None = None,
+    week_index: int | None = None,
 ) -> int | None:
     """Classroom of a neighbouring hour of the same assignment, if any."""
     stmt = select(ScheduleCell.classroom_id).where(
@@ -205,6 +208,7 @@ def adjacent_pair_classroom_id(
         ScheduleCell.day_of_week == day,
         ScheduleCell.lesson_number.in_((lesson - 1, lesson + 1)),
         ScheduleCell.classroom_id.is_not(None),
+        variant_filter(schedule_kind, week_index),
     )
     if exclude_cell_id is not None:
         stmt = stmt.where(ScheduleCell.id != exclude_cell_id)
@@ -221,6 +225,8 @@ def pick_classroom_for(
     lesson: int,
     exclude_cell_id: int | None = None,
     prefer_classroom_id: int | None = None,
+    schedule_kind: str | None = None,
+    week_index: int | None = None,
 ) -> int | None:
     settings = load_settings(db, school_id, school_level)
     rooms = load_classroom_facts(db, school_id)
@@ -234,9 +240,13 @@ def pick_classroom_for(
             day,
             lesson,
             exclude_cell_id=exclude_cell_id,
+            schedule_kind=schedule_kind,
+            week_index=week_index,
         )
     room_ids = {rid for rid, _ in candidates}
-    busy = load_classroom_busy(db, room_ids)
+    busy = load_classroom_busy(
+        db, room_ids, schedule_kind=schedule_kind, week_index=week_index
+    )
     return pick_classroom(
         assignment,
         settings,
@@ -277,6 +287,7 @@ def get_classroom_warnings(
         .where(
             ScheduleCell.classroom_id.is_(None),
             ScheduleCell.school_id == school_id,
+            variant_filter(),
         )
     )
     if school_level:

@@ -15,7 +15,7 @@ __all__ = [
 class WorkloadCellOut(BaseModel):
     class_id: int
     subject_id: int
-    hours: int
+    hours: float
 
 
 class WorkloadOut(BaseModel):
@@ -28,4 +28,4 @@ class WorkloadOut(BaseModel):
 class WorkloadCellUpdate(BaseModel):
     class_id: int
     subject_id: int
-    hours: int
+    hours: float

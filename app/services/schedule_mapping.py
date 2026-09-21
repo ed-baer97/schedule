@@ -60,6 +60,9 @@ def _cell_projection(cell: ScheduleCell) -> dict:
         "requires_fixed_classroom": bool(
             subj.requires_fixed_classroom if subj else False
         ),
+        "hours_per_week": float(a.hours_per_week) if a else 0.0,
+        "schedule_kind": getattr(cell, "schedule_kind", None) or "main",
+        "week_index": int(getattr(cell, "week_index", 0) or 0),
     }
 
 
@@ -78,6 +81,9 @@ _SCHEDULE_KEYS = (
     "group_number",
     "classroom_name",
     "requires_fixed_classroom",
+    "hours_per_week",
+    "schedule_kind",
+    "week_index",
 )
 
 _REPORT_KEYS = (

@@ -23,6 +23,8 @@ from backend.schemas.schedule import (
     AssistOut,
     ClassroomChoiceOut,
     ClassroomWarningOut,
+    CopyScheduleBody,
+    CopyScheduleResult,
     ClearScheduleBody,
     ClearScheduleResult,
     ExplainSlotBody,
@@ -46,15 +48,30 @@ from backend.schemas.schedule import (
 
 router = APIRouter()
 
+_KIND_Q = Query("main", pattern="^(main|temporary|monthly)$")
+
+
+def _svc(
+    db: Session,
+    school: School,
+    kind: str | None = "main",
+    week: int | None = None,
+) -> ScheduleService:
+    return ScheduleService(db, school.id).set_variant(kind, week)
+
 
 @router.get("/grid", response_model=ScheduleGridOut)
 def get_grid(
     school_level: str = Query("elementary", pattern="^(elementary|secondary)$"),
     shift_id: int | None = Query(None),
+    schedule_kind: str = _KIND_Q,
+    week_index: int | None = Query(None),
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> ScheduleGridOut:
-    data = ScheduleService(db, school.id).get_grid(school_level, shift_id)
+    data = _svc(db, school, schedule_kind, week_index).get_grid(
+        school_level, shift_id
+    )
     return ScheduleGridOut(
         school_level=data.school_level,
         current_shift_id=data.current_shift_id,
@@ -85,6 +102,8 @@ def get_grid(
             TeacherRemainingOut.model_validate(asdict(row))
             for row in data.teacher_remaining
         ],
+        schedule_kind=data.schedule_kind,
+        week_index=data.week_index,
     )
 
 
@@ -98,8 +117,10 @@ def assignments_for_class(
     school: School = Depends(get_current_school),
     day_of_week: int | None = None,
     lesson_number: int | None = None,
+    schedule_kind: str = _KIND_Q,
+    week_index: int | None = Query(None),
 ) -> AssignmentsForClassOut:
-    data = ScheduleService(db, school.id).assignments_for_class(
+    data = _svc(db, school, schedule_kind, week_index).assignments_for_class(
         class_id, day=day_of_week, lesson=lesson_number
     )
     return AssignmentsForClassOut(
@@ -118,10 +139,12 @@ def teacher_day(
     day_of_week: int = Query(..., ge=1, le=6),
     class_id: int | None = Query(None),
     lesson_number: int | None = Query(None, ge=0, le=20),
+    schedule_kind: str = _KIND_Q,
+    week_index: int | None = Query(None),
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> TeacherDayOut:
-    data = ScheduleService(db, school.id).teacher_day(
+    data = _svc(db, school, schedule_kind, week_index).teacher_day(
         teacher_id,
         day=day_of_week,
         class_id=class_id,
@@ -136,7 +159,7 @@ def create_cell(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> ScheduleCellOut:
-    cell = ScheduleService(db, school.id).create_cell(
+    cell = _svc(db, school, body.schedule_kind, body.week_index).create_cell(
         class_id=body.class_id,
         day_of_week=body.day_of_week,
         lesson_number=body.lesson_number,
@@ -263,7 +286,7 @@ def clear_schedule(
     db: Session = Depends(get_db),
     school: School = Depends(get_current_school),
 ) -> ClearScheduleResult:
-    count = ScheduleService(db, school.id).clear_schedule(
+    count = _svc(db, school, body.schedule_kind, body.week_index).clear_schedule(
         school_level=body.school_level,
         class_id=body.class_id,
         class_ids=body.class_ids,
@@ -272,6 +295,22 @@ def clear_schedule(
         shift_id=body.shift_id,
     )
     return ClearScheduleResult(count=count)
+
+
+@router.post("/copy-from-main", response_model=CopyScheduleResult)
+def copy_from_main(
+    body: CopyScheduleBody,
+    db: Session = Depends(get_db),
+    school: School = Depends(get_current_school),
+) -> CopyScheduleResult:
+    count = ScheduleService(db, school.id).copy_from_main(
+        target_kind=body.target_kind,
+        weeks=body.weeks,
+        class_ids=body.class_ids,
+        school_level=body.school_level,
+        shift_id=body.shift_id,
+    )
+    return CopyScheduleResult(count=count)
 
 
 @router.get("/settings", response_model=SettingsPair)
@@ -327,6 +366,8 @@ def explain_slot(
         lesson_number=body.lesson_number,
         classroom_id=body.classroom_id,
         cell_id=body.cell_id,
+        schedule_kind=body.schedule_kind,
+        week_index=body.week_index,
     )
     return ExplainSlotOut(
         allowed=result.allowed,

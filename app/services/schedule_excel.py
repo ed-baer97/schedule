@@ -12,6 +12,7 @@ from app.domain import DAY_NAMES, normalize_person_name
 from app.models import Classroom, ScheduleCell, SchoolClass, Subject, Teacher, TeachingAssignment
 from app.services.schedule.service import ScheduleService
 from app.services.schedule.types import Placement
+from app.services.schedule_scope import variant_filter
 
 _CLASS_NAME_RE = re.compile(r"^(\d{1,2})\s*([^\W\d_]{1,3})$", re.UNICODE)
 _TIME_LINE_RE = re.compile(r"^\d{1,2}:\d{2}\s*[–—-]\s*\d{1,2}:\d{2}$")
@@ -458,7 +459,10 @@ def import_schedule_from_excel(
     existing = {
         (cell.class_id, cell.day_of_week, cell.lesson_number, cell.assignment_id)
         for cell in session.scalars(
-            select(ScheduleCell).where(ScheduleCell.school_id == school_id)
+            select(ScheduleCell).where(
+                ScheduleCell.school_id == school_id,
+                variant_filter(),
+            )
         ).all()
     }
     skipped_existing = 0

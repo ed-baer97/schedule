@@ -123,16 +123,10 @@ def _pick_header_row(df) -> int:
     return best_idx
 
 
-def _read_hours_sheet(file_path) -> _HoursSheet:
-    import pandas as pd
-
-    with pd.ExcelFile(file_path) as xl:
-        sheet_name = str(xl.sheet_names[0]).strip() if xl.sheet_names else ""
-        df = pd.read_excel(xl, sheet_name=0, header=None)
-
+def _parse_hours_sheet(df, sheet_name: str) -> _HoursSheet:
     if df.empty or df.shape[1] < 2:
         raise ValueError(
-            "В файле нужны столбец учителей и хотя бы один столбец класса"
+            "Нужны столбец учителей и хотя бы один столбец класса"
         )
 
     header_row = _pick_header_row(df)
@@ -182,23 +176,57 @@ def _read_hours_sheet(file_path) -> _HoursSheet:
     )
 
 
+def _read_hours_sheets(file_path) -> list[_HoursSheet]:
+    """Read every worksheet that looks like a teachers × classes hours matrix."""
+    import pandas as pd
+
+    sheets: list[_HoursSheet] = []
+    errors: list[tuple[str, str]] = []
+    names: list[str] = []
+    with pd.ExcelFile(file_path) as xl:
+        names = [str(name).strip() for name in xl.sheet_names]
+        if not names:
+            raise ValueError("Файл не содержит листов")
+        for name in names:
+            df = pd.read_excel(xl, sheet_name=name, header=None)
+            try:
+                sheets.append(_parse_hours_sheet(df, name))
+            except ValueError as exc:
+                errors.append((name or "без имени", str(exc)))
+
+    if sheets:
+        return sheets
+    if len(names) == 1 and errors:
+        raise ValueError(errors[0][1])
+    detail = "; ".join(f"{name}: {msg}" for name, msg in errors)
+    raise ValueError(
+        "Не удалось прочитать ни один лист как таблицу нагрузки"
+        + (f". {detail}" if detail else "")
+    )
+
+
 def _resolve_subject_name(
     *,
     explicit: str | None,
     sheet: _HoursSheet,
     file_path,
     filename: str | None,
+    allow_filename_fallback: bool = True,
 ) -> str:
-    for candidate in (
+    candidates = [
         (explicit or "").strip(),
         (sheet.subject_hint or "").strip(),
-        Path(filename).stem.strip() if filename else "",
-        Path(file_path).stem.strip(),
-    ):
+    ]
+    if allow_filename_fallback:
+        candidates.append(Path(filename).stem.strip() if filename else "")
+        candidates.append(Path(file_path).stem.strip())
+    for candidate in candidates:
         if candidate and not _is_generic_sheet(candidate):
             return candidate
-    raise ValueError("Не удалось определить название предмета")
-
+    raise ValueError(
+        f"Не удалось определить название предмета"
+        f" (лист «{sheet.sheet_name or '?'}»)"
+    )
 
 def _is_teacher_name(text: str) -> bool:
     if not text or text.casefold() == "nan":
@@ -210,21 +238,22 @@ def _is_teacher_name(text: str) -> bool:
     return True
 
 
-def _parse_hours(value) -> int:
+def _parse_hours(value) -> float:
     import pandas as pd
 
     if value is None or (isinstance(value, float) and pd.isna(value)):
-        return 0
+        return 0.0
     if isinstance(value, str):
         text = value.strip().replace(",", ".")
         if not text or text.lower() == "nan":
-            return 0
+            return 0.0
         value = text
     try:
-        hours = int(float(value))
+        hours = float(value)
     except (ValueError, TypeError):
-        return 0
-    return max(0, hours)
+        return 0.0
+    hours = round(hours * 4) / 4
+    return max(0.0, hours)
 
 
 def _grade_and_level(class_name: str) -> tuple[int, str]:
@@ -374,9 +403,9 @@ class ExcelImporter:
                     continue
 
                 try:
-                    hours = int(df.loc[class_name, subject_name])
+                    hours = _parse_hours(df.loc[class_name, subject_name])
                 except (ValueError, TypeError):
-                    hours = 0
+                    hours = 0.0
 
                 if hours == 0:
                     continue
@@ -402,23 +431,53 @@ class ExcelImporter:
         subject_name: str | None = None,
         *,
         filename: str | None = None,
+    ) -> list[dict]:
+        """
+        Import subject hour matrices: teachers × classes, cells = hours/week.
+
+        One workbook may contain several sheets (one subject per sheet), matching
+        the teacher-load export. A single-sheet file still works; the older
+        one-row header (Учитель, 1А, …) is supported.
+
+        Subject name: explicit argument (single-sheet only), else title/sheet,
+        else file stem. Same normalized ФИО across sheets/files reuses Teacher.
+        """
+        sheets = _read_hours_sheets(file_path)
+        if subject_name and len(sheets) > 1:
+            raise ValueError(
+                "Название предмета задаётся только для файла с одним листом; "
+                "в книге с несколькими листами предмет берётся из листа"
+            )
+
+        multi = len(sheets) > 1
+        results = [
+            self._import_hours_sheet(
+                sheet,
+                subject_name=subject_name if not multi else None,
+                file_path=file_path,
+                filename=filename,
+                allow_filename_fallback=not multi,
+            )
+            for sheet in sheets
+        ]
+        self.session.commit()
+        return results
+
+    def _import_hours_sheet(
+        self,
+        sheet: _HoursSheet,
+        *,
+        subject_name: str | None,
+        file_path,
+        filename: str | None,
+        allow_filename_fallback: bool,
     ) -> dict:
-        """
-        Import one subject file: teachers × classes, cells = hours per week.
-
-        Accepts the school workbook: title row with the subject name, then a
-        header (№ / ФИО / classes / итого). The older one-row header
-        (Учитель, 1А, …) still works.
-
-        Subject name: explicit argument, else title/sheet, else file stem.
-        Same normalized ФИО across files reuses the Teacher row.
-        """
-        sheet = _read_hours_sheet(file_path)
         resolved_subject = _resolve_subject_name(
             explicit=subject_name,
             sheet=sheet,
             file_path=file_path,
             filename=filename,
+            allow_filename_fallback=allow_filename_fallback,
         )
 
         subject, subject_created = self._subjects.ensure(
@@ -430,7 +489,7 @@ class ExcelImporter:
         created_assignments = 0
         updated_assignments = 0
         warnings: list[str] = []
-        by_class: dict[int, list[tuple[Teacher, int]]] = defaultdict(list)
+        by_class: dict[int, list[tuple[Teacher, float]]] = defaultdict(list)
         df = sheet.frame
 
         for row_idx in range(sheet.header_row + 1, len(df)):
@@ -493,12 +552,10 @@ class ExcelImporter:
                     commit=False,
                 )
             elif n == 1:
-                group = None
                 self._assignments.set_group_numbers(
-                    [ordered[0].id], [group], commit=False
+                    [ordered[0].id], [None], commit=False
                 )
 
-        self.session.commit()
         return {
             "subject": subject.name,
             "subject_created": subject_created,
